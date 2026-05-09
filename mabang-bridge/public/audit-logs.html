@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>审计日志 · 按日期查询</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; max-width: 980px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+    h1 { font-size: 1.35rem; }
+    .card { border: 1px solid #ccc; border-radius: 10px; padding: 1rem 1.25rem; margin: 1rem 0; }
+    label { display: block; font-size: 0.85rem; margin-top: 0.75rem; color: #555; }
+    input[type="text"], input[type="password"], input[type="date"], input[type="number"] {
+      width: 100%; max-width: 100%; box-sizing: border-box; padding: 0.45rem 0.55rem; margin-top: 0.2rem;
+    }
+    button { margin-top: 0.75rem; padding: 0.45rem 0.9rem; cursor: pointer; border-radius: 6px; border: 1px solid #888; background: #f4f4f4; }
+    button.primary { background: #2563eb; color: #fff; border-color: #1d4ed8; }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .err { color: #b91c1c; font-size: 0.9rem; margin-top: 0.5rem; }
+    .muted { color: #666; font-size: 0.85rem; }
+    .row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 0.75rem; align-items: end; }
+    @media (max-width: 820px) { .row { grid-template-columns: 1fr 1fr; } }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin-top: 0.5rem; }
+    th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 0.88em; }
+    .kvs { display: grid; grid-template-columns: 140px 1fr; gap: 0.25rem 0.75rem; margin-top: 0.25rem; }
+    .kvs div { overflow-wrap: anywhere; }
+    .toolbar { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; }
+    a { color: inherit; }
+    .hidden { display:none !important; }
+  </style>
+</head>
+<body>
+  <!--
+    设计原则（带教版）：
+    - 这个页面不在前端保存 token，而是复用 /admin/ui 的 cookie-session 登录态
+    - 所有请求 fetch 都带 credentials: 'include'，由浏览器自动带 Cookie
+    - 如果接口返回 401，则说明未登录/会话失效：提示跳转到 /admin/ui 重新登录
+  -->
+
+  <div class="toolbar">
+    <h1 style="margin:0">操作记录（审计日志）</h1>
+    <div class="muted">
+      <a href="/admin/ui">店铺管理</a>
+      <span> · </span>
+      <a href="/admin/audit-logs/ui">刷新本页</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <label for="date">日期（YYYY-MM-DD）</label>
+        <input type="date" id="date" />
+      </div>
+      <div>
+        <label for="view">查看内容</label>
+        <select id="view" style="width:100%;padding:0.45rem 0.55rem;margin-top:0.2rem">
+          <option value="events">业务事件（推荐）</option>
+          <option value="requests">请求日志（排障用）</option>
+        </select>
+      </div>
+      <div>
+        <label for="limit">每页条数（1–500）</label>
+        <input type="number" id="limit" min="1" max="500" step="1" value="50" />
+      </div>
+      <div>
+        <label for="offset">偏移 offset（用于分页）</label>
+        <input type="number" id="offset" min="0" step="1" value="0" />
+      </div>
+      <div>
+        <button type="button" class="primary" id="btnQuery">查询</button>
+        <div class="err" id="queryErr"></div>
+      </div>
+    </div>
+    <p class="muted" style="margin:0.75rem 0 0">
+      说明：该页面依赖你已通过 <code>/admin/ui</code> 登录（cookie-session）。普通人建议看「业务事件」；工程排障再看「请求日志」。若看到 401，请先去 <a href="/admin/ui">登录</a>。
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="toolbar">
+      <div class="muted" id="summary">尚未查询</div>
+      <div>
+        <button type="button" id="btnPrev">上一页</button>
+        <button type="button" id="btnNext">下一页</button>
+      </div>
+    </div>
+    <div id="tableWrap" class="hidden">
+      <table>
+        <thead>
+          <tr>
+            <th id="thTime" style="width:160px">时间</th>
+            <th id="thWho" style="width:140px">谁</th>
+            <th id="thWhat">做了什么</th>
+            <th id="thObj" style="width:140px">对象</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      function $(id) { return document.getElementById(id); }
+
+      // 复用登录态：必须带 credentials: 'include'
+      function api(path) {
+        return fetch(path, { method: 'GET', credentials: 'include' }).then(function (r) {
+          return r.text().then(function (t) {
+            var j = null;
+            try { j = t ? JSON.parse(t) : null; } catch (e) {}
+            return { ok: r.ok, status: r.status, json: j, text: t };
+          });
+        });
+      }
+
+      function setErr(msg) { $('queryErr').textContent = msg || ''; }
+      function setSummary(msg) { $('summary').textContent = msg || ''; }
+
+      function todayISO() {
+        var d = new Date();
+        var y = d.getFullYear();
+        var m = String(d.getMonth() + 1).padStart(2, '0');
+        var day = String(d.getDate()).padStart(2, '0');
+        return y + '-' + m + '-' + day;
+      }
+
+      function escapeHtml(s) {
+        if (s == null) return '';
+        return String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      function renderEventRows(rows) {
+        var tb = $('tbody');
+        tb.innerHTML = '';
+        rows.forEach(function (r) {
+          var tr = document.createElement('tr');
+          var who = r.actor_name || '系统';
+          var obj = '';
+          if (r.conversation_id) obj = '会话 #' + r.conversation_id;
+          else if (r.contact_id) obj = '联系人 #' + r.contact_id;
+          tr.innerHTML =
+            '<td><code>' + escapeHtml(r.occurred_at || '') + '</code></td>' +
+            '<td>' + escapeHtml(who) + '</td>' +
+            '<td>' + escapeHtml(r.summary || '') + '</td>' +
+            '<td><code>' + escapeHtml(obj) + '</code></td>';
+          tb.appendChild(tr);
+        });
+      }
+
+      function renderRequestRows(rows) {
+        var tb = $('tbody');
+        tb.innerHTML = '';
+        rows.forEach(function (r) {
+          var tr = document.createElement('tr');
+          var path = (r.path || '');
+          tr.innerHTML =
+            '<td><code>' + escapeHtml(r.occurred_at || '') + '</code></td>' +
+            '<td><code>' + escapeHtml(r.method || '') + '</code></td>' +
+            '<td><code>' + escapeHtml(path) + '</code></td>' +
+            '<td><code>' + escapeHtml(String(r.status_code || '')) + '</code></td>' +
+            '<td><code>' + escapeHtml(String(r.duration_ms || '')) + 'ms</code></td>' +
+            '<td><code>' + escapeHtml(r.ip || '') + '</code></td>';
+          tb.appendChild(tr);
+        });
+      }
+
+      function clampInt(v, min, max, fallback) {
+        var n = Number(v);
+        if (!Number.isFinite(n)) return fallback;
+        n = Math.floor(n);
+        if (n < min) return min;
+        if (n > max) return max;
+        return n;
+      }
+
+      function query() {
+        setErr('');
+        var date = String($('date').value || '').trim();
+        var view = String($('view').value || 'events');
+        var limit = clampInt($('limit').value, 1, 500, 50);
+        var offset = clampInt($('offset').value, 0, 1e12, 0);
+        $('limit').value = String(limit);
+        $('offset').value = String(offset);
+
+        if (!date) {
+          setErr('请选择日期');
+          return;
+        }
+
+        $('btnQuery').disabled = true;
+        $('btnPrev').disabled = true;
+        $('btnNext').disabled = true;
+
+        var qs = '?date=' + encodeURIComponent(date) + '&limit=' + encodeURIComponent(limit) + '&offset=' + encodeURIComponent(offset);
+        var endpoint = view === 'requests' ? '/admin/audit-logs' : '/admin/audit-events';
+        api(endpoint + qs).then(function (res) {
+          if (res.status === 401) {
+            setErr('未登录或会话失效（401）。请先打开 /admin/ui 登录后再刷新本页。');
+            setSummary('401 未授权');
+            $('tableWrap').classList.add('hidden');
+            return;
+          }
+          if (!res.ok || !res.json) {
+            setErr('查询失败：' + (res.text || res.status));
+            setSummary('查询失败');
+            $('tableWrap').classList.add('hidden');
+            return;
+          }
+          var j = res.json;
+          var total = Number(j.total) || 0;
+          var rows = j.rows || [];
+          setSummary('日期 ' + date + ' · total=' + total + ' · offset=' + offset + ' · limit=' + limit + ' · rows=' + rows.length);
+
+          // 表头随视图切换：业务事件（时间/谁/做了什么/对象） vs 请求日志（时间/方法/路径/状态/耗时/IP）
+          if (view === 'requests') {
+            $('thWho').textContent = '方法';
+            $('thWhat').textContent = '路径';
+            $('thObj').textContent = '状态/耗时/IP';
+            // 用一列把状态/耗时/IP 合并展示，避免横向太宽
+            renderRequestRows(rows.map(function (r) {
+              return {
+                occurred_at: r.occurred_at,
+                method: r.method,
+                path: r.path,
+                status_code: r.status_code,
+                duration_ms: r.duration_ms,
+                ip: r.ip
+              };
+            }).map(function (r) {
+              // hack: 复用 renderRequestRows 的输出格式（它会输出 6 列），这里临时改回原表头更简单
+              return r;
+            }));
+            // 由于 renderRequestRows 输出 6 列，这里把表头文本改回请求日志格式
+            $('thTime').textContent = '时间';
+            $('thWho').textContent = '方法';
+            $('thWhat').textContent = '路径';
+            $('thObj').textContent = '状态/耗时/IP';
+            // 将第4列开始的 3 列追加进 DOM（简化：直接重建 thead）
+            var thead = $('tbody').parentNode.querySelector('thead');
+            if (thead) {
+              thead.innerHTML = '<tr>' +
+                '<th style="width:160px">时间</th>' +
+                '<th style="width:70px">方法</th>' +
+                '<th>路径</th>' +
+                '<th style="width:80px">状态</th>' +
+                '<th style="width:80px">耗时</th>' +
+                '<th style="width:180px">IP</th>' +
+                '</tr>';
+            }
+          } else {
+            var thead2 = $('tbody').parentNode.querySelector('thead');
+            if (thead2) {
+              thead2.innerHTML = '<tr>' +
+                '<th style="width:160px">时间</th>' +
+                '<th style="width:140px">谁</th>' +
+                '<th>做了什么</th>' +
+                '<th style="width:140px">对象</th>' +
+                '</tr>';
+            }
+            renderEventRows(rows);
+          }
+          $('tableWrap').classList.toggle('hidden', rows.length === 0);
+
+          // 分页按钮：prev/next 只改 offset，再复用 query()
+          $('btnPrev').disabled = offset <= 0;
+          $('btnNext').disabled = (offset + limit) >= total;
+        }).finally(function () {
+          $('btnQuery').disabled = false;
+        });
+      }
+
+      $('btnQuery').addEventListener('click', query);
+      $('btnPrev').addEventListener('click', function () {
+        var limit = clampInt($('limit').value, 1, 500, 50);
+        var offset = clampInt($('offset').value, 0, 1e12, 0);
+        $('offset').value = String(Math.max(0, offset - limit));
+        query();
+      });
+      $('btnNext').addEventListener('click', function () {
+        var limit = clampInt($('limit').value, 1, 500, 50);
+        var offset = clampInt($('offset').value, 0, 1e12, 0);
+        $('offset').value = String(offset + limit);
+        query();
+      });
+
+      // 默认选今天；自动拉一次，方便“打开就能看到”
+      $('date').value = todayISO();
+      $('view').value = 'events';
+      query();
+    })();
+  </script>
+</body>
+</html>
+

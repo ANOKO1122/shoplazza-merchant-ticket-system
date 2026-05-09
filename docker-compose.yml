@@ -1,0 +1,81 @@
+version: '3'
+services:
+  redis:
+    image: redis:7-alpine
+    restart: always
+    volumes:
+      - redis-data:/data
+
+  postgres:
+    image: pgvector/pgvector:pg14
+    restart: always
+    environment:
+      POSTGRES_DB: chatwoot
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Chatwoot@2024
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  chatwoot:
+    image: chatwoot/chatwoot:v4.12.0
+    restart: always
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    command: ["bundle", "exec", "rails", "s", "-p", "3000", "-b", "0.0.0.0"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./storage:/app/storage
+
+  sidekiq:
+    image: chatwoot/chatwoot:v4.12.0
+    restart: always
+    env_file:
+      - .env
+    command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./storage:/app/storage
+
+  # 店匠 Shoplazza 桥接：接收 Chatwoot Webhook，多店订单列表按邮箱匹配并回写联系人自定义属性
+  mabang-bridge:
+    build: ./mabang-bridge
+    restart: always
+    env_file:
+      - .env.mabang-bridge
+    environment:
+      BRIDGE_DATA_DIR: /data
+      # DEBUG MODE def42e：NDJSON 写入工作区 .cursor/debug-def42e.log
+      AGENT_DEBUG_SESSION_ID: def42e
+      DEBUG_LOG_PATH: /bridge-debug/debug-def42e.log
+    volumes:
+      - mabang-bridge-data:/data
+      - ./.cursor:/bridge-debug
+    ports:
+      - "4000:4000"
+    # Chatwoot v4.12 前台 Webhook 的 URL 校验要求主机名含「点+短后缀」（见 dashboard isValidURL），
+    # 故增加别名；后台填：http://mabang-bridge.local:4000/webhook/chatwoot（与 http://mabang-bridge:4000 等价）
+    networks:
+      default:
+        aliases:
+          - mabang-bridge.local
+    # 店铺管理 API：需设置 BRIDGE_ADMIN_TOKEN，见 mabang-bridge/README.md
+
+volumes:
+  redis-data:
+  postgres-data:
+  mabang-bridge-data:
