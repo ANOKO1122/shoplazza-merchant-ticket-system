@@ -570,15 +570,15 @@ export function getLatestIndexedOrdersByEmail(email: string, limit: number = 500
   }
 
   const invalidJsonStats = () => {
-    const customerInvalid = Number(db
+    const customerInvalid = Number((db
       .prepare(`SELECT COUNT(*) AS c FROM order_index
         WHERE LENGTH(TRIM(COALESCE(customer, ''))) > 0 AND json_valid(customer) = 0`)
       .get() as { c: number }).c) || 0;
-    const shippingInvalid = Number(db
+    const shippingInvalid = Number((db
       .prepare(`SELECT COUNT(*) AS c FROM order_index
         WHERE LENGTH(TRIM(COALESCE(shipping_address, ''))) > 0 AND json_valid(shipping_address) = 0`)
       .get() as { c: number }).c) || 0;
-    const rawInvalid = Number(db
+    const rawInvalid = Number((db
       .prepare(`SELECT COUNT(*) AS c FROM order_index
         WHERE LENGTH(TRIM(COALESCE(raw_summary_json, ''))) > 0 AND json_valid(raw_summary_json) = 0`)
       .get() as { c: number }).c) || 0;
