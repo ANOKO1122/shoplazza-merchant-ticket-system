@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>邮件预览</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; min-height: 100vh; }
+  .toolbar { background: #fff; border-bottom: 1px solid #e8e8e8; padding: 12px 20px; display: flex; align-items: center; gap: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.04); position: sticky; top: 0; z-index: 10; }
+  .toolbar .back { color: #1890ff; text-decoration: none; font-size: 13px; cursor: pointer; }
+  .toolbar .back:hover { text-decoration: underline; }
+  .toolbar .title { font-size: 14px; font-weight: 600; color: #262626; flex: 1; }
+  .toolbar .meta { font-size: 12px; color: #8c8c8c; }
+  .container { max-width: 680px; margin: 20px auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); overflow: hidden; }
+  .subject-line { padding: 14px 20px; border-bottom: 1px solid #f0f0f0; font-size: 13px; color: #8c8c8c; }
+  .subject-line span { color: #262626; font-weight: 500; }
+  .email-body { padding: 0; min-height: 300px; }
+  .email-body iframe { width: 100%; min-height: 400px; border: none; display: block; }
+  .loading { padding: 60px; text-align: center; color: #8c8c8c; font-size: 14px; }
+  .error { padding: 60px; text-align: center; color: #ff4d4f; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <a class="back" onclick="window.close()">← 返回</a>
+  <span class="title" id="pageTitle">邮件预览</span>
+  <span class="meta" id="pageMeta"></span>
+</div>
+<div class="container">
+  <div class="subject-line">📧 主题：<span id="emailSubject">加载中...</span></div>
+  <div class="email-body" id="emailBody"><div class="loading">加载中...</div></div>
+</div>
+<script>
+var API = '/api/admin';
+
+(async function init() {
+  var params = new URLSearchParams(window.location.search);
+  var jobId = params.get('job_id');
+
+  if (!jobId) {
+    document.getElementById('emailBody').innerHTML = '<div class="error">缺少 job_id 参数</div>';
+    return;
+  }
+
+  // 验证登录
+  try {
+    var meR = await fetch(API + '/me', { credentials: 'same-origin' });
+    var meD = await meR.json();
+    if (!meD.ok) {
+      document.getElementById('emailBody').innerHTML = '<div class="error">请先登录客服后台</div>';
+      return;
+    }
+  } catch(e) {
+    document.getElementById('emailBody').innerHTML = '<div class="error">无法连接服务端</div>';
+    return;
+  }
+
+  try {
+    var r = await fetch(API + '/email-jobs/' + jobId + '/preview', { credentials: 'same-origin' });
+    var d = await r.json();
+    if (!d.ok) {
+      document.getElementById('emailBody').innerHTML = '<div class="error">' + (d.error || '加载失败') + '</div>';
+      return;
+    }
+
+    document.getElementById('pageTitle').textContent = '邮件预览 #' + jobId;
+    document.getElementById('emailSubject').textContent = d.subject || '(无主题)';
+    document.getElementById('pageMeta').textContent = d.subject || '';
+
+    // 用 iframe 渲染（避免 CSS 冲突）
+    var iframe = document.createElement('iframe');
+    iframe.style.width = '100%';
+    iframe.style.minHeight = '400px';
+    iframe.style.border = 'none';
+    iframe.srcdoc = d.html;
+
+    document.getElementById('emailBody').innerHTML = '';
+    document.getElementById('emailBody').appendChild(iframe);
+
+    // 自动调整 iframe 高度
+    iframe.onload = function() {
+      try {
+        var h = iframe.contentDocument.body.scrollHeight;
+        if (h > 0) iframe.style.height = h + 'px';
+      } catch(e) {}
+    };
+  } catch(e) {
+    document.getElementById('emailBody').innerHTML = '<div class="error">加载失败: ' + e.message + '</div>';
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Customer Service Admin - Dispute Management</title>
+<style>
+  :root {
+    --primary: #1890ff;
+    --primary-hover: #40a9ff;
+    --primary-light: #e6f7ff;
+    --success: #52c41a;
+    --success-light: #f6ffed;
+    --warning: #fa8c16;
+    --warning-light: #fffbe6;
+    --danger: #ff4d4f;
+    --danger-light: #fff2f0;
+    --text-main: #262626;
+    --text-secondary: #595959;
+    --text-muted: #8c8c8c;
+    --border: #f0f0f0;
+    --border-strong: #d9d9d9;
+    --bg-page: #f5f7fa;
+    --bg-card: #ffffff;
+    --bg-hover: #f5f5f5;
+    --radius: 10px;
+    --shadow: 0 2px 8px rgba(0,0,0,0.06);
+    --shadow-lg: 0 4px 16px rgba(0,0,0,0.08);
+    --sidebar-w: 240px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg-page);
+    color: var(--text-main);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ===== Layout ===== */
+  .app {
+    display: flex;
+    height: 100vh;
+    width: 100vw;
+  }
+
+  /* ===== Sidebar ===== */
+  .sidebar {
+    width: var(--sidebar-w);
+    background: #001529;
+    color: rgba(255,255,255,0.65);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    transition: width .3s;
+  }
+  .sidebar-header {
+    height: 64px;
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+  }
+  .sidebar-logo {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #ffd591, #ff9c6e);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+  .sidebar-title {
+    color: #fff;
+    font-size: 16px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .nav-menu {
+    flex: 1;
+    padding: 12px 0;
+    overflow-y: auto;
+  }
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 24px;
+    cursor: pointer;
+    transition: all .2s;
+    border-right: 3px solid transparent;
+    white-space: nowrap;
+  }
+  .nav-item:hover { background: rgba(255,255,255,0.05); color: #fff; }
+  .nav-item.active {
+    background: var(--primary);
+    color: #fff;
+    border-right-color: #fff;
+  }
+  .nav-icon { font-size: 18px; width: 20px; text-align: center; }
+  .nav-text { font-size: 14px; }
+  .nav-badge {
+    margin-left: auto;
+    background: var(--danger);
+    color: #fff;
+    font-size: 12px;
+    padding: 1px 7px;
+    border-radius: 10px;
+    font-weight: 600;
+  }
+  .sidebar-footer {
+    padding: 16px 20px;
+    border-top: 1px solid rgba(255,255,255,0.1);
+    font-size: 12px;
+    color: rgba(255,255,255,0.45);
+  }
+
+  /* ===== Main Area ===== */
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  /* ===== Top Header ===== */
+  .topbar {
+    height: 64px;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    flex-shrink: 0;
+  }
+  .topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .breadcrumb {
+    font-size: 14px;
+    color: var(--text-muted);
+  }
+  .breadcrumb strong { color: var(--text-main); font-weight: 600; }
+  .topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .search-box {
+    position: relative;
+  }
+  .search-box input {
+    width: 260px;
+    padding: 8px 12px 8px 36px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    font-size: 13px;
+    outline: none;
+    transition: all .2s;
+  }
+  .search-box input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(24,144,255,0.1);
+  }
+  .search-box::before {
+    content: "🔍";
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 14px;
+    opacity: .5;
+  }
+  .topbar-icon {
+    width: 36px; height: 36px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    font-size: 18px;
+    position: relative;
+    transition: background .2s;
+  }
+  .topbar-icon:hover { background: var(--bg-hover); }
+  .notify-dot {
+    position: absolute;
+    top: 6px; right: 6px;
+    width: 8px; height: 8px;
+    background: var(--danger);
+    border-radius: 50%;
+    border: 2px solid #fff;
+  }
+  .user-chip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 8px;
+    transition: background .2s;
+  }
+  .user-chip:hover { background: var(--bg-hover); }
+  .user-avatar {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: var(--primary-light);
+    color: var(--primary);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700;
+    font-size: 13px;
+  }
+  .user-name { font-weight: 500; font-size: 13px; }
+
+  /* ===== Content Scroll Area ===== */
+  .content {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .content-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 24px;
+  }
+
+  /* ===== Stats Cards ===== */
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  .stat-card {
+    background: var(--bg-card);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    cursor: pointer;
+    transition: transform .2s, box-shadow .2s;
+    border: 2px solid transparent;
+  }
+  .stat-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+  .stat-card.active-filter { border-color: var(--primary); background: var(--primary-light); }
+  .stat-icon {
+    width: 48px; height: 48px;
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px;
+    flex-shrink: 0;
+  }
+  .stat-icon.blue { background: var(--primary-light); }
+  .stat-icon.orange { background: var(--warning-light); }
+  .stat-icon.green { background: var(--success-light); }
+  .stat-icon.red { background: var(--danger-light); }
+  .stat-info h3 {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text-main);
+    line-height: 1.2;
+  }
+  .stat-info p {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  /* ===== Filter Bar ===== */
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .filter-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .filter-btn {
+    padding: 6px 14px;
+    border: 1px solid var(--border-strong);
+    background: #fff;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all .2s;
+    color: var(--text-secondary);
+  }
+  .filter-btn:hover { border-color: var(--primary); color: var(--primary); }
+  .filter-btn.active {
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+  }
+  .filter-select {
+    padding: 6px 28px 6px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    font-size: 13px;
+    background: #fff;
+    cursor: pointer;
+    outline: none;
+  }
+
+  /* ===== Table ===== */
+  .table-wrap {
+    background: var(--bg-card);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+  .table-header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .table-title { font-size: 16px; font-weight: 600; }
+  .table-actions { display: flex; gap: 8px; }
+  .btn-sm {
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    border: none;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all .2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .btn-sm-primary { background: var(--primary); color: #fff; }
+  .btn-sm-primary:hover { background: var(--primary-hover); }
+  .btn-sm-default { background: #fff; color: var(--text-secondary); border: 1px solid var(--border-strong); }
+  .btn-sm-default:hover { border-color: var(--primary); color: var(--primary); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  thead th {
+    background: #fafafa;
+    padding: 12px 16px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+  }
+  tbody td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tbody tr { transition: background .15s; cursor: pointer; }
+  tbody tr:hover { background: var(--bg-hover); }
+  tbody tr.selected { background: var(--primary-light); }
+
+  .td-id {
+    font-family: "SF Mono", Monaco, monospace;
+    font-size: 12px;
+    color: var(--primary);
+    font-weight: 600;
+  }
+  .td-customer {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .td-avatar {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: var(--primary-light);
+    color: var(--primary);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  .td-name { font-weight: 500; }
+  .td-email { font-size: 12px; color: var(--text-muted); }
+  .td-product { color: var(--text-secondary); max-width: 200px; }
+  .td-amount { font-weight: 600; font-family: monospace; }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .tag-dot { width: 6px; height: 6px; border-radius: 50%; }
+  .tag-blue { background: var(--primary-light); color: var(--primary); }
+  .tag-blue .tag-dot { background: var(--primary); }
+  .tag-orange { background: var(--warning-light); color: var(--warning); }
+  .tag-orange .tag-dot { background: var(--warning); }
+  .tag-green { background: var(--success-light); color: var(--success); }
+  .tag-green .tag-dot { background: var(--success); }
+  .tag-red { background: var(--danger-light); color: var(--danger); }
+  .tag-red .tag-dot { background: var(--danger); }
+
+  .table-empty {
+    padding: 60px 20px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 14px;
+  }
+
+  /* ===== Split View: Detail Panel ===== */
+  .split-view {
+    display: grid;
+    grid-template-columns: 1fr 420px;
+    gap: 20px;
+    height: 100%;
+  }
+  .panel-left { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+  .panel-right {
+    background: var(--bg-card);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    height: 100%;
+  }
+  .panel-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .panel-header h3 { font-size: 16px; font-weight: 600; }
+  .panel-close {
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 16px;
+    color: var(--text-muted);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .panel-close:hover { background: var(--bg-hover); color: var(--text-main); }
+  .panel-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+  }
+
+  /* Detail sections */
+  .detail-section { margin-bottom: 24px; }
+  .detail-section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    margin-bottom: 12px;
+  }
+  .detail-card {
+    background: var(--bg-page);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .detail-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    gap: 12px;
+  }
+  .detail-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .detail-row:first-child { padding-top: 0; }
+  .detail-label { font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+  .detail-value { font-size: 13px; color: var(--text-main); text-align: right; word-break: break-all; font-weight: 500; }
+  .detail-value.mono { font-family: monospace; }
+
+  /* Timeline compact */
+  .mini-timeline { position: relative; padding-left: 20px; }
+  .mini-timeline::before {
+    content: '';
+    position: absolute;
+    left: 5px;
+    top: 4px;
+    bottom: 4px;
+    width: 2px;
+    background: var(--border);
+  }
+  .mini-item {
+    position: relative;
+    padding-bottom: 16px;
+  }
+  .mini-item:last-child { padding-bottom: 0; }
+  .mini-item::before {
+    content: '';
+    position: absolute;
+    left: -20px;
+    top: 3px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--bg-card);
+    border: 2px solid var(--border-strong);
+  }
+  .mini-item.system::before { border-color: var(--warning); }
+  .mini-item.customer::before { border-color: var(--success); }
+  .mini-item.agent::before { border-color: var(--primary); }
+  .mini-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .mini-role {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+  .mini-role.system { background: var(--warning-light); color: var(--warning); }
+  .mini-role.customer { background: var(--success-light); color: var(--success); }
+  .mini-role.agent { background: var(--primary-light); color: var(--primary); }
+  .mini-time { font-size: 11px; color: var(--text-muted); }
+  .mini-text {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+
+  /* Reply box in panel */
+  .panel-reply {
+    border-top: 1px solid var(--border);
+    padding: 16px 20px 20px;
+    background: #fff;
+  }
+  .panel-reply textarea {
+    width: 100%;
+    min-height: 80px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    font-size: 13px;
+    resize: vertical;
+    outline: none;
+    margin-bottom: 10px;
+    font-family: inherit;
+  }
+  .panel-reply textarea:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(24,144,255,0.1);
+  }
+  .reply-tools {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+  .reply-tools-left { display: flex; gap: 6px; }
+  .tool-icon {
+    width: 32px; height: 32px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    font-size: 16px;
+    color: var(--text-muted);
+    transition: all .2s;
+  }
+  .tool-icon:hover { border-color: var(--primary); color: var(--primary); }
+
+  /* Quick actions */
+  .quick-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .q-btn {
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border-strong);
+    background: #fff;
+    font-size: 12px;
+    cursor: pointer;
+    text-align: center;
+    transition: all .2s;
+    color: var(--text-secondary);
+  }
+  .q-btn:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
+  .q-btn.danger:hover { border-color: var(--danger); color: var(--danger); background: var(--danger-light); }
+
+  /* Pagination */
+  .pagination {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border);
+  }
+  .page-btn {
+    min-width: 32px;
+    height: 32px;
+    border: 1px solid var(--border-strong);
+    background: #fff;
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-secondary);
+    transition: all .2s;
+  }
+  .page-btn:hover { border-color: var(--primary); color: var(--primary); }
+  .page-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+  .page-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
+
+  /* Responsive for small desktop */
+  @media (max-width: 1200px) {
+    .split-view { grid-template-columns: 1fr 360px; }
+  }
+  @media (max-width: 1024px) {
+    .stats-row { grid-template-columns: repeat(2, 1fr); }
+    .split-view { grid-template-columns: 1fr; }
+    .panel-right { display: none; }
+    .panel-right.open { display: flex; position: fixed; right: 0; top: 0; bottom: 0; width: 400px; z-index: 200; border-radius: 0; }
+    .overlay {
+      display: none;
+      position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 199;
+    }
+    .overlay.open { display: block; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-logo">⚖️</div>
+      <div class="sidebar-title">CS Admin</div>
+    </div>
+    <nav class="nav-menu">
+      <div class="nav-item active">
+        <span class="nav-icon">📋</span>
+        <span class="nav-text">Dispute Tickets</span>
+        <span class="nav-badge">12</span>
+      </div>
+      <div class="nav-item">
+        <span class="nav-icon">📦</span>
+        <span class="nav-text">Orders</span>
+      </div>
+      <div class="nav-item">
+        <span class="nav-icon">👤</span>
+        <span class="nav-text">Customers</span>
+      </div>
+      <div class="nav-item">
+        <span class="nav-icon">📊</span>
+        <span class="nav-text">Reports</span>
+      </div>
+      <div class="nav-item">
+        <span class="nav-icon">⚙️</span>
+        <span class="nav-text">Settings</span>
+      </div>
+    </nav>
+    <div class="sidebar-footer">
+      v1.0.0 &copy; 2026
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <!-- Topbar -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="breadcrumb">Home / <strong>Dispute Tickets</strong></div>
+      </div>
+      <div class="topbar-right">
+        <div class="search-box">
+          <input type="text" placeholder="Search ticket ID, order, customer...">
+        </div>
+        <div class="topbar-icon" title="Notifications">
+          🔔
+          <span class="notify-dot"></span>
+        </div>
+        <div class="topbar-icon" title="Help">❓</div>
+        <div class="user-chip">
+          <div class="user-avatar">JD</div>
+          <span class="user-name">John Doe</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Content -->
+    <div class="content">
+      <div class="content-scroll">
+        <!-- Stats -->
+        <div class="stats-row">
+          <div class="stat-card active-filter" onclick="filterTickets('all')">
+            <div class="stat-icon blue">📋</div>
+            <div class="stat-info">
+              <h3>156</h3>
+              <p>Total Tickets</p>
+            </div>
+          </div>
+          <div class="stat-card" onclick="filterTickets('pending')">
+            <div class="stat-icon orange">⏳</div>
+            <div class="stat-info">
+              <h3>12</h3>
+              <p>Pending</p>
+            </div>
+          </div>
+          <div class="stat-card" onclick="filterTickets('coordination')">
+            <div class="stat-icon blue">🔄</div>
+            <div class="stat-info">
+              <h3>8</h3>
+              <p>In Coordination</p>
+            </div>
+          </div>
+          <div class="stat-card" onclick="filterTickets('closed')">
+            <div class="stat-icon green">✅</div>
+            <div class="stat-info">
+              <h3>136</h3>
+              <p>Closed</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Split View: Table + Detail -->
+        <div class="split-view" id="splitView">
+          <!-- Left: Table -->
+          <div class="panel-left">
+            <div class="table-wrap">
+              <div class="table-header">
+                <span class="table-title">Ticket List</span>
+                <div class="table-actions">
+                  <button class="btn-sm btn-sm-default">📥 Export</button>
+                  <button class="btn-sm btn-sm-primary">+ New</button>
+                </div>
+              </div>
+
+              <div class="filter-bar" style="padding: 10px 20px; border-bottom: 1px solid var(--border);">
+                <div class="filter-group">
+                  <button class="filter-btn active">All</button>
+                  <button class="filter-btn">Pending</button>
+                  <button class="filter-btn">In Coordination</button>
+                  <button class="filter-btn">Arbitration</button>
+                  <button class="filter-btn">Closed</button>
+                </div>
+                <div class="filter-group">
+                  <select class="filter-select">
+                    <option>Last 24 hours</option>
+                    <option>Last 7 days</option>
+                    <option>Last 30 days</option>
+                    <option>All time</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style="flex:1; overflow:auto;">
+                <table>
+                  <thead>
+                    <tr>
+                      <th style="width:40px"><input type="checkbox"></th>
+                      <th>Ticket ID</th>
+                      <th>Customer</th>
+                      <th>Order / Product</th>
+                      <th>Dispute Type</th>
+                      <th>Amount</th>
+                      <th>Status</th>
+                      <th>Updated</th>
+                      <th>Agent</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="selected" onclick="openDetail(this)">
+                      <td><input type="checkbox" checked></td>
+                      <td><span class="td-id">#2053055343</span></td>
+                      <td>
+                        <div class="td-customer">
+                          <div class="td-avatar">L</div>
+                          <div>
+                            <div class="td-name">Lisa Wang</div>
+                            <div class="td-email">lisa@email.com</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        <div class="td-product">app-8cda32f...<br>Winter Knit Long Scarf Set</div>
+                      </td>
+                      <td><span class="tag tag-orange"><span class="tag-dot"></span>Wrong address</span></td>
+                      <td class="td-amount">USD 4.95</td>
+                      <td><span class="tag tag-blue"><span class="tag-dot"></span>In Coordination</span></td>
+                      <td style="white-space:nowrap;">18:42 today</td>
+                      <td><span style="color:var(--primary);font-weight:500;">John Doe</span></td>
+                    </tr>
+                    <tr onclick="openDetail(this)">
+                      <td><input type="checkbox"></td>
+                      <td><span class="td-id">#2053055287</span></td>
+                      <td>
+                        <div class="td-customer">
+                          <div class="td-avatar">M</div>
+                          <div>
+                            <div class="td-name">Mike Chen</div>
+                            <div class="td-email">mike@email.com</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        <div class="td-product">app-7f2a91b...<br>Wireless Bluetooth Earbuds</div>
+                      </td>
+                      <td><span class="tag tag-red"><span class="tag-dot"></span>Not received</span></td>
+                      <td class="td-amount">USD 29.99</td>
+                      <td><span class="tag tag-orange"><span class="tag-dot"></span>Pending</span></td>
+                      <td style="white-space:nowrap;">2 hours ago</td>
+                      <td><span style="color:var(--text-muted);">—</span></td>
+                    </tr>
+                    <tr onclick="openDetail(this)">
+                      <td><input type="checkbox"></td>
+                      <td><span class="td-id">#2053055102</span></td>
+                      <td>
+                        <div class="td-customer">
+                          <div class="td-avatar">S</div>
+                          <div>
+                            <div class="td-name">Sarah Jones</div>
+                            <div class="td-email">sarah@email.com</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        <div class="td-product">app-3e8d45c...<br>LED Desk Lamp</div>
+                      </td>
+                      <td><span class="tag tag-orange"><span class="tag-dot"></span>Quality issue</span></td>
+                      <td class="td-amount">USD 15.50</td>
+                      <td><span class="tag tag-green"><span class="tag-dot"></span>Closed</span></td>
+                      <td style="white-space:nowrap;">Yesterday</td>
+                      <td><span style="color:var(--primary);font-weight:500;">Amy Liu</span></td>
+                    </tr>
+                    <tr onclick="openDetail(this)">
+                      <td><input type="checkbox"></td>
+                      <td><span class="td-id">#2053054981</span></td>
+                      <td>
+                        <div class="td-customer">
+                          <div class="td-avatar">R</div>
+                          <div>
+                            <div class="td-name">Robert Taylor</div>
+                            <div class="td-email">robert@email.com</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        <div class="td-product">app-9b1e67d...<br>Running Shoes Size 42</div>
+                      </td>
+                      <td><span class="tag tag-red"><span class="tag-dot"></span>Wrong item</span></td>
+                      <td class="td-amount">USD 67.00</td>
+                      <td><span class="tag tag-blue"><span class="tag-dot"></span>In Coordination</span></td>
+                      <td style="white-space:nowrap;">3 hours ago</td>
+                      <td><span style="color:var(--primary);font-weight:500;">John Doe</span></td>
+                    </tr>
+                    <tr onclick="openDetail(this)">
+                      <td><input type="checkbox"></td>
+                      <td><span class="td-id">#2053054823</span></td>
+                      <td>
+                        <div class="td-customer">
+                          <div class="td-avatar">E</div>
+                          <div>
+                            <div class="td-name">Emily Davis</div>
+                            <div class="td-email">emily@email.com</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        <div class="td-product">app-2c5f89a...<br>Stainless Steel Water Bottle</div>
+                      </td>
+                      <td><span class="tag tag-orange"><span class="tag-dot"></span>Others</span></td>
+                      <td class="td-amount">USD 8.90</td>
+                      <td><span class="tag tag-red"><span class="tag-dot"></span>Arbitration</span></td>
+                      <td style="white-space:nowrap;">2 days ago</td>
+                      <td><span style="color:var(--primary);font-weight:500;">Admin</span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="pagination">
+                <button class="page-btn" disabled>&lt;</button>
+                <button class="page-btn active">1</button>
+                <button class="page-btn">2</button>
+                <button class="page-btn">3</button>
+                <span style="color:var(--text-muted);padding:0 4px;">...</span>
+                <button class="page-btn">16</button>
+                <button class="page-btn">&gt;</button>
+                <span style="color:var(--text-muted);font-size:13px;margin-left:8px;">Total 156 items</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: Detail Panel -->
+          <div class="panel-right" id="detailPanel">
+            <div class="panel-header">
+              <h3>Ticket #2053055343</h3>
+              <button class="panel-close" onclick="closeDetail()">✕</button>
+            </div>
+            <div class="panel-scroll">
+              <!-- Status -->
+              <div class="detail-section">
+                <div class="detail-section-title">Status</div>
+                <div class="detail-card">
+                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                    <span class="tag tag-blue"><span class="tag-dot"></span>In Coordination</span>
+                    <span style="font-size:12px;color:var(--text-muted);">Updated 18:42</span>
+                  </div>
+                  <div class="quick-actions">
+                    <button class="q-btn" onclick="alert('Assigned to you')">👤 Assign to me</button>
+                    <button class="q-btn" onclick="alert('Status: Pending')">⏳ Mark Pending</button>
+                    <button class="q-btn" onclick="alert('Status: Closed')">✅ Close Ticket</button>
+                    <button class="q-btn danger" onclick="alert('Arbitration requested')">⚖️ Arbitration</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Customer -->
+              <div class="detail-section">
+                <div class="detail-section-title">Customer</div>
+                <div class="detail-card">
+                  <div class="detail-row">
+                    <span class="detail-label">Name</span>
+                    <span class="detail-value">Lisa Wang</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">Email</span>
+                    <span class="detail-value">lisa@email.com</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">Phone</span>
+                    <span class="detail-value">+1 234-567-8901</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">Customer ID</span>
+                    <span class="detail-value mono">C-8827361</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Order Info -->
+              <div class="detail-section">
+                <div class="detail-section-title">Order Information</div>
+                <div class="detail-card">
+                  <div class="detail-row">
+                    <span class="detail-label">Order Number</span>
+                    <span class="detail-value mono">app-8cda32f11d8042a78c5</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">Serial Number</span>
+                    <span class="detail-value mono">2053049964474236929</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">Store</span>
+                    <span class="detail-value">clozora.myshoplaza.com</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">Product</span>
+                    <span class="detail-value">Winter Knit Long Scarf Set<br>Warm Gloves Scarves</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">Total Amount</span>
+                    <span class="detail-value">USD 4.95</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">Refundable</span>
+                    <span class="detail-value">USD 4.95</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">Order Date</span>
+                    <span class="detail-value">2026-05-09 17:50:30</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">Tracking No</span>
+                    <span class="detail-value" style="color:var(--text-muted);">— Not shipped —</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Dispute Info -->
+              <div class="detail-section">
+                <div class="detail-section-title">Dispute Details</div>
+                <div class="detail-card">
+                  <div class="detail-row">
+                    <span class="detail-label">Type</span>
+                    <span class="detail-value">Wrong address</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">Card Last 4</span>
+                    <span class="detail-value mono">9732</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">Claim</span>
+                    <span class="detail-value">I entered the wrong address, so I didn't receive the package.</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">Created</span>
+                    <span class="detail-value">2026-05-09 18:11:52</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Timeline -->
+              <div class="detail-section">
+                <div class="detail-section-title">Processing Record</div>
+                <div class="mini-timeline">
+                  <div class="mini-item system">
+                    <div class="mini-meta">
+                      <span class="mini-role system">System</span>
+                      <span class="mini-time">2026-05-09 18:11</span>
+                    </div>
+                    <div class="mini-text">Dispute created. Type: Wrong address.</div>
+                  </div>
+                  <div class="mini-item customer">
+                    <div class="mini-meta">
+                      <span class="mini-role customer">Customer</span>
+                      <span class="mini-time">2026-05-09 18:15</span>
+                    </div>
+                    <div class="mini-text">Please update shipping address to: 123 Main St, New York, NY 10001.</div>
+                  </div>
+                  <div class="mini-item agent">
+                    <div class="mini-meta">
+                      <span class="mini-role agent">Agent John</span>
+                      <span class="mini-time">2026-05-09 18:42</span>
+                    </div>
+                    <div class="mini-text">Coordinating with warehouse. Will update within 24h.</div>
+                  </div>
+                  <div class="mini-item system">
+                    <div class="mini-meta">
+                      <span class="mini-role system">System</span>
+                      <span class="mini-time">2026-05-09 19:05</span>
+                    </div>
+                    <div class="mini-text">Status changed to: In Coordination.</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Internal Note -->
+              <div class="detail-section">
+                <div class="detail-section-title">Internal Note</div>
+                <div class="detail-card" style="background:#fffbe6;border:1px solid #ffd591;">
+                  <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;">
+                    Warehouse confirmed package not shipped yet. Address can be updated directly. Awaiting customer confirmation of new address.
+                  </p>
+                  <p style="font-size:11px;color:var(--text-muted);margin-top:8px;">— John Doe, 2026-05-09 18:45</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Reply -->
+            <div class="panel-reply">
+              <textarea placeholder="Type your reply to customer..."></textarea>
+              <div class="reply-tools">
+                <div class="reply-tools-left">
+                  <button class="tool-icon" title="Image">🖼️</button>
+                  <button class="tool-icon" title="Attachment">📎</button>
+                  <button class="tool-icon" title="Template">📋</button>
+                </div>
+                <div style="display:flex;gap:8px;">
+                  <button class="btn-sm btn-sm-default">Internal Note</button>
+                  <button class="btn-sm btn-sm-primary">Send Reply</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Overlay for mobile detail -->
+<div class="overlay" id="overlay" onclick="closeDetail()"></div>
+
+<script>
+  function openDetail(row) {
+    document.querySelectorAll('tbody tr').forEach(r => r.classList.remove('selected'));
+    row.classList.add('selected');
+    const panel = document.getElementById('detailPanel');
+    const overlay = document.getElementById('overlay');
+    if (window.innerWidth <= 1024) {
+      panel.classList.add('open');
+      overlay.classList.add('open');
+    }
+  }
+  function closeDetail() {
+    document.getElementById('detailPanel').classList.remove('open');
+    document.getElementById('overlay').classList.remove('open');
+  }
+  function filterTickets(type) {
+    document.querySelectorAll('.stat-card').forEach(c => c.classList.remove('active-filter'));
+    event.currentTarget.classList.add('active-filter');
+  }
+  // Filter buttons
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      this.classList.add('active');
+    });
+  });
+</script>
+
+</body>
+</html>

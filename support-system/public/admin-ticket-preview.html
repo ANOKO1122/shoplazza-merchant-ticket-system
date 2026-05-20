@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Customer Preview</title>
+<style>
+  :root {
+    --primary: #1890ff;
+    --primary-hover: #40a9ff;
+    --success: #52c41a;
+    --warning: #fa8c16;
+    --danger: #ff4d4f;
+    --text-main: #262626;
+    --text-secondary: #595959;
+    --text-muted: #8c8c8c;
+    --border: #d9d9d9;
+    --bg-page: #f5f7fa;
+    --bg-card: #ffffff;
+    --bg-hover: #f5f5f5;
+    --radius: 12px;
+    --shadow: 0 2px 8px rgba(0,0,0,0.06);
+    --shadow-lg: 0 4px 16px rgba(0,0,0,0.08);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg-page);
+    color: var(--text-main);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .navbar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--bg-card);
+    border-bottom: 1px solid #f0f0f0;
+    padding: 0 16px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .navbar .logo {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    object-fit: cover;
+  }
+  .navbar .brand { font-size: 16px; font-weight: 600; }
+  .container { max-width: 960px; margin: 0 auto; padding: 16px; }
+  .preview-banner {
+    background: #fffbe6;
+    border: 1px solid #ffd591;
+    border-radius: 10px;
+    color: #ad6800;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    font-size: 14px;
+  }
+  .card {
+    background: var(--bg-card);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 24px;
+    margin-bottom: 16px;
+  }
+  .page { display: none; animation: fadeIn .3s ease; }
+  .page.active { display: block; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px);} to { opacity: 1; transform: translateY(0);} }
+
+  .page-title {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--warning);
+    margin-bottom: 16px;
+  }
+  .greeting { font-size: 15px; color: var(--text-secondary); margin-bottom: 12px; }
+  .order-summary {
+    font-size: 15px;
+    color: var(--text-secondary);
+    line-height: 1.8;
+    margin-bottom: 16px;
+  }
+  .order-summary .highlight-money { color: #ff4d4f; font-weight: 600; }
+  .order-summary .highlight-link { color: var(--primary); text-decoration: none; }
+  .order-summary .highlight-time { color: #ff4d4f; }
+
+  .section-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-main);
+    padding-bottom: 12px;
+    border-bottom: 1px solid #f0f0f0;
+    margin-bottom: 20px;
+  }
+  .form-group { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+  .form-label { font-size: 14px; font-weight: 500; color: var(--text-secondary); }
+  .form-control {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 15px;
+    color: var(--text-main);
+    background: #fff;
+    transition: border-color .2s, box-shadow .2s;
+    -webkit-appearance: none;
+  }
+  .form-control:disabled { background: #f5f5f5; color: #8c8c8c; cursor: not-allowed; }
+  textarea.form-control { resize: vertical; min-height: 120px; }
+  select.form-control {
+    background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238c8c8c' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    padding-right: 36px;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 24px;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all .2s;
+    -webkit-tap-highlight-color: transparent;
+    min-height: 44px;
+  }
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-success { background: var(--success); color: #fff; }
+  .btn-danger { background: var(--danger); color: #fff; }
+  .btn-default { background: #fff; color: var(--text-secondary); border: 1px solid var(--border); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .ticket-layout {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+  .status-card {
+    border: 1px solid #ffd591;
+    background: #fffbe6;
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 20px;
+  }
+  .status-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--warning);
+    margin-bottom: 10px;
+  }
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--warning);
+    display: inline-block;
+  }
+  .status-meta { font-size: 13px; color: var(--text-muted); line-height: 1.8; }
+  .info-list { display: flex; flex-direction: column; gap: 14px; }
+  .info-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .info-label { font-size: 14px; color: var(--text-muted); white-space: nowrap; flex-shrink: 0; }
+  .info-value {
+    font-size: 14px;
+    color: var(--text-main);
+    text-align: right;
+    word-break: break-word;
+    line-height: 1.5;
+  }
+  .ticket-body {
+    background: var(--bg-card);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    min-height: 600px;
+  }
+  .ticket-header {
+    padding: 20px 24px;
+    border-bottom: 1px solid #f0f0f0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .ticket-header h2 { font-size: 18px; font-weight: 600; }
+  .ticket-id { font-size: 13px; color: var(--text-muted); background: var(--bg-page); padding: 4px 10px; border-radius: 20px; }
+  .btn-group {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .btn-group .btn {
+    flex: 1;
+    white-space: nowrap;
+    padding: 8px 12px;
+    font-size: 13px;
+    min-height: auto;
+  }
+  .timeline { flex: 1; padding: 24px; overflow-y: auto; }
+  .timeline-item {
+    padding: 0 0 20px 0;
+    margin-bottom: 16px;
+    border-bottom: 1px solid #f0f0f0;
+  }
+  .timeline-item:last-child { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }
+  .timeline-meta { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+  .timeline-role { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
+  .timeline-role.system { background: #f5f5f5; color: var(--text-muted); }
+  .timeline-role.customer { background: #f6ffed; color: var(--success); }
+  .timeline-role.agent { background: #e6f7ff; color: var(--primary); }
+  .timeline-role.platform { background: #fffbe6; color: var(--warning); }
+  .timeline-time { font-size: 12px; color: var(--text-muted); }
+  .timeline-content {
+    background: var(--bg-page);
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .reply-area { border-top: 1px solid #f0f0f0; padding: 16px 24px 24px; }
+  .reply-box {
+    width: 100%;
+    min-height: 100px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 16px;
+    color: var(--text-main);
+    resize: vertical;
+    margin-bottom: 12px;
+  }
+  .reply-actions { display: flex; justify-content: flex-end; gap: 10px; }
+  .error-msg {
+    background: #fff2f0;
+    border: 1px solid #ffccc7;
+    border-radius: 8px;
+    padding: 12px 16px;
+    color: var(--danger);
+    font-size: 14px;
+    margin-bottom: 16px;
+  }
+  .loading { text-align: center; padding: 60px 20px; color: var(--text-muted); font-size: 15px; }
+
+  @media (max-width: 768px) {
+    .container { padding: 12px; }
+    .card { padding: 18px; }
+    .page-title { font-size: 20px; }
+    .ticket-layout { grid-template-columns: 1fr; }
+    .ticket-body { min-height: 400px; }
+    .timeline { padding: 16px; }
+    .reply-area { padding: 14px 16px 18px; }
+    .info-row { gap: 8px; }
+    .ticket-header h2 { font-size: 16px; }
+    .reply-box { font-size: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="navbar">
+  <img class="logo" src="/assets/logo.png" alt="Logo">
+  <div class="brand">Official Customer Service</div>
+</nav>
+
+<div class="container">
+  <div class="preview-banner">管理员预览模式：下方页面按顾客端页面展示；所有提交、回复、关闭、仲裁操作均已禁用，不包含顾客访问 token。</div>
+  <div id="app"><div class="loading">Loading...</div></div>
+</div>
+
+<script>
+var API = '/api/admin';
+
+function $(sel) { return document.querySelector(sel); }
+function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+function formatDate(iso) {
+  if (!iso) return '';
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  var y = d.getFullYear();
+  var m = String(d.getMonth() + 1).padStart(2, '0');
+  var day = String(d.getDate()).padStart(2, '0');
+  var h = String(d.getHours()).padStart(2, '0');
+  var min = String(d.getMinutes()).padStart(2, '0');
+  var s = String(d.getSeconds()).padStart(2, '0');
+  return y + '-' + m + '-' + day + ' ' + h + ':' + min + ':' + s;
+}
+
+var disputeTypes = ['Unknow', 'Fraud', 'Unauthorized', 'Products Discrepancies', 'Product Not Received', 'Defective Merchandise', 'Incorrect Transaction', 'Wrong address', 'Credit Not Processed'];
+
+function renderNewTicket(order) {
+  var card = order.card_last4 || '';
+  var paymentMethod = (order.payment_method || '').replace(/_/g, ' ');
+  var storeUrl = (order.store_subdomain || '');
+  if (storeUrl.indexOf('.') === -1) storeUrl += '.myshoplaza.com';
+
+  var opts = '';
+  disputeTypes.forEach(function(t) { opts += '<option>' + esc(t) + '</option>'; });
+
+  var amountDisplay = (order.order_currency || 'USD') + ' ' + (order.order_amount || '0.00');
+  var dateDisplay = formatDate(order.paid_at);
+
+  var paymentRow = '';
+  if (card) {
+    paymentRow = '<div class="form-group"><label class="form-label">Last 4 Digits Of Card Number</label><input type="text" class="form-control" value="' + esc(card) + '" maxlength="4" disabled></div>';
+  } else if (paymentMethod) {
+    paymentRow = '<div class="form-group"><label class="form-label">Payment Method</label><input type="text" class="form-control" value="' + esc(paymentMethod) + '" disabled></div>';
+  }
+
+  $('#app').innerHTML =
+    '<div class="page active">' +
+    '<div class="card">' +
+    '<h1 class="page-title">Dispute initiated</h1>' +
+    '<p class="greeting">Dear ' + esc(order.customer_name || 'Customer') + '</p>' +
+    '<p class="order-summary">' +
+    'You made a <span class="highlight-money">' + esc(amountDisplay) + '</span> purchase on ' +
+    '<a href="https://' + esc(storeUrl) + '" target="_blank" rel="noopener" class="highlight-link">' + esc(storeUrl) + '</a> from ' +
+    '<span class="highlight-time">' + esc(dateDisplay) + '</span>' +
+    '</p>' +
+    '<p class="order-summary">' +
+    'If you have any questions about this order, please enter and send dispute information' +
+    '</p>' +
+    '</div>' +
+    '<div class="card">' +
+    '<div class="section-title">Initiate Disputes</div>' +
+    paymentRow +
+    '<div class="form-group">' +
+    '<label class="form-label">Dispute Type</label>' +
+    '<select class="form-control" id="issueType" disabled>' + opts + '</select>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label class="form-label">Claims</label>' +
+    '<textarea class="form-control" id="description" placeholder="Please describe your issue in detail..." disabled></textarea>' +
+    '</div>' +
+    '<button class="btn btn-primary" disabled>Submit</button>' +
+    '</div></div>';
+}
+
+function renderTicketDetail(data) {
+  var t = data.ticket;
+  var order = data.order || {};
+  var msgs = data.messages || [];
+
+  var items = Array.isArray(order.items) ? order.items.map(function(it) {
+    return '<div style="font-size:13px;line-height:1.6"><span style="color:#262626">' + esc(it.product_title || it.title || it.name || '') + '</span> <span style="color:#8c8c8c">x' + esc(it.quantity || 1) + '</span></div>';
+  }).join('') : '';
+
+  var timelineHtml = '';
+  msgs.forEach(function(m) {
+    var roleLabels = { agent: 'Merchant', customer: 'Customer', system: 'System', platform: 'Platform' };
+    var role = roleLabels[m.sender_type] || m.sender_type;
+    timelineHtml +=
+      '<div class="timeline-item ' + esc(m.sender_type) + '">' +
+      '<div class="timeline-meta">' +
+      '<span class="timeline-role ' + esc(m.sender_type) + '">' + esc(role) + '</span>' +
+      '<span class="timeline-time">' + esc(formatDate(m.created_at)) + '</span>' +
+      '</div>' +
+      '<div class="timeline-content">' + esc(m.content) + '</div>' +
+      '</div>';
+  });
+
+  var statusColor = t.status === 'closed' ? 'var(--text-muted)' : 'var(--warning)';
+  var statusText = t.status === 'closed' ? 'Closed' : (t.arbitration_requested ? 'In Arbitration' : 'In Coordination');
+  var replyBlock = t.status === 'closed' ? '' :
+    '<div class="reply-area">' +
+    '<textarea class="reply-box" id="replyBox" placeholder="Enter your reply here..." maxlength="2000" disabled></textarea>' +
+    '<div class="reply-actions">' +
+    '<button class="btn btn-primary" disabled>Send</button>' +
+    '</div>' +
+    '</div>';
+
+  var actionButtons = '';
+  if (t.status !== 'closed') {
+    actionButtons += '<button class="btn btn-success" disabled>Close Dispute</button>';
+    if (!t.arbitration_requested) {
+      actionButtons += '<button class="btn btn-primary" disabled>Apply For Arbitration</button>';
+    }
+  }
+
+  $('#app').innerHTML =
+    '<div class="page active">' +
+    '<div class="ticket-layout">' +
+    '<aside><div class="card">' +
+    '<div class="section-title">Order Details</div>' +
+    '<div class="status-card">' +
+    '<div class="status-header">' +
+    '<span class="status-dot" style="background:' + statusColor + '"></span>' +
+    '<span>' + esc(statusText) + '</span></div>' +
+    '<div class="status-meta">' +
+    '<div>Dispute ID: ' + esc(t.public_ticket_no) + '</div>' +
+    '<div>Initiation Time: ' + esc(formatDate(t.created_at)) + '</div>' +
+    '</div></div>' +
+    '<div class="info-list">' +
+    '<div class="info-row"><span class="info-label">Serial Number:</span><span class="info-value">' + esc(t.public_ticket_no) + '</span></div>' +
+    '<div class="info-row"><span class="info-label">Order Number:</span><span class="info-value">' + esc(order.order_number || '') + '</span></div>' +
+    '<div class="info-row"><span class="info-label">Total Amount:</span><span class="info-value">' + esc(order.order_currency || 'USD') + ' ' + esc(order.order_amount || '') + '</span></div>' +
+    '<div class="info-row"><span class="info-label">Refundable Amount:</span><span class="info-value">' + esc(order.order_currency || 'USD') + ' ' + esc(order.order_amount || '') + '</span></div>' +
+    '<div class="info-row"><span class="info-label">Order Date:</span><span class="info-value">' + esc(formatDate(order.paid_at)) + '</span></div>' +
+    '<div class="info-row"><span class="info-label">Tracking No:</span><span class="info-value">' + esc(order.tracking_no || 'Not shipped') + '</span></div>' +
+    '<div class="info-row"><span class="info-label">Products:</span><span class="info-value">' + items + '</span></div>' +
+    '</div>' +
+    (actionButtons ? '<div class="btn-group" style="margin-top:24px">' + actionButtons + '</div>' : '') +
+    '</div></aside>' +
+    '<section class="ticket-body">' +
+    '<div class="ticket-header"><h2>Dispute Processing Record</h2><span class="ticket-id">#' + esc(t.public_ticket_no) + '</span></div>' +
+    '<div class="timeline">' + timelineHtml + '</div>' +
+    replyBlock +
+    '</section>' +
+    '</div></div>';
+}
+
+async function loadPreview() {
+  var params = new URLSearchParams(location.search);
+  var ticket = params.get('ticket');
+  var store = params.get('store');
+  var order = params.get('order');
+  var email = params.get('email');
+  var url = '';
+  if (ticket) url = API + '/tickets/' + encodeURIComponent(ticket) + '/customer-preview';
+  else if (store && order) url = API + '/orders/' + encodeURIComponent(store) + '/' + encodeURIComponent(order) + '/customer-preview' + (email ? '?email=' + encodeURIComponent(email) : '');
+  else {
+    $('#app').innerHTML = '<div class="card"><div class="error-msg">Missing preview target.</div></div>';
+    return;
+  }
+
+  try {
+    var r = await fetch(url, { credentials:'same-origin' });
+    var data = await r.json();
+    if (!data.ok) {
+      $('#app').innerHTML = '<div class="card"><div class="error-msg">' + esc(data.error || 'Preview failed') + '</div></div>';
+      return;
+    }
+    if (data.mode === 'new_ticket') renderNewTicket(data.order);
+    else if (data.ticket) renderTicketDetail(data);
+    else renderNewTicket(data.order);
+  } catch(e) {
+    $('#app').innerHTML = '<div class="card"><div class="error-msg">Failed to load. Please check your connection and refresh.</div></div>';
+  }
+}
+
+loadPreview();
+</script>
+</body>
+</html>

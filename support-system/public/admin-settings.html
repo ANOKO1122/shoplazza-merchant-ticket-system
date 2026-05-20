@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>客服后台 - 系统设置</title>
+<link rel="stylesheet" href="/admin-base.css">
+<style>
+  .settings-card { background: var(--bg-card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 24px; margin-bottom: 16px; }
+  .settings-card h3 { font-size: 15px; font-weight: 600; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+  .form-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .form-row label { width: 160px; font-size: 13px; font-weight: 500; color: var(--text-secondary); flex-shrink: 0; }
+  .form-row input[type="text"] { flex: 1; max-width: 420px; border: 1px solid var(--border-strong); border-radius: 6px; padding: 8px 12px; font-size: 13px; outline: none; }
+  .form-row input[type="text"]:focus { border-color: var(--primary); }
+  .form-hint { font-size: 11px; color: var(--text-muted); margin-left: 172px; margin-bottom: 16px; }
+  .toggle-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .toggle-row label:first-child { width: 160px; font-size: 13px; font-weight: 500; color: var(--text-secondary); flex-shrink: 0; }
+  .toggle { position: relative; display: inline-block; width: 44px; height: 24px; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #ccc; border-radius: 24px; transition: .3s; }
+  .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: .3s; }
+  .toggle input:checked + .slider { background: var(--success); }
+  .toggle input:checked + .slider:before { transform: translateX(20px); }
+  .toggle-label { font-size: 13px; color: var(--text-secondary); }
+  .status-badge { display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 12px; font-weight: 500; }
+  .status-badge.test { background: #fffbe6; color: var(--warning); }
+  .status-badge.live { background: #f6ffed; color: var(--success); }
+  .status-badge.unset { background: #f5f5f5; color: var(--text-muted); }
+  .btn { padding: 8px 20px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: 500; }
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-primary:hover { background: var(--primary-hover); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .toast { position: fixed; top: 20px; right: 20px; z-index: 9999; padding: 10px 20px; border-radius: 6px; font-size: 13px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); animation: toastIn .3s ease; }
+  .toast.success { background: #f6ffed; color: #52c41a; border: 1px solid #b7eb8f; }
+  .toast.error { background: #fff2f0; color: #ff4d4f; border: 1px solid #ffccc7; }
+  @keyframes toastIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+  .env-hint { background: #f0f7ff; border: 1px solid #91d5ff; border-radius: 6px; padding: 10px 14px; font-size: 12px; color: var(--text-secondary); margin-top: 8px; }
+  .env-hint code { background: #e6f7ff; padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+</style>
+</head>
+<body>
+<div id="app"><div class="login-page"><div class="login-card" style="text-align:center;color:var(--text-muted);padding:60px 36px">加载中...</div></div></div>
+<script>
+var API='/api/admin';var me=null;
+function $(s){return document.querySelector(s)}
+function showToast(m,t){var d=document.createElement('div');d.className='toast '+(t||'success');d.textContent=m;document.body.appendChild(d);setTimeout(function(){d.remove()},2500)}
+
+(async function init(){
+  try{
+    var r=await fetch(API+'/me',{credentials:'same-origin'});
+    var d=await r.json();
+    if(d.ok){me=d.agent;await loadSettings();renderMain()}
+    else{location.replace('/login?redirect='+encodeURIComponent('/admin-settings'))}
+  }catch(e){location.replace('/login?redirect='+encodeURIComponent('/admin-settings'))}
+})();
+
+var settings = { mail_test_mode: false, public_base_url: '' };
+
+async function loadSettings(){
+  try{
+    var r=await fetch(API+'/settings',{credentials:'same-origin'});
+    var d=await r.json();
+    if(d.ok) settings = d.settings;
+  }catch(e){}
+}
+
+function renderMain(){
+  var testBadge = settings.mail_test_mode
+    ? '<span class="status-badge test">🧪 测试模式 (Mailpit)</span>'
+    : '<span class="status-badge live">📧 真实发送</span>';
+  var urlValue = settings.public_base_url || '';
+  var urlBadge = urlValue
+    ? '<span class="status-badge live">已配置</span>'
+    : '<span class="status-badge unset">未配置（使用 .env 默认值）</span>';
+
+  $('#app').innerHTML =
+'<div class="app">'+
+'<aside class="sidebar">'+
+'<div class="sidebar-header"><img src="/assets/logo.png" onerror="this.style.display=\'none\'"><span class="sidebar-title">客服后台</span></div>'+
+'<nav class="nav-menu">'+
+'<a class="nav-item" href="/admin"><span class="nav-icon">📋</span>工单处理</a>'+
+'<a class="nav-item" href="/admin-stores"><span class="nav-icon">🏪</span>店铺管理</a>'+
+'<a class="nav-item" href="/admin-emails"><span class="nav-icon">📧</span>订单邮件管理</a>'+
+'<a class="nav-item" href="/admin/email-templates"><span class="nav-icon">📨</span>邮件模板</a>'+
+'<a class="nav-item active"><span class="nav-icon">⚙️</span>系统设置</a>'+
+'<a class="nav-item" href="/admin-logs"><span class="nav-icon">📋</span>系统日志</a>'+
+'</nav>'+
+'<div class="sidebar-footer"><span>v1.0.0</span><span>'+me.name+'</span></div>'+
+'</aside>'+
+'<div class="main">'+
+'<header class="topbar"><div class="breadcrumb">首页 / <strong>系统设置</strong></div><div class="topbar-right"><button class="btn-logout" onclick="doLogout()">退出</button></div></header>'+
+'<div class="content" style="padding:20px;overflow:auto">'+
+
+// ── 公网域名配置 ──
+'<div class="settings-card">'+
+'<h3>🌐 公网域名配置</h3>'+
+'<div class="form-row"><label>公网访问地址</label><input type="text" id="publicBaseUrl" value="'+urlValue+'" placeholder="例如 https://support.yourdomain.com"></div>'+
+'<div class="form-hint">部署到服务器后在此填写公网域名，用于 Webhook 注册地址和邮件中的客户链接。留空则使用 .env 中的 <code>SUPPORT_PUBLIC_BASE_URL</code> 值。</div>'+
+'<div style="display:flex;align-items:center;gap:10px"><span style="font-size:12px">当前状态：</span>'+urlBadge+'</div>'+
+'</div>'+
+
+// ── 邮件发送模式 ──
+'<div class="settings-card">'+
+'<h3>📧 邮件发送模式</h3>'+
+'<div class="toggle-row"><label>Mailpit 测试模式</label>'+
+'<label class="toggle"><input type="checkbox" id="mailTestMode" '+(settings.mail_test_mode?'checked':'')+' onchange="onTestModeToggle()"><span class="slider"></span></label>'+
+'<span class="toggle-label" id="testModeLabel">'+(settings.mail_test_mode?'邮件将发送到 localhost:1025 (Mailpit)':'使用 .env 中配置的真实 SMTP')+'</span></div>'+
+'<div class="form-hint">开启后所有邮件发往本地 Mailpit（localhost:1025），可用于开发测试，不会真实发送给顾客。</div>'+
+'<div style="display:flex;align-items:center;gap:10px"><span style="font-size:12px">当前状态：</span>'+testBadge+'</div>'+
+'<div class="env-hint">💡 确保已启动 Mailpit：<code>docker run -d --name mailpit -p 1025:1025 -p 8025:8025 axllent/mailpit</code>，Web 界面在 <code>http://localhost:8025</code></div>'+
+'</div>'+
+// ── 账户安全 ──
+'<div class="settings-card">'+
+'<h3>🔒 账户安全</h3>'+
+'<div style="max-width:360px">'+
+'<div class="form-group"><label>当前用户名</label><input type="text" value="'+me.name+'" disabled style="border:1px solid var(--border-strong);border-radius:6px;padding:8px 12px;font-size:13px;width:100%;background:#f5f5f5"></div>'+
+'<div class="form-group"><label>旧密码</label><input type="password" id="oldPassword" placeholder="输入当前密码" style="border:1px solid var(--border-strong);border-radius:6px;padding:8px 12px;font-size:13px;width:100%"></div>'+
+'<div class="form-group"><label>新密码</label><input type="password" id="newPassword" placeholder="至少 6 位" style="border:1px solid var(--border-strong);border-radius:6px;padding:8px 12px;font-size:13px;width:100%"></div>'+
+'<button class="btn btn-primary" style="width:auto" onclick="changePassword()">🔑 修改密码</button>'+
+'<span id="pwdMsg" style="font-size:12px;margin-left:10px"></span>'+
+'</div>'+
+'</div>'+
+// ── 保存按钮 ──
+'<div style="display:flex;gap:10px;margin-top:4px">'+
+'<button class="btn btn-primary" id="saveBtn" onclick="saveSettings()">💾 保存全部设置</button>'+
+'</div>'+
+
+'</div></div></div>';
+}
+
+function onTestModeToggle(){
+  var checked = document.getElementById('mailTestMode').checked;
+  document.getElementById('testModeLabel').textContent = checked
+    ? '邮件将发送到 localhost:1025 (Mailpit)'
+    : '使用 .env 中配置的真实 SMTP';
+}
+
+async function saveSettings(){
+  var btn = document.getElementById('saveBtn');
+  btn.disabled = true; btn.textContent = '⏳ 保存中...';
+
+  var body = {
+    public_base_url: document.getElementById('publicBaseUrl').value.trim(),
+    mail_test_mode: document.getElementById('mailTestMode').checked
+  };
+
+  try{
+    var r = await fetch(API+'/settings',{
+      method:'PUT', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body)
+    });
+    var d = await r.json();
+    if(d.ok){
+      settings.public_base_url = body.public_base_url;
+      settings.mail_test_mode = body.mail_test_mode;
+      showToast('设置已保存 (' + d.updated.join(', ') + ')','success');
+    } else {
+      showToast(d.error || '保存失败','error');
+    }
+  }catch(e){
+    showToast('网络错误','error');
+  }
+  btn.disabled = false; btn.textContent = '💾 保存全部设置';
+}
+
+async function doLogout(){
+  try{await fetch(API+'/logout',{method:'POST',credentials:'same-origin'})}catch(e){}
+  location.replace('/login');
+}
+
+async function changePassword(){
+  var oldP = document.getElementById('oldPassword').value;
+  var newP = document.getElementById('newPassword').value;
+  var msg = document.getElementById('pwdMsg');
+  if(!oldP){msg.textContent='请输入旧密码';msg.style.color='var(--danger)';return}
+  if(!newP || newP.length<6){msg.textContent='新密码至少 6 位';msg.style.color='var(--danger)';return}
+  msg.textContent='处理中...';msg.style.color='var(--text-muted)';
+  try{
+    var r=await fetch(API+'/me/password',{
+      method:'PUT',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({old_password:oldP,new_password:newP})
+    });
+    var d=await r.json();
+    if(d.ok){
+      msg.textContent='✅ 密码已修改';
+      msg.style.color='var(--success)';
+      document.getElementById('oldPassword').value='';
+      document.getElementById('newPassword').value='';
+    } else {
+      msg.textContent='❌ '+(d.error||'修改失败');
+      msg.style.color='var(--danger)';
+    }
+  }catch(e){
+    msg.textContent='❌ 网络错误';
+    msg.style.color='var(--danger)';
+  }
+}
+</script>
+</body>
+</html>

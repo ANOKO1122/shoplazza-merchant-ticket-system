@@ -1,8 +1,0 @@
-node_modules
-# dist 需打入镜像：无 src 时依赖预编译 dist（见 Dockerfile）
-.env
-.env.*
-*.log
-.git
-.gitignore
-README.md

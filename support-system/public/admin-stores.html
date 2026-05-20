@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>客服后台 - 店铺管理</title>
+<link rel="stylesheet" href="/admin-base.css">
+</head>
+<body>
+<div id="app"><div class="login-page"><div class="login-card" style="text-align:center;color:var(--text-muted);padding:60px 36px">加载中...</div></div></div>
+<script>
+var API='/api/admin';var me=null;
+function $(s){return document.querySelector(s)}function $$(s){return document.querySelectorAll(s)}
+function showToast(m,t){var d=document.createElement('div');d.className='toast '+(t||'success');d.textContent=m;document.body.appendChild(d);setTimeout(function(){d.remove()},2000)}
+
+(async function init(){try{var r=await fetch(API+'/me',{credentials:'same-origin'});var d=await r.json();if(d.ok){me=d.agent;renderMain()}else{location.replace('/login?redirect='+encodeURIComponent('/admin-stores'))}}catch(e){location.replace('/login?redirect='+encodeURIComponent('/admin-stores'))}})();async function doLogout(){await fetch(API+'/logout',{method:'POST',credentials:'same-origin'});location.replace('/login')}
+
+function renderMain(){$('#app').innerHTML='<div class="app"><aside class="sidebar"><div class="sidebar-header"><img src="/assets/logo.png" onerror="this.style.display=\'none\'"><span class="sidebar-title">客服后台</span></div><nav class="nav-menu"><a class="nav-item" href="/admin"><span class="nav-icon">📋</span>工单处理</a><a class="nav-item active" href="/admin-stores"><span class="nav-icon">🏪</span>店铺管理</a><a class="nav-item" href="/admin-emails"><span class="nav-icon">📧</span>订单邮件管理</a><a class="nav-item" href="/admin/email-templates"><span class="nav-icon">📨</span>邮件模板</a><a class="nav-item" href="/admin-settings"><span class="nav-icon">⚙️</span>系统设置</a><a class="nav-item" href="/admin-logs"><span class="nav-icon">📋</span>系统日志</a></nav><div class="sidebar-footer"><span>v1.0.0</span><span>'+me.name+'</span></div></aside><div class="main" id="mainArea"></div></div>';buildLayout();loadStores()}
+
+function buildLayout(){$('#mainArea').innerHTML='<header class="topbar"><div class="breadcrumb">首页 / <strong>店铺管理</strong></div><div class="topbar-right"><button class="btn btn-primary" style="padding:6px 14px;width:auto" onclick="showStoreModal()">+ 新增店铺</button><button class="btn-logout" onclick="doLogout()">退出</button></div></header><div class="content" style="padding:20px;overflow:auto"><div style="background:var(--bg-card);border-radius:8px;box-shadow:var(--shadow);overflow:hidden"><table><thead><tr><th style="width:50px">ID</th><th>店铺域名</th><th>店铺名称</th><th style="width:70px">启停</th><th style="width:160px">Webhook 状态</th><th style="width:100px">操作</th></tr></thead><tbody id="storeTbody"></tbody></table></div></div>'}
+
+var webhookCache = {};
+
+async function fetchWebhookStatus(id){
+  try{
+    var r=await fetch(API+'/stores/'+id+'/webhook/status',{credentials:'same-origin'});
+    var d=await r.json();
+    webhookCache[id]=d;
+    return d;
+  }catch(e){ webhookCache[id]={ok:false,registered:false,error:'Network error'}; return webhookCache[id]; }
+}
+
+async function loadStores(){
+  try{
+    var r=await fetch(API+'/stores',{credentials:'same-origin'});
+    var d=await r.json();
+    if(!d.ok)return;
+    var h='';
+    for(var i=0;i<d.stores.length;i++){
+      var s=d.stores[i];
+      var t='<label class="toggle"><input type="checkbox" '+(s.enabled?'checked':'')+' onchange="toggleStore('+s.id+',this.checked)"><span class="slider"></span></label>';
+      var n='<input type="text" id="sname_'+s.id+'" value="'+(s.store_name||'')+'" style="border:1px solid #d9d9d9;border-radius:4px;padding:4px 8px;font-size:12px;width:120px;text-align:center" placeholder="可为空"> <button class="btn-sm" style="padding:3px 8px;font-size:11px;background:var(--primary);color:#fff;border:none;border-radius:4px;cursor:pointer" onclick="saveStoreName('+s.id+')">保存</button>';
+      var w='<span id="wh_'+s.id+'" style="font-size:12px;color:var(--text-muted)">检查中...</span>';
+      h+='<tr><td style="text-align:center">'+s.id+'</td><td style="text-align:center">'+s.subdomain+'</td><td style="text-align:center">'+n+'</td><td style="text-align:center">'+t+'</td><td style="text-align:center">'+w+'</td><td style="text-align:center"><button class="btn-sm btn-sm-danger" onclick="delStore('+s.id+')">删除</button></td></tr>';
+    }
+    $('#storeTbody').innerHTML=h||'<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:40px">暂无店铺</td></tr>';
+
+    // 异步加载 webhook 状态
+    for(var j=0;j<d.stores.length;j++){
+      (function(sid){
+        fetchWebhookStatus(sid).then(function(status){
+          var cached = webhookCache[sid];
+          if(cached && cached.ok) updateWebhookCell(sid, cached);
+        });
+      })(d.stores[j].id);
+    }
+  }catch(e){}
+}
+
+function updateWebhookCell(storeId, cached){
+  var cell = document.getElementById('wh_'+storeId);
+  if(!cell) return;
+  var html = '';
+  if(cached.registered){
+    html = '<span style="color:var(--success);font-size:12px">✅ 已注册 orders/paid</span>';
+  } else if(cached.error){
+    html = '<span style="color:var(--danger);font-size:12px">❌ '+escapeHtml(cached.error.slice(0,30))+'</span>';
+  } else {
+    html = '<span style="color:var(--warning);font-size:12px">⚠️ 未注册</span>';
+  }
+  html += ' <div style="margin-top:4px">';
+  html += '<button class="btn-sm" style="padding:2px 8px;font-size:10px;background:var(--primary);color:#fff;border:none;border-radius:3px;cursor:pointer" onclick="registerWebhook('+storeId+')">注册</button> ';
+  html += '<button class="btn-sm" style="padding:2px 8px;font-size:10px;background:var(--danger);color:#fff;border:none;border-radius:3px;cursor:pointer" onclick="unregisterWebhook('+storeId+')">注销</button>';
+  html += '</div>';
+  cell.innerHTML = html;
+}
+
+function escapeHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+
+async function registerWebhook(storeId){
+  var cell=document.getElementById('wh_'+storeId);
+  if(cell)cell.innerHTML='<span style="font-size:12px;color:var(--text-muted)">⏳ 注册中...</span>';
+  try{
+    var r=await fetch(API+'/stores/'+storeId+'/webhook/register',{method:'POST',credentials:'same-origin'});
+    var d=await r.json();
+    if(d.ok){
+      showToast(d.alreadyRegistered?'Webhook 已存在':'Webhook 注册成功','success');
+    } else {
+      showToast(d.error||'注册失败','error');
+    }
+    // 刷新状态
+    var status=await fetchWebhookStatus(storeId);
+    updateWebhookCell(storeId, status);
+  }catch(e){showToast('网络错误','error')}
+}
+
+async function unregisterWebhook(storeId){
+  if(!confirm('确认注销该店铺的 Webhook？'))return;
+  var cell=document.getElementById('wh_'+storeId);
+  if(cell)cell.innerHTML='<span style="font-size:12px;color:var(--text-muted)">⏳ 注销中...</span>';
+  try{
+    var r=await fetch(API+'/stores/'+storeId+'/webhook/unregister',{method:'POST',credentials:'same-origin'});
+    var d=await r.json();
+    if(d.ok){
+      showToast('Webhook 已注销','success');
+    } else {
+      showToast(d.error||'注销失败','error');
+    }
+    var status=await fetchWebhookStatus(storeId);
+    updateWebhookCell(storeId, status);
+  }catch(e){showToast('网络错误','error')}
+}
+
+function showStoreModal(){var m=document.createElement('div');m.id='storeModal';m.innerHTML='<div style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.45);z-index:200;display:flex;align-items:center;justify-content:center" onclick="if(event.target===this)closeModal()"><div style="background:#fff;border-radius:8px;padding:24px;width:420px;box-shadow:0 4px 16px rgba(0,0,0,0.15)"><h3 style="margin-bottom:16px">新增店铺</h3><div class="form-group"><label>店铺域名</label><input type="text" id="sSubdomain" placeholder="例如 store-a.myshoplaza.com" style="border:1px solid #d9d9d9;border-radius:6px;padding:9px 12px;width:100%;font-size:14px"></div><div class="form-group"><label>店铺名称</label><input type="text" id="sName" placeholder="可为空" style="border:1px solid #d9d9d9;border-radius:6px;padding:9px 12px;width:100%;font-size:14px"></div><div class="form-group"><label>Access Token</label><input type="text" id="sToken" style="border:1px solid #d9d9d9;border-radius:6px;padding:9px 12px;width:100%;font-size:14px"></div><div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px"><button class="btn btn-primary" style="width:auto" onclick="saveStore()">保存</button><button class="btn-sm" onclick="closeModal()">取消</button></div></div></div>';document.body.appendChild(m)}
+function closeModal(){var m=document.getElementById('storeModal');if(m)m.remove()}
+
+async function saveStore(){var b={subdomain:$('#sSubdomain').value.trim(),store_name:$('#sName').value.trim()};if(!b.subdomain){showToast('请填写域名','error');return}b.access_token=($('#sToken')||{}).value&&$('#sToken').value.trim();if(!b.access_token){showToast('请填写Access Token','error');return}try{var r=await fetch(API+'/stores',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});var d=await r.json();if(d.ok){closeModal();loadStores();showToast('新增成功','success')}else{showToast(d.error||'保存失败','error')}}catch(e){showToast('网络错误','error')}}
+
+async function saveStoreName(id){var i=document.getElementById('sname_'+id);if(!i)return;var n=i.value.trim();try{var r=await fetch(API+'/stores/'+id,{method:'PUT',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({store_name:n})});var d=await r.json();if(d.ok){showToast('保存成功','success')}else{showToast(d.error||'保存失败','error')}}catch(e){showToast('网络错误','error')};loadStores()}
+
+async function toggleStore(id,enabled){try{var r=await fetch(API+'/stores/'+id+'/toggle',{method:'PATCH',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:enabled})});var d=await r.json();if(d.ok){showToast(enabled?'已启用':'已停用','success')}else{showToast(d.error||'操作失败','error')}}catch(e){showToast('网络错误','error')};loadStores()}
+
+async function delStore(id){if(!confirm('确认删除？'))return;try{var r=await fetch(API+'/stores/'+id,{method:'DELETE',credentials:'same-origin'});var d=await r.json();if(d.ok){loadStores();showToast('已删除','success')}else{showToast(d.error||'删除失败','error')}}catch(e){showToast('网络错误','error')}}
+</script>
+</body>
+</html>

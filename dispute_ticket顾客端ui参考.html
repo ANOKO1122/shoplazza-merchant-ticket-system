@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Official Customer Service - Dispute Center</title>
+<style>
+  :root {
+    --primary: #1890ff;
+    --primary-hover: #40a9ff;
+    --success: #52c41a;
+    --warning: #fa8c16;
+    --danger: #ff4d4f;
+    --text-main: #262626;
+    --text-secondary: #595959;
+    --text-muted: #8c8c8c;
+    --border: #d9d9d9;
+    --bg-page: #f5f7fa;
+    --bg-card: #ffffff;
+    --bg-hover: #f5f5f5;
+    --radius: 12px;
+    --shadow: 0 2px 8px rgba(0,0,0,0.06);
+    --shadow-lg: 0 4px 16px rgba(0,0,0,0.08);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg-page);
+    color: var(--text-main);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ===== Navbar ===== */
+  .navbar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--bg-card);
+    border-bottom: 1px solid #f0f0f0;
+    padding: 0 16px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .navbar .logo {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #ffd591 0%, #ff9c6e 100%);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+  }
+  .navbar .brand {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-main);
+  }
+
+  /* ===== Page Switcher ===== */
+  .page { display: none; animation: fadeIn .3s ease; }
+  .page.active { display: block; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px);} to { opacity: 1; transform: translateY(0);} }
+
+  /* ===== Container ===== */
+  .container {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 16px;
+  }
+
+  /* ===== Cards ===== */
+  .card {
+    background: var(--bg-card);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 24px;
+    margin-bottom: 16px;
+  }
+
+  /* ===== Page 1: Initiate ===== */
+  .page-title {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--warning);
+    margin-bottom: 16px;
+  }
+  .greeting { font-size: 15px; color: var(--text-secondary); margin-bottom: 12px; }
+  .order-summary {
+    font-size: 15px;
+    color: var(--text-secondary);
+    line-height: 1.8;
+    margin-bottom: 16px;
+  }
+  .order-summary .highlight-money { color: #ff4d4f; font-weight: 600; }
+  .order-summary .highlight-link { color: var(--primary); text-decoration: none; }
+  .order-summary .highlight-time { color: #ff4d4f; }
+
+  .section-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-main);
+    padding-bottom: 12px;
+    border-bottom: 1px solid #f0f0f0;
+    margin-bottom: 20px;
+  }
+
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+  .form-label {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+  .form-control {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 15px;
+    color: var(--text-main);
+    background: #fff;
+    transition: border-color .2s, box-shadow .2s;
+    -webkit-appearance: none;
+  }
+  .form-control:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(24,144,255,0.1);
+  }
+  textarea.form-control { resize: vertical; min-height: 120px; }
+  select.form-control {
+    background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238c8c8c' stroke-width='1.5' fill='none' fill-rule='evenodd'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    padding-right: 36px;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 24px;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all .2s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-primary:active { background: var(--primary-hover); transform: scale(0.98); }
+  .btn-success { background: var(--success); color: #fff; }
+  .btn-success:active { filter: brightness(1.1); transform: scale(0.98); }
+  .btn-default { background: #fff; color: var(--text-secondary); border: 1px solid var(--border); }
+  .btn-default:active { background: var(--bg-hover); transform: scale(0.98); }
+
+  .btn-group {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  /* ===== Page 2: Ticket Detail (Traditional) ===== */
+  .ticket-layout {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+
+  /* Left: Order Info */
+  .status-card {
+    border: 1px solid #ffd591;
+    background: #fffbe6;
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 20px;
+  }
+  .status-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--warning);
+    margin-bottom: 10px;
+  }
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--warning);
+    display: inline-block;
+  }
+  .status-meta {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.8;
+  }
+
+  .info-list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .info-label {
+    font-size: 14px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .info-value {
+    font-size: 14px;
+    color: var(--text-main);
+    text-align: right;
+    word-break: break-all;
+    line-height: 1.5;
+  }
+
+  /* Right: Ticket Timeline (Traditional, NOT chatroom) */
+  .ticket-body {
+    background: var(--bg-card);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    min-height: 600px;
+  }
+  .ticket-header {
+    padding: 20px 24px;
+    border-bottom: 1px solid #f0f0f0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .ticket-header h2 {
+    font-size: 18px;
+    font-weight: 600;
+  }
+  .ticket-id {
+    font-size: 13px;
+    color: var(--text-muted);
+    background: var(--bg-page);
+    padding: 4px 10px;
+    border-radius: 20px;
+  }
+
+  /* Timeline */
+  .timeline {
+    flex: 1;
+    padding: 24px;
+    overflow-y: auto;
+  }
+  .timeline-item {
+    position: relative;
+    padding-left: 28px;
+    padding-bottom: 24px;
+    border-left: 2px solid #f0f0f0;
+    margin-left: 6px;
+  }
+  .timeline-item:last-child { border-left-color: transparent; padding-bottom: 0; }
+  .timeline-item::before {
+    content: '';
+    position: absolute;
+    left: -7px;
+    top: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--bg-card);
+    border: 2px solid var(--primary);
+  }
+  .timeline-item.system::before { border-color: var(--warning); }
+  .timeline-item.customer::before { border-color: var(--success); }
+  .timeline-item.agent::before { border-color: var(--primary); }
+
+  .timeline-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+  }
+  .timeline-role {
+    font-size: 13px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+  .timeline-role.system { background: #fffbe6; color: var(--warning); }
+  .timeline-role.customer { background: #f6ffed; color: var(--success); }
+  .timeline-role.agent { background: #e6f7ff; color: var(--primary); }
+  .timeline-time {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .timeline-content {
+    background: var(--bg-page);
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+  .timeline-content p { margin-bottom: 8px; }
+  .timeline-content p:last-child { margin-bottom: 0; }
+
+  /* Reply Area */
+  .reply-area {
+    border-top: 1px solid #f0f0f0;
+    padding: 16px 24px 24px;
+  }
+  .reply-toolbar {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .reply-toolbar .tool-btn {
+    width: 36px; height: 36px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 18px;
+    transition: all .2s;
+  }
+  .reply-toolbar .tool-btn:active { background: var(--bg-hover); }
+  .reply-box {
+    width: 100%;
+    min-height: 100px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    color: var(--text-main);
+    resize: vertical;
+    margin-bottom: 12px;
+    transition: border-color .2s, box-shadow .2s;
+  }
+  .reply-box:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(24,144,255,0.1);
+  }
+  .reply-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+
+  /* ===== Floating Buttons ===== */
+  .fab-wrap {
+    position: fixed;
+    right: 16px;
+    bottom: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 90;
+  }
+  .fab {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    border: none;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    transition: transform .2s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .fab:active { transform: scale(0.92); }
+  .fab-menu { background: #fff0f6; color: #eb2f96; }
+  .fab-access { background: #ffd6e7; color: #c41d7f; }
+
+  /* ===== Tab Bar (Mobile Nav) ===== */
+  .tab-bar {
+    display: none;
+    position: sticky;
+    bottom: 0;
+    background: var(--bg-card);
+    border-top: 1px solid #f0f0f0;
+    padding: 8px 0;
+    z-index: 100;
+  }
+  .tab-bar-inner {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    padding: 0 16px;
+  }
+  .tab-btn {
+    flex: 1;
+    max-width: 160px;
+    padding: 10px;
+    border-radius: 8px;
+    border: none;
+    background: transparent;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all .2s;
+  }
+  .tab-btn.active {
+    background: #e6f7ff;
+    color: var(--primary);
+    font-weight: 600;
+  }
+
+  /* ===== Responsive ===== */
+  @media (max-width: 768px) {
+    .container { padding: 12px; }
+    .card { padding: 18px; }
+    .page-title { font-size: 20px; }
+    .ticket-layout {
+      grid-template-columns: 1fr;
+    }
+    .ticket-body { min-height: 400px; }
+    .timeline { padding: 16px; }
+    .reply-area { padding: 14px 16px 18px; }
+    .btn-group { flex-direction: column; }
+    .btn-group .btn { width: 100%; }
+    .info-row { gap: 8px; }
+    .ticket-header h2 { font-size: 16px; }
+    .fab-wrap { right: 12px; bottom: 72px; }
+    .tab-bar { display: block; }
+  }
+
+  @media (min-width: 769px) {
+    .tab-bar { display: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Navbar -->
+<nav class="navbar">
+  <div class="logo">⚖️</div>
+  <div class="brand">Official Customer Service</div>
+</nav>
+
+<!-- ===== PAGE 1: Initiate Dispute ===== -->
+<div class="page active" id="page-initiate">
+  <div class="container">
+    <!-- Info Card -->
+    <div class="card">
+      <h1 class="page-title">Dispute initiated</h1>
+      <p class="greeting">Dear 11</p>
+      <p class="order-summary">
+        You made a <span class="highlight-money">USD 11.12</span> purchase on 
+        <a href="#" class="highlight-link">clozora.myshoplaza.com</a> from 
+        <span class="highlight-time">2025-07-04 15:33:58</span>
+      </p>
+      <p class="order-summary">
+        If you have any questions about this order, please enter and send dispute information
+      </p>
+    </div>
+
+    <!-- Form Card -->
+    <div class="card">
+      <div class="section-title">Initiate Disputes</div>
+      <form onsubmit="event.preventDefault(); alert('Dispute submitted!');">
+        <div class="form-group">
+          <label class="form-label">Last 4 Digits Of Card Number</label>
+          <input type="text" class="form-control" placeholder="9732" maxlength="4" inputmode="numeric">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Dispute Type</label>
+          <select class="form-control">
+            <option>Wrong address</option>
+            <option>Not received</option>
+            <option>Quality issue</option>
+            <option>Wrong item</option>
+            <option>Others</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Claims</label>
+          <textarea class="form-control" placeholder="I entered the wrong address, so I didn't receive the package."></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">Submit</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ===== PAGE 2: Ticket Detail (Traditional) ===== -->
+<div class="page" id="page-detail">
+  <div class="container">
+    <div class="ticket-layout">
+      <!-- Left: Order Details -->
+      <aside>
+        <div class="card">
+          <div class="section-title">Order Details</div>
+
+          <div class="status-card">
+            <div class="status-header">
+              <span class="status-dot"></span>
+              <span>In Coordination</span>
+            </div>
+            <div class="status-meta">
+              <div>Dispute ID: 2053055343230627842</div>
+              <div>Initiation Time: 2026-05-09 18:11:52</div>
+            </div>
+          </div>
+
+          <div class="info-list">
+            <div class="info-row">
+              <span class="info-label">Serial Number:</span>
+              <span class="info-value">2053049964474236929</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Order Number:</span>
+              <span class="info-value">app-8cda32f11d8042a78c5<br>87d552a51954c</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Total Amount:</span>
+              <span class="info-value">USD 4.95</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Refundable Amount:</span>
+              <span class="info-value">USD 4.95</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Order Date:</span>
+              <span class="info-value">2026-05-09 17:50:30</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Tracking No:</span>
+              <span class="info-value">—</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Products:</span>
+              <span class="info-value">Winter Knit Long Scarf Set<br>Warm Gloves Scarves</span>
+            </div>
+          </div>
+
+          <div class="btn-group" style="margin-top: 24px;">
+            <button class="btn btn-success">Close Dispute</button>
+            <button class="btn btn-primary">Apply For Arbitration</button>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Right: Traditional Ticket Timeline -->
+      <section class="ticket-body">
+        <div class="ticket-header">
+          <h2>Dispute Processing Record</h2>
+          <span class="ticket-id">#2053055343230627842</span>
+        </div>
+
+        <div class="timeline">
+          <!-- System -->
+          <div class="timeline-item system">
+            <div class="timeline-meta">
+              <span class="timeline-role system">System</span>
+              <span class="timeline-time">2026-05-09 18:11:52</span>
+            </div>
+            <div class="timeline-content">
+              <p><strong>Dispute Created</strong></p>
+              <p>Consumer initiates a dispute. Dispute Type: Wrong address. Dispute Claim: I entered the wrong address, so I didn't receive the package.</p>
+            </div>
+          </div>
+
+          <!-- Customer -->
+          <div class="timeline-item customer">
+            <div class="timeline-meta">
+              <span class="timeline-role customer">Customer</span>
+              <span class="timeline-time">2026-05-09 18:15:33</span>
+            </div>
+            <div class="timeline-content">
+              <p>Please help me update the shipping address to: 123 Main St, New York, NY 10001. The original address was entered incorrectly.</p>
+            </div>
+          </div>
+
+          <!-- Agent -->
+          <div class="timeline-item agent">
+            <div class="timeline-meta">
+              <span class="timeline-role agent">Agent</span>
+              <span class="timeline-time">2026-05-09 18:42:07</span>
+            </div>
+            <div class="timeline-content">
+              <p>Thank you for contacting us. We have received your dispute request.</p>
+              <p>We are currently coordinating with the warehouse to check whether the package has been shipped. If it has not been shipped, we will update the address for you directly; if it has been shipped, we will assist you in contacting the courier to redirect the package.</p>
+              <p>Please wait patiently, we will update the progress within 24 hours.</p>
+            </div>
+          </div>
+
+          <!-- System -->
+          <div class="timeline-item system">
+            <div class="timeline-meta">
+              <span class="timeline-role system">System</span>
+              <span class="timeline-time">2026-05-09 19:05:18</span>
+            </div>
+            <div class="timeline-content">
+              <p><strong>Status Updated</strong></p>
+              <p>Order status changed to: In Coordination. The merchant has been notified and is processing.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="reply-area">
+          <div class="reply-toolbar">
+            <button class="tool-btn" title="Upload image">🖼️</button>
+            <button class="tool-btn" title="Attachment">📎</button>
+          </div>
+          <textarea class="reply-box" placeholder="Enter your reply here..."></textarea>
+          <div class="reply-actions">
+            <button class="btn btn-default">Reset</button>
+            <button class="btn btn-primary">Send</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- Floating Buttons -->
+<div class="fab-wrap">
+  <button class="fab fab-menu">☰</button>
+  <button class="fab fab-access">♿</button>
+</div>
+
+<!-- Mobile Tab Bar -->
+<div class="tab-bar">
+  <div class="tab-bar-inner">
+    <button class="tab-btn active" onclick="switchPage('page-initiate', this)">Initiate Dispute</button>
+    <button class="tab-btn" onclick="switchPage('page-detail', this)">Ticket Detail</button>
+  </div>
+</div>
+
+<script>
+  function switchPage(pageId, btn) {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById(pageId).classList.add('active');
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    if(btn) btn.classList.add('active');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+</script>
+
+</body>
+</html>

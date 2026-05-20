@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: support_user
+      POSTGRES_PASSWORD: support_password
+      POSTGRES_DB: support_portal
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - support_net
+
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: always
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks:
+      - support_net
+
+  support-bridge:
+    build: .
+    image: support-bridge:local
+    restart: always
+    ports:
+      - "4001:4001"
+    depends_on:
+      - postgres
+      - mailpit
+    env_file:
+      - .env
+    networks:
+      - support_net
+
+volumes:
+  pgdata:
+
+networks:
+  support_net:
+    driver: bridge
