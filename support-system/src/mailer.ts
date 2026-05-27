@@ -1,4 +1,4 @@
-import nodemailer from 'nodemailer';
+import nodemailer, { Transporter } from 'nodemailer';
 import { loadConfig } from './config';
 import { getMailTestMode } from './email-service';
 
@@ -9,33 +9,66 @@ export interface SupportMail {
   text: string;
 }
 
-export async function sendSupportEmail(mail: SupportMail): Promise<{ messageId: string }> {
+// ── Transporter 复用 ──
+let cachedTransporter: Transporter | null = null;
+let cachedFingerprint = '';
+
+function buildFingerprint(host: string, port: number, secure: boolean, user: string, testMode: boolean): string {
+  return `${host}:${port}:${secure}:${user}:${testMode}`;
+}
+
+async function getTransporter(): Promise<Transporter> {
   const config = loadConfig();
   const testMode = await getMailTestMode().catch(() => false);
 
-  let host = config.smtpHost;
-  let port = config.smtpPort;
-  let secure = config.smtpSecure;
-  let auth: { user: string; pass: string } | undefined = config.smtpUser ? { user: config.smtpUser, pass: config.smtpPass } : undefined;
+  let host: string;
+  let port: number;
+  let secure: boolean;
+  let auth: { user: string; pass: string } | undefined;
 
-  // Mailpit 测试模式：强制发送到 localhost:1025，无认证
   if (testMode) {
-    host = 'localhost';
+    // Mailpit 测试模式：Docker 网络内用容器名 mailpit，宿主机用 localhost
+    // 可通过 SUPPORT_MAILPIT_HOST 环境变量覆盖
+    host = process.env.SUPPORT_MAILPIT_HOST || 'mailpit';
     port = 1025;
     secure = false;
     auth = undefined;
+  } else {
+    // 生产模式：阿里云邮件推送等
+    host = config.smtpHost;
+    port = config.smtpPort;
+    secure = config.smtpSecure;
+    auth = config.smtpUser ? { user: config.smtpUser, pass: config.smtpPass } : undefined;
   }
 
-  const transporter = nodemailer.createTransport({
+  const fp = buildFingerprint(host, port, secure, auth?.user || '', testMode);
+
+  if (cachedTransporter && cachedFingerprint === fp) {
+    return cachedTransporter;
+  }
+
+  // 配置变了，关闭旧连接，创建新的
+  if (cachedTransporter) {
+    cachedTransporter.close();
+  }
+
+  cachedTransporter = nodemailer.createTransport({
     host,
     port,
     secure,
     auth,
-    // 连接超时防止长时间阻塞
     connectionTimeout: 10000,
     greetingTimeout: 5000,
     socketTimeout: 10000,
   });
+
+  cachedFingerprint = fp;
+  return cachedTransporter;
+}
+
+export async function sendSupportEmail(mail: SupportMail): Promise<{ messageId: string }> {
+  const config = loadConfig();
+  const transporter = await getTransporter();
 
   const result = await transporter.sendMail({
     from: config.mailFrom,

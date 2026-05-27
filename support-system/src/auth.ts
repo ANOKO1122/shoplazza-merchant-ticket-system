@@ -24,7 +24,7 @@ export async function seedAgent(params: {
   await query(
     `INSERT INTO support_agents (username, name, password_hash, role)
      VALUES ($1, $2, $3, $4)
-     ON CONFLICT (username) DO UPDATE SET name = $2, role = $4`,
+     ON CONFLICT (username) DO UPDATE SET name = $2, password_hash = $3, role = $4`,
     [params.username, params.name, h, params.role || 'admin'],
   );
 }

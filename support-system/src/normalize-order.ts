@@ -77,6 +77,16 @@ function maskTransactionId(transactions: ShoplazzaTransaction[]): string {
   return '';
 }
 
+/** 支付方式显示名映射（供 API 响应层使用，兼容历史数据） */
+export function mapPaymentMethodDisplay(raw: string): string {
+  const v = (raw || '').replace(/_/g, ' ').trim().toLowerCase();
+  const map: Record<string, string> = {
+    'online': 'PayPal',
+    'shoplazza payment': 'Shoplazza Payments',
+  };
+  return map[v] || (raw || '').replace(/_/g, ' ');
+}
+
 export function normalizeOrder(
   storeSubdomain: string,
   storeName: string,
@@ -84,7 +94,14 @@ export function normalizeOrder(
   transactions: ShoplazzaTransaction[],
 ): NormalizedOrder {
   const cardLast4 = extractCardLast4(transactions);
-  const paidAt = extractPaidAt(transactions);
+  // 优先从交易记录提取支付时间；若无交易（第三方支付如PayPal），用订单的下单/创建时间兜底
+  const paidAt = extractPaidAt(transactions)
+    || apiStr(order.placed_at)
+    || apiStr(order.created_at)
+    || null;
+
+  // 支付方式显示名（复用统一映射函数）
+  const paymentMethod = mapPaymentMethodDisplay(apiStr(order.payment_method));
 
   return {
     storeSubdomain,
@@ -98,7 +115,7 @@ export function normalizeOrder(
     orderAmount: apiStr(order.total_price),
     orderCurrency: apiStr(order.currency),
     paymentStatus: apiStr(order.financial_status),
-    paymentMethod: (apiStr(order.payment_method) || '').replace(/_/g, ' '),
+    paymentMethod,
     paidAt,
     refundStatus: '',
     refundAmount: '',

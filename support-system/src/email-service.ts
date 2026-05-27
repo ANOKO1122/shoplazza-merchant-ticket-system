@@ -92,6 +92,7 @@ export interface PaidSupportInviteSnapshot {
   cardLast4?: string | null;
   orderAmount?: string | null;
   orderCurrency?: string | null;
+  jobSource?: string | null;  // 'webhook' | 'backfill'
 }
 
 export interface AgentReplyNoticeSnapshot extends PaidSupportInviteSnapshot {
@@ -100,15 +101,9 @@ export interface AgentReplyNoticeSnapshot extends PaidSupportInviteSnapshot {
 
 export function buildEmailJobNo(now = new Date(), originalNo?: string, seq?: number): string {
   const pad = (n: number) => String(n).padStart(2, '0');
-  const stamp = [
-    now.getFullYear(),
-    pad(now.getMonth() + 1),
-    pad(now.getDate()),
-    pad(now.getHours()),
-    pad(now.getMinutes()),
-    pad(now.getSeconds()),
-  ].join('');
-  const base = `EJ${stamp}${crypto.randomBytes(3).toString('hex')}`;
+  const y = String(now.getFullYear()).slice(-2);
+  const stamp = `${y}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+  const base = `EJ${stamp}${crypto.randomBytes(2).toString('hex')}`;
   if (originalNo && seq !== undefined) {
     return `${originalNo}-${seq}`;
   }
@@ -233,8 +228,8 @@ export async function createPaidSupportInviteEmailJob(params: PaidSupportInviteS
     `INSERT INTO support_email_jobs
       (email_job_no, event_key, store_subdomain, store_name, store_domain, mail_domain,
        order_id, order_number, ordered_at, email_type, customer_email, status, scheduled_at,
-       token_id, subject_snapshot, body_snapshot, client_link_snapshot, raw_client_link)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'paid_support_invite',$10,'pending',now(),$11,$12,$13,$14,$15)
+       token_id, subject_snapshot, body_snapshot, client_link_snapshot, raw_client_link, job_source)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'paid_support_invite',$10,'pending',now(),$11,$12,$13,$14,$15,$16)
      ON CONFLICT (event_key) DO NOTHING
      RETURNING *`,
     [
@@ -253,6 +248,7 @@ export async function createPaidSupportInviteEmailJob(params: PaidSupportInviteS
       snapshotBody,
       maskedLink,
       clientLink,  // raw_client_link
+      params.jobSource || null,  // job_source
     ],
   );
   if ((result.rowCount || 0) > 0) return { job: result.rows[0], inserted: true };
@@ -403,7 +399,7 @@ export async function listEmailJobs(params: {
     `SELECT id, email_job_no, store_subdomain, store_name, store_domain, mail_domain,
             order_id, order_number, ordered_at, public_ticket_no, email_type, customer_email,
             status, scheduled_at, sent_at, failed_at, retry_count, last_error,
-            client_link_snapshot, created_at, updated_at
+            client_link_snapshot, job_source, created_at, updated_at
      FROM support_email_jobs ${where}
      ORDER BY created_at DESC
      LIMIT $${idx++} OFFSET $${idx++}`,
@@ -695,16 +691,43 @@ export interface EmailTemplate {
 
 const DEFAULT_TEMPLATES: Record<string, { subject: string; body: string }> = {
   paid_support_invite: {
-    subject: '{{store_name}} support link for order {{order_number}}',
-    body: `<div style="font-family:Arial,sans-serif;padding:20px"><p>Your order <strong>{{order_number}}</strong> is ready for support.</p><p>Open this secure link if you need help with the order:</p><p><a href="{{client_link}}">{{client_link}}</a></p></div>`,
+    subject: 'Order Notification',
+    body: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#333;line-height:1.6">
+        <p>Dear customer,</p>
+        <p>You made a {{order_currency}} {{order_amount}} purchase on {{paid_at}}.</p>
+        <p>Order number: <strong>{{order_number}}</strong></p>
+        <p>Payment method: {{payment_method}}{{#card_last4}} (card ending in {{card_last4}}){{/card_last4}}</p>
+        <p>If you have any questions about this order, please visit:</p>
+        <p><a href="{{client_link}}" style="color:#1890ff">{{client_link}}</a></p>
+        <p style="color:#8c8c8c;font-size:14px;margin-top:24px">Please do not reply directly to this email, it will be ignored.</p>
+      </div>`,
   },
   agent_reply_notice: {
-    subject: '{{store_name}} replied to dispute {{public_ticket_no}}',
-    body: `<div style="font-family:Arial,sans-serif;padding:20px"><p>Support has replied to dispute <strong>{{public_ticket_no}}</strong> for order <strong>{{order_number}}</strong>.</p><p>Open this secure link to view the reply:</p><p><a href="{{client_link}}">{{client_link}}</a></p></div>`,
+    subject: '{{store_name}} replied to your inquiry {{public_ticket_no}}',
+    body: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#333;line-height:1.6">
+  <p>Dear {{customer_name}},</p>
+  <p>Our support team has replied to your inquiry <strong>{{public_ticket_no}}</strong> regarding order <strong>{{order_number}}</strong>.</p>
+  <p>Please use the secure link below to view the reply:</p>
+  <p><a href="{{client_link}}" style="color:#1890ff">{{client_link}}</a></p>
+  <p style="color:#8c8c8c;font-size:14px;margin-top:24px">Please do not reply directly to this email, it will be ignored.</p>
+</div>`,
   },
   ticket_closed_notice: {
-    subject: '{{store_name}} - Dispute {{public_ticket_no}} closed',
-    body: `<div style="font-family:Arial,sans-serif;padding:20px"><p>Your dispute <strong>{{public_ticket_no}}</strong> for order <strong>{{order_number}}</strong> has been closed.</p><p>Thank you for your patience.</p></div>`,
+    subject: '{{store_name}} - Your inquiry {{public_ticket_no}} has been closed',
+    body: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#333">
+         <div style="background:#f7f9fc;padding:20px;border-radius:8px;text-align:center">
+           <h2 style="color:#52c41a;margin:0">{{store_name}} Support</h2>
+         </div>
+         <div style="padding:20px 0">
+           <p>Dear {{customer_name}},</p>
+           <p>Your inquiry <strong>{{public_ticket_no}}</strong> regarding order <strong>{{order_number}}</strong> has been resolved and closed.</p>
+           <p>If you need further assistance, please contact us again.</p>
+           <p>Thank you for your patience!</p>
+         </div>
+         <div style="border-top:1px solid #e8e8e8;padding-top:16px;color:#8c8c8c;font-size:12px">
+           <p>This is an automated message from {{store_name}} support system.</p>
+         </div>
+       </div>`,
   },
 };
 

@@ -50,8 +50,8 @@ function showToast(m,t){var d=document.createElement('div');d.className='toast '
     var r=await fetch(API+'/me',{credentials:'same-origin'});
     var d=await r.json();
     if(d.ok){me=d.agent;await loadSettings();renderMain()}
-    else{location.replace('/login?redirect='+encodeURIComponent('/admin-settings'))}
-  }catch(e){location.replace('/login?redirect='+encodeURIComponent('/admin-settings'))}
+    else{location.replace('/login?redirect='+encodeURIComponent('/thinkpro-admin/settings'))}
+  }catch(e){location.replace('/login?redirect='+encodeURIComponent('/thinkpro-admin/settings'))}
 })();
 
 var settings = { mail_test_mode: false, public_base_url: '' };
@@ -78,12 +78,12 @@ function renderMain(){
 '<aside class="sidebar">'+
 '<div class="sidebar-header"><img src="/assets/logo.png" onerror="this.style.display=\'none\'"><span class="sidebar-title">客服后台</span></div>'+
 '<nav class="nav-menu">'+
-'<a class="nav-item" href="/admin"><span class="nav-icon">📋</span>工单处理</a>'+
-'<a class="nav-item" href="/admin-stores"><span class="nav-icon">🏪</span>店铺管理</a>'+
-'<a class="nav-item" href="/admin-emails"><span class="nav-icon">📧</span>订单邮件管理</a>'+
-'<a class="nav-item" href="/admin/email-templates"><span class="nav-icon">📨</span>邮件模板</a>'+
+'<a class="nav-item" href="/thinkpro-admin"><span class="nav-icon">📋</span>工单处理</a>'+
+'<a class="nav-item" href="/thinkpro-admin/stores"><span class="nav-icon">🏪</span>店铺管理</a>'+
+'<a class="nav-item" href="/thinkpro-admin/emails"><span class="nav-icon">📧</span>订单邮件管理</a>'+
+'<a class="nav-item" href="/thinkpro-admin/email-templates"><span class="nav-icon">📨</span>邮件模板</a>'+
 '<a class="nav-item active"><span class="nav-icon">⚙️</span>系统设置</a>'+
-'<a class="nav-item" href="/admin-logs"><span class="nav-icon">📋</span>系统日志</a>'+
+'<a class="nav-item" href="/thinkpro-admin/logs"><span class="nav-icon">📋</span>系统日志</a>'+
 '</nav>'+
 '<div class="sidebar-footer"><span>v1.0.0</span><span>'+me.name+'</span></div>'+
 '</aside>'+

@@ -2,6 +2,7 @@ import express from 'express';
 import { verifyAccessToken, hashToken, createTicketAccessToken } from './token';
 import { createTicket, getTicketByPublicNo, getTicketMessages, addCustomerMessage, closeTicket, getOrderSnapshot, findExistingTicket, requestArbitration, countConsecutiveCustomerMessages } from './ticket-service';
 import { extractTrackingNo } from './admin-preview';
+import { mapPaymentMethodDisplay } from './normalize-order';
 
 export function createSupportRouter(): express.Router {
   const router = express.Router();
@@ -39,7 +40,7 @@ export function createSupportRouter(): express.Router {
           order_amount: snapshot.order_amount || '',
           order_currency: snapshot.order_currency || '',
           paid_at: snapshot.paid_at || null,
-          payment_method: snapshot.payment_method || '',
+          payment_method: mapPaymentMethodDisplay(snapshot.payment_method),
           card_last4: snapshot.card_last4 || '',
           tracking_no: extractTrackingNo(snapshot),
           customer_name: snapshot.customer_name || '',
@@ -88,7 +89,7 @@ export function createSupportRouter(): express.Router {
         order_amount: snapshot.order_amount || '',
         order_currency: snapshot.order_currency || '',
         paid_at: snapshot.paid_at || null,
-        payment_method: snapshot.payment_method || '',
+        payment_method: mapPaymentMethodDisplay(snapshot.payment_method),
         card_last4: snapshot.card_last4 || '',
         tracking_no: extractTrackingNo(snapshot),
         customer_name: snapshot.customer_name || '',
@@ -180,6 +181,10 @@ export function createSupportRouter(): express.Router {
 
       res.json({ ok: true, ...result });
     } catch (e: any) {
+      if (e.message && (e.message.includes('Invalid dispute type') || e.message.includes('Description must be under'))) {
+        res.status(400).json({ ok: false, error: e.message });
+        return;
+      }
       res.status(500).json({ ok: false, error: e.message });
     }
   });
@@ -197,7 +202,7 @@ export function createSupportRouter(): express.Router {
       }
 
       if (payload.public_ticket_no !== publicTicketNo) {
-        res.status(403).json({ ok: false, error: 'Access denied' });
+        res.status(401).json({ ok: false, error: 'Invalid or expired token' });
         return;
       }
 
@@ -220,7 +225,7 @@ export function createSupportRouter(): express.Router {
         order_amount: snapshot.order_amount || '',
         order_currency: snapshot.order_currency || '',
         paid_at: snapshot.paid_at || null,
-        payment_method: snapshot.payment_method || '',
+        payment_method: mapPaymentMethodDisplay(snapshot.payment_method),
         card_last4: snapshot.card_last4 || '',
         tracking_no: extractTrackingNo(snapshot),
         customer_name: snapshot.customer_name || '',
@@ -272,7 +277,7 @@ export function createSupportRouter(): express.Router {
       }
 
       if (payload.public_ticket_no !== publicTicketNo) {
-        res.status(403).json({ ok: false, error: 'Access denied' });
+        res.status(401).json({ ok: false, error: 'Invalid or expired token' });
         return;
       }
 
@@ -300,6 +305,10 @@ export function createSupportRouter(): express.Router {
         res.status(429).json({ ok: false, error: e.message });
         return;
       }
+      if (e.message && e.message.includes('Message must be under')) {
+        res.status(400).json({ ok: false, error: e.message });
+        return;
+      }
       res.status(500).json({ ok: false, error: e.message });
     }
   });
@@ -322,7 +331,7 @@ export function createSupportRouter(): express.Router {
       }
 
       if (payload.public_ticket_no !== publicTicketNo) {
-        res.status(403).json({ ok: false, error: 'Access denied' });
+        res.status(401).json({ ok: false, error: 'Invalid or expired token' });
         return;
       }
 
@@ -362,7 +371,7 @@ export function createSupportRouter(): express.Router {
       }
 
       if (payload.public_ticket_no !== publicTicketNo) {
-        res.status(403).json({ ok: false, error: 'Access denied' });
+        res.status(401).json({ ok: false, error: 'Invalid or expired token' });
         return;
       }
 

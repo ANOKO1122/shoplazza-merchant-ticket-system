@@ -28,6 +28,9 @@ try {
 
 const app = express();
 
+// 信任 nginx 反代传递的 X-Forwarded-For 头
+app.set('trust proxy', 1);
+
 // CORS
 const corsAllowOrigins = (process.env.SUPPORT_CORS_ORIGINS || '').trim();
 const corsAllowList = corsAllowOrigins ? corsAllowOrigins.split(',').map(s => s.trim()).filter(Boolean) : null;
@@ -96,51 +99,73 @@ app.use('/api/support', createSupportRouter());
 // Admin API (客服端)
 app.use('/api/admin', createAdminRouter());
 
-// Static files (前端页面)
-app.use(express.static(path.resolve(__dirname, '..', 'public')));
+// Static files (CSS/JS/assets) — 不含 index 自动映射，防止根路径泄露页面
+app.use(express.static(path.resolve(__dirname, '..', 'public'), { index: false }));
 
-// 路由映射
+// 根路径：返回 404（不允许直接访问）
+app.get('/', (_req, res) => {
+  res.status(404).send('Not Found');
+});
+
+// 顾客端路由（保持不变）
 app.get('/login', (_req, res) => {
   res.sendFile(path.resolve(__dirname, '..', 'public', 'login.html'));
 });
 app.get('/ticket', (_req, res) => {
   res.sendFile(path.resolve(__dirname, '..', 'public', 'ticket.html'));
 });
-app.get('/admin', (_req, res) => {
+
+// 管理员路由 → 统一前缀 /thinkpro-admin
+app.get('/thinkpro-admin', (_req, res) => {
   res.sendFile(path.resolve(__dirname, '..', 'public', 'admin.html'));
 });
-app.get('/admin-stores', (_req, res) => {
+app.get('/thinkpro-admin/stores', (_req, res) => {
   res.sendFile(path.resolve(__dirname, '..', 'public', 'admin-stores.html'));
 });
-app.get('/admin-emails', (_req, res) => {
+app.get('/thinkpro-admin/emails', (_req, res) => {
   res.sendFile(path.resolve(__dirname, '..', 'public', 'admin-emails.html'));
 });
-app.get('/admin-logs', (_req, res) => {
+app.get('/thinkpro-admin/logs', (_req, res) => {
   res.sendFile(path.resolve(__dirname, '..', 'public', 'admin-logs.html'));
 });
-app.get('/admin/ticket-preview', (_req, res) => {
+app.get('/thinkpro-admin/ticket-preview', (_req, res) => {
   res.sendFile(path.resolve(__dirname, '..', 'public', 'admin-ticket-preview.html'));
 });
-app.get('/admin/ticket-preview.html', (_req, res) => {
+app.get('/thinkpro-admin/ticket-preview.html', (_req, res) => {
   res.sendFile(path.resolve(__dirname, '..', 'public', 'admin-ticket-preview.html'));
 });
-app.get('/admin/email-templates', (_req, res) => {
+app.get('/thinkpro-admin/email-templates', (_req, res) => {
   res.sendFile(path.resolve(__dirname, '..', 'public', 'email-templates.html'));
 });
-app.get('/admin-settings', (_req, res) => {
+app.get('/thinkpro-admin/settings', (_req, res) => {
   res.sendFile(path.resolve(__dirname, '..', 'public', 'admin-settings.html'));
 });
-app.get('/admin/email-preview', (_req, res) => {
+app.get('/thinkpro-admin/email-preview', (_req, res) => {
   res.sendFile(path.resolve(__dirname, '..', 'public', 'email-preview.html'));
 });
 
-// Health check
+// 旧路径兼容（短期保留，后续可删）
+app.get('/admin', (_req, res) => res.redirect(301, '/thinkpro-admin'));
+app.get('/admin-stores', (_req, res) => res.redirect(301, '/thinkpro-admin/stores'));
+app.get('/admin-emails', (_req, res) => res.redirect(301, '/thinkpro-admin/emails'));
+app.get('/admin-logs', (_req, res) => res.redirect(301, '/thinkpro-admin/logs'));
+app.get('/admin-settings', (_req, res) => res.redirect(301, '/thinkpro-admin/settings'));
+app.get('/admin/ticket-preview', (_req, res) => res.redirect(301, '/thinkpro-admin/ticket-preview'));
+app.get('/admin/email-templates', (_req, res) => res.redirect(301, '/thinkpro-admin/email-templates'));
+app.get('/admin/email-preview', (_req, res) => res.redirect(301, '/thinkpro-admin/email-preview'));
+
+// Health check (必须在 404 兜底之前)
 app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'support-bridge',
     stores: storesConfig ? storesConfig.length : 0,
   });
+});
+
+// 兜底 404
+app.use((_req, res) => {
+  res.status(404).send('Not Found');
 });
 
 async function startup() {
@@ -197,25 +222,29 @@ async function startup() {
     return next.getTime() - now.getTime();
   })();
 
-  const scheduleBackfill = () => {
-    backfillTimer = setInterval(async () => {
-      try {
-        const enabled = await getAutoBackfillEnabled();
-        if (!enabled) {
-          console.log('[backfill-worker] 自动兜底已关闭，跳过');
-          return;
-        }
-        console.log('[backfill-worker] 开始每小时自动兜底同步...');
-        const results = await runBackfillForAllStores((msg) => {
-          console.log(`[backfill-worker] ${msg}`);
-        });
-        const totalOrders = results.reduce((s, r) => s + r.ordersFound, 0);
-        const totalEmails = results.reduce((s, r) => s + r.emailJobsCreated, 0);
-        console.log(`[backfill-worker] 完成: ${results.length} 店铺, ${totalOrders} 订单, ${totalEmails} 新邮件任务`);
-      } catch (e: any) {
-        console.error('[backfill-worker] failed:', e.message);
+  const doBackfill = async () => {
+    try {
+      const enabled = await getAutoBackfillEnabled();
+      if (!enabled) {
+        console.log('[backfill-worker] 自动兜底已关闭，跳过');
+        return;
       }
-    }, backfillIntervalMs);
+      console.log('[backfill-worker] 开始每小时自动兜底同步...');
+      const results = await runBackfillForAllStores((msg) => {
+        console.log(`[backfill-worker] ${msg}`);
+      });
+      const totalOrders = results.reduce((s, r) => s + r.ordersFound, 0);
+      const totalEmails = results.reduce((s, r) => s + r.emailJobsCreated, 0);
+      console.log(`[backfill-worker] 完成: ${results.length} 店铺, ${totalOrders} 订单, ${totalEmails} 新邮件任务`);
+    } catch (e: any) {
+      console.error('[backfill-worker] failed:', e.message);
+    }
+  };
+
+  const scheduleBackfill = () => {
+    // 首次到达 xx:05 时立即执行一次，然后每小时重复
+    doBackfill();
+    backfillTimer = setInterval(doBackfill, backfillIntervalMs);
     if (backfillTimer) backfillTimer.unref();
   };
 

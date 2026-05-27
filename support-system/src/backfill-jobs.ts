@@ -13,7 +13,7 @@
  */
 import { getEnabledStores, StoreRecord } from './store-service';
 import { query } from './pg';
-import { listPaidOrdersUpdatedSince, getOrderTransactions, ShoplazzaOrderDetail } from './shoplazza-client';
+import { listPaidOrdersCreatedSince, getOrderTransactions, ShoplazzaOrderDetail } from './shoplazza-client';
 import { normalizeOrder } from './normalize-order';
 import { createPaidSupportInviteEmailJob } from './email-service';
 import { logSync, logOperation } from './log-service';
@@ -103,7 +103,8 @@ export interface BackfillResult {
   syncedAt: string;
   pages: number;
   ordersFound: number;
-  snapshotsUpserted: number;
+  snapshotsInserted: number;
+  snapshotsUpdated: number;
   emailJobsCreated: number;
   cardLookups: number;
   errors: string[];
@@ -111,8 +112,8 @@ export interface BackfillResult {
 
 async function backfillOneStore(
   store: StoreRecord,
-  updatedAtMin: string,
-  updatedAtMax: string,
+  createdAtMin: string,
+  createdAtMax: string,
   onProgress?: (msg: string) => void,
 ): Promise<BackfillResult> {
   const log = (msg: string) => {
@@ -123,7 +124,8 @@ async function backfillOneStore(
   const errors: string[] = [];
   let pages = 0;
   let cardLookups = 0;
-  let snapshotsUpserted = 0;
+  let snapshotsInserted = 0;
+  let snapshotsUpdated = 0;
   let emailJobsCreated = 0;
 
   const storeConfig = {
@@ -132,13 +134,13 @@ async function backfillOneStore(
     accessToken: store.access_token,
   };
 
-  // Step 1: 按时间增量拉取已支付订单列表
-  log(`开始增量拉取: ${updatedAtMin} → ${updatedAtMax}`);
+  // Step 1: 按 created_at（下单时间）增量拉取已支付订单列表
+  log(`开始增量拉取（按下单时间）: ${createdAtMin} → ${createdAtMax}`);
   let accumulatedOrders = 0;
-  const allOrders = await listPaidOrdersUpdatedSince(
+  const allOrders = await listPaidOrdersCreatedSince(
     storeConfig,
-    updatedAtMin,
-    updatedAtMax,
+    createdAtMin,
+    createdAtMax,
     (page, pageOrders) => {
       pages = page;
       accumulatedOrders += pageOrders.length;
@@ -157,13 +159,18 @@ async function backfillOneStore(
       const orderNumber = String(order.number || order.order_number || '').trim();
       if (!orderId) continue;
 
-      // 判断是否需要查卡号
+      // 判断是否需要查卡号（已存在快照则跳过，节省 API 次数）
+      const existingSnapshot = await query(
+        `SELECT card_last4 FROM support_order_snapshots WHERE store_subdomain=$1 AND order_id=$2 AND customer_email=$3`,
+        [store.subdomain, orderId, String((order as any)?.customer?.email || (order as any)?.shipping_address?.email || (order as any)?.billing_address?.email || '').trim().toLowerCase()]
+      ).catch(() => ({ rows: [] }));
+      
       const paymentChannel = String(
         (order.payment_line as any)?.payment_channel || ''
       ).toLowerCase();
 
       let cardTransactions: any[] = [];
-      if (CARD_LOOKUP_CHANNELS.some(ch => paymentChannel.includes(ch))) {
+      if (existingSnapshot.rows.length === 0 && CARD_LOOKUP_CHANNELS.some(ch => paymentChannel.includes(ch))) {
         cardLookups++;
         cardTransactions = await getOrderTransactions(storeConfig, orderId);
       }
@@ -176,7 +183,7 @@ async function backfillOneStore(
         cardTransactions,
       );
 
-      // Step 3: 幂等写入快照
+      // Step 3: 幂等写入快照（区分新增 vs 更新）
       const upsertResult = await query(
         `INSERT INTO support_order_snapshots
           (store_subdomain, store_name, order_id, order_number, customer_email, customer_name,
@@ -208,7 +215,8 @@ async function backfillOneStore(
            payment_detail_json = EXCLUDED.payment_detail_json,
            raw_order_json = EXCLUDED.raw_order_json,
            snapshot_source = 'backfill_sync',
-           updated_at = now()`,
+           updated_at = now()
+         RETURNING (xmax = 0) AS is_insert`,
         [
           normalized.storeSubdomain,
           normalized.storeName,
@@ -233,11 +241,14 @@ async function backfillOneStore(
           JSON.stringify(normalized.logisticsJson),
           JSON.stringify(normalized.paymentDetailJson),
           JSON.stringify(normalized.rawOrderJson),
+          'backfill_sync',
           new Date().toISOString(),
         ],
       );
-      if ((upsertResult.rowCount || 0) > 0) {
-        snapshotsUpserted++;
+      if (upsertResult.rows[0]?.is_insert) {
+        snapshotsInserted++;
+      } else {
+        snapshotsUpdated++;
       }
 
       // Step 4: 幂等创建邮件任务（仅 paid 状态）
@@ -255,6 +266,7 @@ async function backfillOneStore(
           cardLast4: normalized.cardLast4,
           orderAmount: normalized.orderAmount,
           orderCurrency: normalized.orderCurrency,
+          jobSource: 'backfill',
         });
         if (inserted) emailJobsCreated++;
       }
@@ -267,10 +279,11 @@ async function backfillOneStore(
 
   return {
     storeSubdomain: store.subdomain,
-    syncedAt: updatedAtMax,
+    syncedAt: createdAtMax,
     pages,
     ordersFound: allOrders.length,
-    snapshotsUpserted,
+    snapshotsInserted,
+    snapshotsUpdated,
     emailJobsCreated,
     cardLookups,
     errors,
@@ -280,12 +293,12 @@ async function backfillOneStore(
 /** 内部用的包装：附带日志记录 */
 async function backfillOneStoreWithLogging(
   store: StoreRecord,
-  updatedAtMin: string,
-  updatedAtMax: string,
+  createdAtMin: string,
+  createdAtMax: string,
   onProgress?: (msg: string) => void,
 ): Promise<BackfillResult> {
   const startMs = Date.now();
-  const result = await backfillOneStore(store, updatedAtMin, updatedAtMax, onProgress);
+  const result = await backfillOneStore(store, createdAtMin, createdAtMax, onProgress);
   const durationMs = Date.now() - startMs;
 
   // sync_log: 兜底汇总
@@ -296,8 +309,8 @@ async function backfillOneStoreWithLogging(
     storeName: store.store_name || store.subdomain,
     targetId: `${store.subdomain} (${result.pages}页)`,
     itemsTotal: result.ordersFound,
-    itemsNew: result.snapshotsUpserted,
-    itemsUpdated: result.ordersFound - result.snapshotsUpserted,
+    itemsNew: result.snapshotsInserted,
+    itemsUpdated: result.snapshotsUpdated,
     itemsSkipped: 0,
     status: result.errors.length > 0 ? 'partial' : 'success',
     errorMessage: result.errors.slice(0, 3).join('; ') || undefined,
@@ -316,11 +329,12 @@ async function backfillOneStoreWithLogging(
     action: 'backfill_store_complete',
     actor: 'system',
     storeSubdomain: store.subdomain,
-    summary: `兜底同步完成: ${result.ordersFound} 订单, ${result.snapshotsUpserted} 快照, ${result.emailJobsCreated} 新邮件${result.errors.length ? `, ${result.errors.length} 个错误` : ''}`,
+    summary: `兜底同步完成: ${result.ordersFound} 订单, ${result.snapshotsInserted} 新增, ${result.snapshotsUpdated} 更新, ${result.emailJobsCreated} 新邮件${result.errors.length ? `, ${result.errors.length} 个错误` : ''}`,
     status: result.errors.length > 0 ? 'partial' : 'success',
     detailJson: {
       ordersFound: result.ordersFound,
-      snapshotsUpserted: result.snapshotsUpserted,
+      snapshotsInserted: result.snapshotsInserted,
+      snapshotsUpdated: result.snapshotsUpdated,
       emailJobsCreated: result.emailJobsCreated,
       cardLookups: result.cardLookups,
       pages: result.pages,
@@ -350,26 +364,27 @@ export async function runBackfillForStore(
   // 设置运行中状态
   await setBackfillStatus(storeSubdomain, 'running');
 
-  // 计算时间范围：上次同步时间为空时 → 最近 24 小时
+  // 计算时间范围：按 created_at（下单时间），上次同步时间为空时 → 最近 24 小时
   const existing = await getBackfillState(storeSubdomain);
   const now = new Date();
-  const updatedAtMax = now.toISOString();
-  let updatedAtMin: string;
+  const createdAtMax = now.toISOString();
+  let createdAtMin: string;
   if (existing?.lastSyncedAt) {
-    updatedAtMin = existing.lastSyncedAt;
+    createdAtMin = existing.lastSyncedAt;
   } else {
     // 首次同步：回退 24 小时
     const ago = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    updatedAtMin = ago.toISOString();
+    createdAtMin = ago.toISOString();
   }
 
   try {
-    const result = await backfillOneStoreWithLogging(store, updatedAtMin, updatedAtMax, onProgress);
+    const result = await backfillOneStoreWithLogging(store, createdAtMin, createdAtMax, onProgress);
     await saveBackfillResult(storeSubdomain, {
       syncedAt: result.syncedAt,
       pages: result.pages,
       ordersFound: result.ordersFound,
-      snapshotsUpserted: result.snapshotsUpserted,
+      snapshotsInserted: result.snapshotsInserted,
+      snapshotsUpdated: result.snapshotsUpdated,
       emailJobsCreated: result.emailJobsCreated,
       cardLookups: result.cardLookups,
       errors: result.errors.length,

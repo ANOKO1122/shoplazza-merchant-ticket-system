@@ -1,10 +1,13 @@
 import express from 'express';
 import { loadStoresConfig, buildStoreDomain } from './config';
 import { query } from './pg';
-import { getOrderByNumber, getOrderDetail, getOrderTransactions } from './shoplazza-client';
+import { getOrderByNumber, getOrderDetail, getOrderTransactions, ShoplazzaTransaction } from './shoplazza-client';
 import { normalizeOrder } from './normalize-order';
 import { createPaidSupportInviteEmailJob } from './email-service';
 import { logSync } from './log-service';
+
+/** 需要查卡号后四位的支付渠道（店匠自有支付），第三方支付（PayPal等）跳过交易查询 */
+const CARD_LOOKUP_CHANNELS = ['shoplazzapayment'];
 
 function buildEventKey(params: {
   topic: string;
@@ -54,9 +57,14 @@ export function createShoplazzaWebhookRouter(): express.Router {
   const router = express.Router();
 
   let config: Awaited<ReturnType<typeof loadStoresConfig>> | null = null;
+  let configFetchedAt = 0;
+  const CONFIG_TTL_MS = 30_000; // 30 秒刷新一次，启停可及时生效
 
   async function ensureStores() {
-    if (!config) config = await loadStoresConfig();
+    if (!config || Date.now() - configFetchedAt > CONFIG_TTL_MS) {
+      config = await loadStoresConfig();
+      configFetchedAt = Date.now();
+    }
     return config;
   }
 
@@ -104,17 +112,55 @@ export function createShoplazzaWebhookRouter(): express.Router {
         const orderTopics = ['orders/paid', 'orders/fulfilled', 'orders/updated'];
         if (orderTopics.includes(topic) && (orderId || orderNumber)) {
           try {
+            // API补全：查询订单详情
+            const detailApiStart = Date.now();
             let detail = orderId ? await getOrderDetail(store, orderId) : null;
             if (!detail && orderNumber) {
               detail = await getOrderByNumber(store, orderNumber);
             }
+            await logSync({
+              source: 'api',
+              action: 'order_detail_fetch',
+              storeSubdomain,
+              storeName: store.storeName,
+              targetId: orderId || orderNumber || '',
+              status: detail ? 'success' : 'failed',
+              durationMs: Date.now() - detailApiStart,
+              detailJson: { orderId, orderNumber, found: !!detail },
+            });
             if (!detail) {
               console.warn(`[webhook] 订单详情查询失败: id=${orderId} number=${orderNumber}`);
               return;
             }
             const actualOrderId = detail.id || orderId;
-            const transactions = await getOrderTransactions(store, actualOrderId);
+
+            // 只对店匠官方支付查 transactions（拿卡号后四位），第三方支付跳过以节省 API 配额
+            const paymentChannel = String(
+              (detail.payment_line as any)?.payment_channel || ''
+            ).toLowerCase();
+            let transactions: ShoplazzaTransaction[] = [];
+            const txApiStart = Date.now();
+            if (CARD_LOOKUP_CHANNELS.some(ch => paymentChannel.includes(ch))) {
+              transactions = await getOrderTransactions(store, actualOrderId);
+              await logSync({
+                source: 'api',
+                action: 'transaction_fetch',
+                storeSubdomain,
+                storeName: store.storeName,
+                targetId: actualOrderId,
+                status: 'success',
+                durationMs: Date.now() - txApiStart,
+                detailJson: { count: transactions.length, paymentChannel },
+              });
+            }
+
             const normalized = normalizeOrder(storeSubdomain, store.storeName, detail, transactions);
+
+            // 只处理已支付订单的快照和邮件（安全校验）
+            if (normalized.paymentStatus !== 'paid') {
+              console.log(`[webhook] 跳过非已支付订单: ${normalized.orderNumber} (financial_status=${normalized.paymentStatus})`);
+              return;
+            }
 
             const snapshotResult = await query(
               `INSERT INTO support_order_snapshots
@@ -194,6 +240,7 @@ export function createShoplazzaWebhookRouter(): express.Router {
                 cardLast4: normalized.cardLast4,
                 orderAmount: normalized.orderAmount,
                 orderCurrency: normalized.orderCurrency,
+                jobSource: 'webhook',
               });
               console.log(`[webhook] email job ${emailJob.inserted ? 'created' : 'exists'}: ${emailJob.job.email_job_no}`);
             }

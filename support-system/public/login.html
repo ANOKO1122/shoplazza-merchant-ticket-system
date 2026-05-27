@@ -32,7 +32,7 @@ function $(s){ return document.querySelector(s); }
     var r = await fetch(API + '/me', { credentials: 'same-origin' });
     var d = await r.json();
     if (d.ok) {
-      var redir = new URLSearchParams(location.search).get('redirect') || '/admin';
+      var redir = new URLSearchParams(location.search).get('redirect') || '/thinkpro-admin';
       location.replace(redir);
     }
   } catch(e) {}
@@ -54,7 +54,7 @@ async function doLogin() {
     });
     var d = await r.json();
     if (d.ok) {
-      var redir = new URLSearchParams(location.search).get('redirect') || '/admin';
+      var redir = new URLSearchParams(location.search).get('redirect') || '/thinkpro-admin';
       location.replace(redir);
     } else {
       var e = $('#loginErr');

@@ -36,6 +36,21 @@ services:
     networks:
       - support_net
 
+  # 独立 nginx 入口（不共用其他系统的 nginx，完全隔离）
+  support-nginx:
+    image: nginx:alpine
+    restart: always
+    ports:
+      - "4000:80"
+      - "8443:443"
+    volumes:
+      - ./nginx/support-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - support-bridge
+    networks:
+      - support_net
+
 volumes:
   pgdata:
 

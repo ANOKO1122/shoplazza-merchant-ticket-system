@@ -362,7 +362,7 @@ function renderTicketDetail(data) {
 
   var timelineHtml = '';
   msgs.forEach(function(m) {
-    var roleLabels = { agent: 'Merchant', customer: 'Customer', system: 'System', platform: 'Platform' };
+    var roleLabels = { agent: 'Support Agent', customer: 'Customer', system: 'System', platform: 'Platform' };
     var role = roleLabels[m.sender_type] || m.sender_type;
     timelineHtml +=
       '<div class="timeline-item ' + esc(m.sender_type) + '">' +
@@ -411,7 +411,7 @@ function renderTicketDetail(data) {
     '<div class="info-row"><span class="info-label">Total Amount:</span><span class="info-value">' + esc(order.order_currency || 'USD') + ' ' + esc(order.order_amount || '') + '</span></div>' +
     '<div class="info-row"><span class="info-label">Refundable Amount:</span><span class="info-value">' + esc(order.order_currency || 'USD') + ' ' + esc(order.order_amount || '') + '</span></div>' +
     '<div class="info-row"><span class="info-label">Order Date:</span><span class="info-value">' + esc(formatDate(order.paid_at)) + '</span></div>' +
-    '<div class="info-row"><span class="info-label">Tracking No:</span><span class="info-value">' + esc(order.tracking_no || 'Not shipped') + '</span></div>' +
+    (order.tracking_no ? '<div class="info-row"><span class="info-label">Tracking No:</span><span class="info-value">' + esc(order.tracking_no) + '</span></div>' : '') +
     '<div class="info-row"><span class="info-label">Products:</span><span class="info-value">' + items + '</span></div>' +
     '</div>' +
     (actionButtons ? '<div class="btn-group" style="margin-top:24px">' + actionButtons + '</div>' : '') +
@@ -453,7 +453,18 @@ async function loadPreview() {
   }
 }
 
-loadPreview();
-</script>
+(async function init() {
+  try {
+    var r = await fetch(API + '/me', { credentials: 'same-origin' });
+    var d = await r.json();
+    if (!d.ok) {
+      location.replace('/login?redirect=' + encodeURIComponent(location.pathname + location.search));
+      return;
+    }
+    loadPreview();
+  } catch (e) {
+    location.replace('/login?redirect=' + encodeURIComponent(location.pathname + location.search));
+  }
+})();</script>
 </body>
 </html>

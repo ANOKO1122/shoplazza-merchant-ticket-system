@@ -1,3 +1,5 @@
+import { mapPaymentMethodDisplay } from './normalize-order';
+
 export function buildCustomerPreviewResponse(params: {
   snapshot: any;
   ticket?: any | null;
@@ -21,7 +23,7 @@ export function buildCustomerPreviewResponse(params: {
       order_amount: snapshot.order_amount || '',
       order_currency: snapshot.order_currency || '',
       paid_at: snapshot.paid_at || null,
-      payment_method: snapshot.payment_method || '',
+      payment_method: mapPaymentMethodDisplay(snapshot.payment_method),
       card_last4: snapshot.card_last4 || '',
       tracking_no: extractTrackingNo(snapshot),
       items: snapshot.items_json || [],
@@ -62,11 +64,7 @@ export function extractTrackingNo(snapshot: any): string {
 
 function findTrackingNo(value: any, depth: number): string {
   if (!value || depth > 5) return '';
-  if (typeof value === 'string') {
-    const t = value.trim();
-    return (t.length >= 6 && t.length <= 50) ? t : '';
-  }
-  if (typeof value === 'number') return '';
+  if (typeof value === 'string' || typeof value === 'number') return '';
   if (Array.isArray(value)) {
     for (const item of value) {
       const found = findTrackingNo(item, depth + 1);

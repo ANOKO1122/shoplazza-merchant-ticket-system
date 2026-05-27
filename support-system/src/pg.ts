@@ -130,26 +130,16 @@ export async function ensureTables(): Promise<void> {
     INSERT INTO support_email_templates (email_type, subject_template, body_template)
     VALUES
       ('paid_support_invite',
-       '{{store_name}} support link for order {{order_number}}',
-       '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#333">
-         <div style="background:#f7f9fc;padding:20px;border-radius:8px;text-align:center">
-           <h2 style="color:#1890ff;margin:0">Welcome to {{store_name}} Support</h2>
-         </div>
-         <div style="padding:20px 0">
-           <p>Dear {{customer_name}},</p>
-           <p>Your order <strong>{{order_number}}</strong> has been confirmed.</p>
-           <p><strong>Payment Method:</strong> {{payment_method}}{{#card_last4}} (ending in {{card_last4}}){{/card_last4}}</p>
-           <p><strong>Order Time:</strong> {{paid_at}}</p>
-           <p>If you have any questions about your order, please use the secure link below to contact our support team:</p>
-           <div style="text-align:center;margin:24px 0">
-             <a href="{{client_link}}" style="background:#1890ff;color:#fff;padding:12px 32px;border-radius:6px;text-decoration:none;font-size:16px;display:inline-block">Contact Support</a>
-           </div>
-           <p style="color:#8c8c8c;font-size:12px">Or copy this link: {{client_link}}</p>
-         </div>
-         <div style="border-top:1px solid #e8e8e8;padding-top:16px;color:#8c8c8c;font-size:12px">
-           <p>This is an automated message from {{store_name}} support system.</p>
-         </div>
-       </div>')
+       'Order Notification',
+       '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#333;line-height:1.6">
+        <p>Dear customer,</p>
+        <p>You made a {{order_currency}} {{order_amount}} purchase on {{paid_at}}.</p>
+        <p>Order number: <strong>{{order_number}}</strong></p>
+        <p>Payment method: {{payment_method}}{{#card_last4}} (card ending in {{card_last4}}){{/card_last4}}</p>
+        <p>If you have any questions about this order, please visit:</p>
+        <p><a href="{{client_link}}" style="color:#1890ff">{{client_link}}</a></p>
+        <p style="color:#8c8c8c;font-size:14px;margin-top:24px">Please do not reply directly to this email, it will be ignored.</p>
+      </div>')
     ON CONFLICT (email_type) DO NOTHING
   `);
 
@@ -158,23 +148,13 @@ export async function ensureTables(): Promise<void> {
     VALUES
       ('agent_reply_notice',
        '{{store_name}} replied to your inquiry {{public_ticket_no}}',
-       '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#333">
-         <div style="background:#f7f9fc;padding:20px;border-radius:8px;text-align:center">
-           <h2 style="color:#1890ff;margin:0">{{store_name}} Support</h2>
-         </div>
-         <div style="padding:20px 0">
-           <p>Dear {{customer_name}},</p>
-           <p>Our support team has replied to your inquiry <strong>{{public_ticket_no}}</strong> regarding order <strong>{{order_number}}</strong>.</p>
-           <p>Please use the secure link below to view the reply:</p>
-           <div style="text-align:center;margin:24px 0">
-             <a href="{{client_link}}" style="background:#1890ff;color:#fff;padding:12px 32px;border-radius:6px;text-decoration:none;font-size:16px;display:inline-block">View Reply</a>
-           </div>
-           <p style="color:#8c8c8c;font-size:12px">Or copy this link: {{client_link}}</p>
-         </div>
-         <div style="border-top:1px solid #e8e8e8;padding-top:16px;color:#8c8c8c;font-size:12px">
-           <p>This is an automated message from {{store_name}} support system.</p>
-         </div>
-       </div>')
+       '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#333;line-height:1.6">
+  <p>Dear {{customer_name}},</p>
+  <p>Our support team has replied to your inquiry <strong>{{public_ticket_no}}</strong> regarding order <strong>{{order_number}}</strong>.</p>
+  <p>Please use the secure link below to view the reply:</p>
+  <p><a href="{{client_link}}" style="color:#1890ff">{{client_link}}</a></p>
+  <p style="color:#8c8c8c;font-size:14px;margin-top:24px">Please do not reply directly to this email, it will be ignored.</p>
+</div>')
     ON CONFLICT (email_type) DO NOTHING
   `);
 

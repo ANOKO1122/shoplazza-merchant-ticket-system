@@ -160,13 +160,14 @@ export async function getOrderTransactions(store: ShoplazzaStoreConfig, orderId:
 }
 
 /**
- * 兜底同步用：按 updated_at 增量拉取已支付订单列表（Cursor 分页）。
+ * 兜底同步用：按 created_at（下单时间）增量拉取已支付订单列表（Cursor 分页）。
+ * 用 created_at 而非 updated_at，避免把"很久前支付、最近才发货"的旧订单重复拉取。
  * 每页固定 10 条，自动翻页直到 has_more=false。
  */
-export async function listPaidOrdersUpdatedSince(
+export async function listPaidOrdersCreatedSince(
   store: ShoplazzaStoreConfig,
-  updatedAtMin: string,
-  updatedAtMax: string,
+  createdAtMin: string,
+  createdAtMax: string,
   onProgress?: (page: number, orders: ShoplazzaOrderDetail[]) => void,
 ): Promise<ShoplazzaOrderDetail[]> {
   const allOrders: ShoplazzaOrderDetail[] = [];
@@ -177,8 +178,8 @@ export async function listPaidOrdersUpdatedSince(
   while (page < maxPages) {
     const params = new URLSearchParams();
     params.set('financial_status', 'paid');
-    params.set('updated_at_min', updatedAtMin);
-    params.set('updated_at_max', updatedAtMax);
+    params.set('created_at_min', createdAtMin);
+    params.set('created_at_max', createdAtMax);
     if (cursor) params.set('cursor', cursor);
 
     const url = `https://${buildApiHost(store.subdomain)}/openapi/2025-06/orders?${params.toString()}`;
@@ -219,7 +220,7 @@ export async function listPaidOrdersUpdatedSince(
 async function shoplazzaFetchWithBody(
   url: string,
   store: ShoplazzaStoreConfig,
-  method: 'POST' | 'DELETE',
+  method: 'POST' | 'DELETE' | 'PUT',
   body?: unknown,
 ): Promise<{ ok: boolean; status: number; data: any }> {
   const ms = 15000;
@@ -228,13 +229,17 @@ async function shoplazzaFetchWithBody(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), ms);
     try {
+      const hasBody = body !== undefined && body !== null;
+      const headers: Record<string, string> = {
+        'Access-Token': store.accessToken,
+      };
+      if (hasBody) {
+        headers['Content-Type'] = 'application/json';
+      }
       const res = await fetch(url, {
         method,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Token': store.accessToken,
-        },
-        body: body ? JSON.stringify(body) : undefined,
+        headers,
+        body: hasBody ? JSON.stringify(body) : undefined,
         signal: controller.signal as any,
       });
       clearTimeout(timeoutId);
@@ -263,7 +268,7 @@ export async function registerWebhook(
   topic: string,
 ): Promise<{ ok: boolean; webhook?: ShoplazzaWebhook; error?: string }> {
   const url = `https://${buildApiHost(store.subdomain)}/openapi/2025-06/webhooks`;
-  const body = { webhook: { address, topic, format: 'json' } };
+  const body = { webhook: { address, topic } };
 
   try {
     const result = await shoplazzaFetchWithBody(url, store, 'POST', body);

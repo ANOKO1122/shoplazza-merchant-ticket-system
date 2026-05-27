@@ -1,5 +1,24 @@
 import { query } from './pg';
 import { createTicketAccessToken, hashToken } from './token';
+import { formatEasternTime } from './email-service';
+
+// ── 输入校验常量 ──
+
+/** 顾客单条消息最大长度（字符数） */
+export const MAX_MESSAGE_CONTENT_LENGTH = 5000;
+
+/** 有效的工单问题类型白名单（与前端 ticket.html 的 disputeTypes 保持一致） */
+export const VALID_ISSUE_TYPES = [
+  'Unknow',
+  'Fraud',
+  'Unauthorized',
+  'Products Discrepancies',
+  'Product Not Received',
+  'Defective Merchandise',
+  'Incorrect Transaction',
+  'Wrong address',
+  'Credit Not Processed',
+] as const;
 
 async function nextSequence(): Promise<number> {
   const r = await query(`SELECT nextval('support_tickets_id_seq') AS n`);
@@ -28,6 +47,20 @@ export async function createTicket(params: {
   publicTicketNo: string;
   accessToken: string;
 }> {
+  // 校验 description 长度
+  if (!params.description || params.description.trim().length === 0) {
+    throw new Error('Please describe your dispute');
+  }
+  if (params.description.length > MAX_MESSAGE_CONTENT_LENGTH) {
+    throw new Error(`Description must be under ${MAX_MESSAGE_CONTENT_LENGTH} characters`);
+  }
+
+  // 校验 issue_type 白名单
+  const sanitizedIssueType = params.issueType?.trim() || null;
+  if (sanitizedIssueType && !VALID_ISSUE_TYPES.includes(sanitizedIssueType as any)) {
+    throw new Error('Invalid dispute type');
+  }
+
   const publicTicketNo = generatePublicTicketNo();
   const accessToken = await createTicketAccessToken({
     publicTicketNo,
@@ -59,7 +92,7 @@ export async function createTicket(params: {
       params.orderNumber,
       params.customerEmail,
       params.customerName || null,
-      params.issueType || null,
+      sanitizedIssueType,
       'open',
       accessTokenHash,
       params.bootstrapTokenHash || null,
@@ -112,6 +145,14 @@ export async function addCustomerMessage(params: {
   customerName?: string;
   content: string;
 }) {
+  // 校验 content 长度
+  if (!params.content || params.content.trim().length === 0) {
+    throw new Error('Message content is required');
+  }
+  if (params.content.length > MAX_MESSAGE_CONTENT_LENGTH) {
+    throw new Error(`Message must be under ${MAX_MESSAGE_CONTENT_LENGTH} characters`);
+  }
+
   // Check consecutive customer message limit (max 5 without agent reply)
   const consecutiveCount = await countConsecutiveCustomerMessages(params.publicTicketNo);
   if (consecutiveCount >= 5) {
@@ -150,9 +191,11 @@ export async function countConsecutiveCustomerMessages(publicTicketNo: string): 
   for (const row of r.rows) {
     if (row.sender_type === 'customer') {
       count++;
-    } else {
+    } else if (row.sender_type === 'agent') {
+      // 只有客服/管理员回复才重置顾客连发计数
       break;
     }
+    // system / platform 消息不打断顾客连发计数（如仲裁消息不重置次数）
   }
   return count;
 }
@@ -166,6 +209,16 @@ export async function closeTicket(params: {
      SET status = 'closed', closed_by = $2, closed_at = now(), updated_at = now()
      WHERE public_ticket_no = $1`,
     [params.publicTicketNo, params.closedBy],
+  );
+
+  // Insert system message with Eastern Time
+  const etNow = formatEasternTime(new Date());
+  const actor = params.closedBy === 'customer' ? 'Customer' : 'Platform';
+  await query(
+    `INSERT INTO support_ticket_messages
+      (public_ticket_no, sender_type, content)
+     VALUES ($1, 'system', $2)`,
+    [params.publicTicketNo, `${actor} closed the dispute at ${etNow}`],
   );
 }
 
@@ -309,5 +362,34 @@ export async function updateTicketStatus(publicTicketNo: string, status: string)
   await query(
     `UPDATE support_tickets SET ${set.join(', ')} WHERE public_ticket_no = $1`,
     values,
+  );
+
+  // Insert system message when ticket is closed
+  if (status === 'closed') {
+    const etNow = formatEasternTime(new Date());
+    await query(
+      `INSERT INTO support_ticket_messages
+        (public_ticket_no, sender_type, content)
+       VALUES ($1, 'system', $2)`,
+      [publicTicketNo, `Platform closed the dispute at ${etNow}`],
+    );
+  }
+}
+
+/** Reopen a closed ticket (admin only) */
+export async function reopenTicket(publicTicketNo: string) {
+  await query(
+    `UPDATE support_tickets
+     SET status = 'open', closed_by = NULL, closed_at = NULL, updated_at = now()
+     WHERE public_ticket_no = $1`,
+    [publicTicketNo],
+  );
+
+  const etNow = formatEasternTime(new Date());
+  await query(
+    `INSERT INTO support_ticket_messages
+      (public_ticket_no, sender_type, content)
+     VALUES ($1, 'system', $2)`,
+    [publicTicketNo, `Platform reopened the dispute at ${etNow}`],
   );
 }

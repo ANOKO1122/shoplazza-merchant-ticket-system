@@ -113,12 +113,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
       <span class="sidebar-title">客服后台</span>
     </div>
     <nav class="nav-menu">
-      <a class="nav-item" href="/admin"><span class="nav-icon">📋</span>工单处理</a>
-      <a class="nav-item" href="/admin-stores"><span class="nav-icon">🏪</span>店铺管理</a>
-      <a class="nav-item" href="/admin-emails"><span class="nav-icon">📧</span>订单邮件管理</a>
+      <a class="nav-item" href="/thinkpro-admin"><span class="nav-icon">📋</span>工单处理</a>
+      <a class="nav-item" href="/thinkpro-admin/stores"><span class="nav-icon">🏪</span>店铺管理</a>
+      <a class="nav-item" href="/thinkpro-admin/emails"><span class="nav-icon">📧</span>订单邮件管理</a>
       <a class="nav-item active"><span class="nav-icon">📨</span>邮件模板</a>
-      <a class="nav-item" href="/admin-settings"><span class="nav-icon">⚙️</span>系统设置</a>
-      <a class="nav-item" href="/admin-logs"><span class="nav-icon">📋</span>系统日志</a>
+      <a class="nav-item" href="/thinkpro-admin/settings"><span class="nav-icon">⚙️</span>系统设置</a>
+      <a class="nav-item" href="/thinkpro-admin/logs"><span class="nav-icon">📋</span>系统日志</a>
     </nav>
     <div class="sidebar-footer"><span>v1.0.0</span><span id="agentName"></span></div>
   </aside>
@@ -218,6 +218,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
                 <div class="form-group"><label>paid_at</label><input id="tv_paid_at" value="2026-05-19 10:30:00" onchange="livePreview()"></div>
                 <div class="form-group"><label>payment_method</label><input id="tv_payment_method" value="Visa" onchange="livePreview()"></div>
                 <div class="form-group"><label>card_last4</label><input id="tv_card_last4" value="4242" onchange="livePreview()"></div>
+                <div class="form-group"><label>order_amount</label><input id="tv_order_amount" value="29.99" onchange="livePreview()"></div>
+                <div class="form-group"><label>order_currency</label><input id="tv_order_currency" value="USD" onchange="livePreview()"></div>
               </div>
             </details>
             <!-- 预览 iframe -->
@@ -242,11 +244,11 @@ var currentTemplate = null;
   try {
     var r = await fetch(API + '/me', { credentials: 'same-origin' });
     var d = await r.json();
-    if (!d.ok) { location.replace('/login?redirect=' + encodeURIComponent('/admin/email-templates')); return; }
+    if (!d.ok) { location.replace('/login?redirect=' + encodeURIComponent('/thinkpro-admin/email-templates')); return; }
     document.getElementById('agentName').textContent = d.agent.name;
     document.getElementById('loadingOverlay').style.display = 'none';
     document.getElementById('mainContent').style.display = '';
-  } catch(e) { location.replace('/login?redirect=' + encodeURIComponent('/admin/email-templates')); return; }
+  } catch(e) { location.replace('/login?redirect=' + encodeURIComponent('/thinkpro-admin/email-templates')); return; }
 
   // 加载第一个模板
   await loadTemplate('paid_support_invite');
@@ -487,6 +489,8 @@ function livePreview() {
     paid_at: document.getElementById('tv_paid_at').value,
     payment_method: document.getElementById('tv_payment_method').value,
     card_last4: document.getElementById('tv_card_last4').value,
+    order_amount: document.getElementById('tv_order_amount').value,
+    order_currency: document.getElementById('tv_order_currency').value,
   };
 
   // 客户端简单渲染
@@ -557,12 +561,12 @@ async function resetToDefault() {
     // 硬编码默认值作为回退
     var defaults = {
       paid_support_invite: {
-        subject: '{{store_name}} support link for order {{order_number}}',
-        body: '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#333">\n  <div style="background:#f7f9fc;padding:20px;border-radius:8px;text-align:center">\n    <h2 style="color:#1890ff;margin:0">Welcome to {{store_name}} Support</h2>\n  </div>\n  <div style="padding:20px 0">\n    <p>Dear {{customer_name}},</p>\n    <p>Your order <strong>{{order_number}}</strong> has been confirmed.</p>\n    <p><strong>Payment Method:</strong> {{payment_method}}{{#card_last4}} (ending in {{card_last4}}){{/card_last4}}</p>\n    <p><strong>Order Time:</strong> {{paid_at}}</p>\n    <p>If you have any questions about your order, please use the secure link below to contact our support team:</p>\n    <div style="text-align:center;margin:24px 0">\n      <a href="{{client_link}}" style="background:#1890ff;color:#fff;padding:12px 32px;border-radius:6px;text-decoration:none;font-size:16px;display:inline-block">Contact Support</a>\n    </div>\n    <p style="color:#8c8c8c;font-size:12px">Or copy this link: {{client_link}}</p>\n  </div>\n  <div style="border-top:1px solid #e8e8e8;padding-top:16px;color:#8c8c8c;font-size:12px">\n    <p>This is an automated message from {{store_name}} support system.</p>\n  </div>\n</div>'
+        subject: 'Order Notification',
+        body: '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#333;line-height:1.6">\n        <p>Dear customer,</p>\n        <p>You made a {{order_currency}} {{order_amount}} purchase on {{paid_at}}.</p>\n        <p>Order number: <strong>{{order_number}}</strong></p>\n        <p>Payment method: {{payment_method}}{{#card_last4}} (card ending in {{card_last4}}){{/card_last4}}</p>\n        <p>If you have any questions about this order, please visit:</p>\n        <p><a href="{{client_link}}" style="color:#1890ff">{{client_link}}</a></p>\n        <p style="color:#8c8c8c;font-size:14px;margin-top:24px">Please do not reply directly to this email, it will be ignored.</p>\n      </div>'
       },
       agent_reply_notice: {
         subject: '{{store_name}} replied to your inquiry {{public_ticket_no}}',
-        body: '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#333">\n  <div style="background:#f7f9fc;padding:20px;border-radius:8px;text-align:center">\n    <h2 style="color:#1890ff;margin:0">{{store_name}} Support</h2>\n  </div>\n  <div style="padding:20px 0">\n    <p>Dear {{customer_name}},</p>\n    <p>Our support team has replied to your inquiry <strong>{{public_ticket_no}}</strong> regarding order <strong>{{order_number}}</strong>.</p>\n    <p>Please use the secure link below to view the reply:</p>\n    <div style="text-align:center;margin:24px 0">\n      <a href="{{client_link}}" style="background:#1890ff;color:#fff;padding:12px 32px;border-radius:6px;text-decoration:none;font-size:16px;display:inline-block">View Reply</a>\n    </div>\n    <p style="color:#8c8c8c;font-size:12px">Or copy this link: {{client_link}}</p>\n  </div>\n  <div style="border-top:1px solid #e8e8e8;padding-top:16px;color:#8c8c8c;font-size:12px">\n    <p>This is an automated message from {{store_name}} support system.</p>\n  </div>\n</div>'
+        body: '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#333;line-height:1.6">\n  <p>Dear {{customer_name}},</p>\n  <p>Our support team has replied to your inquiry <strong>{{public_ticket_no}}</strong> regarding order <strong>{{order_number}}</strong>.</p>\n  <p>Please use the secure link below to view the reply:</p>\n  <p><a href="{{client_link}}" style="color:#1890ff">{{client_link}}</a></p>\n  <p style="color:#8c8c8c;font-size:14px;margin-top:24px">Please do not reply directly to this email, it will be ignored.</p>\n</div>'
       },
       ticket_closed_notice: {
         subject: '{{store_name}} - Your inquiry {{public_ticket_no}} has been closed',

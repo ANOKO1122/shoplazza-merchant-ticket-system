@@ -371,7 +371,10 @@ function renderTicketDetail(data) {
   var t = data.ticket;
   var order = data.order;
   var msgs = data.messages;
-  accessToken = token;
+  // 保持已有的有效 accessToken，避免被页面初始的 bootstrap token 覆盖
+  if (!accessToken || (accessToken.startsWith('bt_') && data.accessToken)) {
+    accessToken = data.accessToken || token;
+  }
   remainingMessages = data.remainingMessages !== undefined ? data.remainingMessages : 5;
 
   var items = Array.isArray(order.items) ? order.items.map(function(it) {
@@ -380,7 +383,7 @@ function renderTicketDetail(data) {
 
   var timelineHtml = '';
   msgs.forEach(function(m) {
-    var roleLabels = { agent: 'Merchant', customer: 'Customer', system: 'System', platform: 'Platform' };
+    var roleLabels = { agent: 'Support Agent', customer: 'Customer', system: 'System', platform: 'Platform' };
     var role = roleLabels[m.sender_type] || m.sender_type;
     timelineHtml +=
       '<div class="timeline-item ' + m.sender_type + '">' +
@@ -431,7 +434,7 @@ function renderTicketDetail(data) {
     '<div class="info-row"><span class="info-label">Total Amount:</span><span class="info-value">' + (order.order_currency || 'USD') + ' ' + (order.order_amount || '') + '</span></div>' +
     '<div class="info-row"><span class="info-label">Refundable Amount:</span><span class="info-value">' + (order.order_currency || 'USD') + ' ' + (order.order_amount || '') + '</span></div>' +
     '<div class="info-row"><span class="info-label">Order Date:</span><span class="info-value">' + formatDate(order.paid_at) + '</span></div>' +
-    '<div class="info-row"><span class="info-label">Tracking No:</span><span class="info-value">' + (order.tracking_no || 'Not shipped') + '</span></div>' +
+    (order.tracking_no ? '<div class="info-row"><span class="info-label">Tracking No:</span><span class="info-value">' + order.tracking_no + '</span></div>' : '') +
     '<div class="info-row"><span class="info-label">Products:</span><span class="info-value">' + items + '</span></div>' +
     '</div>' +
     (actionButtons ? '<div class="btn-group" style="margin-top:24px">' + actionButtons + '</div>' : '') +
@@ -487,7 +490,7 @@ async function refreshMessages() {
     if (timeline) {
       var html = '';
       msgs.forEach(function(m) {
-        var roleLabels = { agent: 'Merchant', customer: 'Customer', system: 'System', platform: 'Platform' };
+        var roleLabels = { agent: 'Support Agent', customer: 'Customer', system: 'System', platform: 'Platform' };
         var role = roleLabels[m.sender_type] || m.sender_type;
         html +=
           '<div class="timeline-item ' + m.sender_type + '">' +
@@ -527,6 +530,7 @@ async function submitTicket() {
     })).json();
     if (result.ok) {
       accessToken = result.accessToken;
+      token = result.accessToken;  // 同步更新全局 token，防止后续被旧 bootstrap token 覆盖
       history.replaceState(null, '', '/ticket?t=' + result.accessToken);
       var data = await api(API + '/tickets/' + result.publicTicketNo + '?t=' + result.accessToken);
       if (data.ok) renderTicketDetail(data);

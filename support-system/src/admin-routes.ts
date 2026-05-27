@@ -2,7 +2,7 @@ import express from 'express';
 import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
 import { loginAgent, createSession, destroySession, verifySession, changeAgentPassword } from './auth';
-import { listTickets, getTicketByPublicNo, getTicketMessages, getOrderSnapshot, addAgentMessage, updateTicketStatus } from './ticket-service';
+import { listTickets, getTicketByPublicNo, getTicketMessages, getOrderSnapshot, addAgentMessage, updateTicketStatus, reopenTicket } from './ticket-service';
 import { listStores, createStore, updateStore, deleteStore, getStoreBySubdomain, decryptToken } from './store-service';
 import { query } from './pg';
 import { cancelEmailJob, ensureAgentReplyNoticeJob, getEmailJobDetail, listEmailJobs, processDueEmailJobs, resendEmailJob, getAutoSendEnabled, setAutoSendEnabled, listEmailTemplates, getEmailTemplate, updateEmailTemplate, renderTemplateString, renderEmailFromTemplate, listTemplatePresets, createTemplatePreset, deleteTemplatePreset, activateTemplatePreset, formatEasternTime, getMailTestMode, setMailTestMode, getPublicBaseUrl, setPublicBaseUrl, getEffectivePublicBaseUrl } from './email-service';
@@ -11,6 +11,7 @@ import { logOperation, listSyncLogs, listOperationLogs } from './log-service';
 import { buildCustomerPreviewResponse, extractTrackingNo } from './admin-preview';
 import { buildStoreDomain } from './config';
 import { registerWebhook, deleteWebhook, findWebhookByTopic, listWebhooks } from './shoplazza-client';
+import { mapPaymentMethodDisplay } from './normalize-order';
 
 export function createAdminRouter(): express.Router {
   const router = express.Router();
@@ -58,8 +59,8 @@ export function createAdminRouter(): express.Router {
       const token = await createSession(agent.id);
       res.cookie(COOKIE_NAME, token, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+        secure: req.protocol === 'https' || req.get('X-Forwarded-Proto') === 'https',
+        sameSite: 'lax',
         path: '/',
         maxAge: 7 * 86400 * 1000,
       });
@@ -260,8 +261,10 @@ export function createAdminRouter(): express.Router {
         public_ticket_no: j.public_ticket_no || '',
         client_link: clientLink,
         paid_at: formatEasternTime(j.ordered_at || snap.paid_at),
-        payment_method: snap.payment_method || '',
+        payment_method: mapPaymentMethodDisplay(snap.payment_method || ''),
         card_last4: snap.card_last4 || '',
+        order_amount: snap.order_amount || '',
+        order_currency: snap.order_currency || '',
       });
       res.json({ ok: true, subject: rendered.subject, html: rendered.html });
     } catch (e: any) {
@@ -296,6 +299,18 @@ export function createAdminRouter(): express.Router {
         status: 'success',
       });
       res.json({ ok: true, auto_send_enabled });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // GET /api/admin/pending-reply-count
+  router.get('/pending-reply-count', async (_req, res) => {
+    try {
+      const r = await query(
+        `SELECT COUNT(*) FROM support_email_jobs WHERE email_type = 'agent_reply_notice' AND status = 'pending'`,
+      );
+      res.json({ ok: true, count: Number(r.rows[0]?.count || 0) });
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e.message });
     }
@@ -447,7 +462,7 @@ export function createAdminRouter(): express.Router {
         order_amount: snapshot.order_amount || '',
         order_currency: snapshot.order_currency || '',
         paid_at: snapshot.paid_at || null,
-        payment_method: snapshot.payment_method || '',
+        payment_method: mapPaymentMethodDisplay(snapshot.payment_method),
         card_last4: snapshot.card_last4 || '',
         tracking_no: extractTrackingNo(snapshot),
         customer_name: snapshot.customer_name || '',
@@ -647,6 +662,38 @@ export function createAdminRouter(): express.Router {
     }
   });
 
+  // POST /api/admin/tickets/:publicTicketNo/reopen
+  router.post('/tickets/:publicTicketNo/reopen', async (req, res) => {
+    try {
+      const ticket = await getTicketByPublicNo(req.params.publicTicketNo);
+      if (!ticket) {
+        res.status(404).json({ ok: false, error: '工单不存在' });
+        return;
+      }
+
+      if (ticket.status !== 'closed') {
+        res.status(400).json({ ok: false, error: 'Only closed tickets can be reopened' });
+        return;
+      }
+
+      await reopenTicket(req.params.publicTicketNo);
+
+      await logOperation({
+        category: 'ticket',
+        action: 'ticket_reopened',
+        actor: (req as any).agent?.name || 'unknown',
+        storeSubdomain: ticket.store_subdomain,
+        target: req.params.publicTicketNo,
+        summary: `重新打开工单: ${req.params.publicTicketNo}`,
+        status: 'success',
+      });
+
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
   // GET /api/admin/stores
   router.get('/stores', async (_req, res) => {
     try {
@@ -739,10 +786,42 @@ export function createAdminRouter(): express.Router {
   router.delete('/stores/:id', async (req, res) => {
     try {
       const id = Number(req.params.id);
-      // 先查 subdomain + store_name 用于日志
-      const storeR = await query(`SELECT subdomain, store_name FROM support_stores WHERE id = $1`, [id]);
-      const subdomain = storeR.rows[0]?.subdomain || `#${id}`;
-      const storeName = storeR.rows[0]?.store_name || subdomain;
+      // 先查完整店铺信息
+      const storeR = await query(
+        `SELECT subdomain, store_name, access_token FROM support_stores WHERE id = $1`,
+        [id],
+      );
+      if (!storeR.rows[0]) {
+        res.status(404).json({ ok: false, error: '店铺不存在' });
+        return;
+      }
+      const row = storeR.rows[0];
+      const subdomain: string = row.subdomain;
+      const storeName: string = row.store_name || subdomain;
+      const accessToken: string = decryptToken(row.access_token);
+      const store = { subdomain, storeName, accessToken };
+
+      // 必须先注销 webhook 才能删除店铺
+      const existing = await findWebhookByTopic(store, 'orders/paid');
+      if (existing.registered && existing.webhook?.id) {
+        const unregResult = await deleteWebhook(store, existing.webhook.id);
+        if (!unregResult.ok) {
+          res.status(502).json({
+            ok: false,
+            error: `请先手动注销 Webhook 后再删除店铺: ${unregResult.error || '注销失败'}`,
+          });
+          return;
+        }
+        await logOperation({
+          category: 'webhook',
+          action: 'webhook_unregistered',
+          actor: (req as any).agent?.name || 'unknown',
+          storeSubdomain: subdomain,
+          target: subdomain,
+          summary: `删除店铺前自动注销 Webhook: ${subdomain}`,
+          status: 'success',
+        });
+      }
 
       const ok = await deleteStore(id);
       if (!ok) {
@@ -860,6 +939,8 @@ export function createAdminRouter(): express.Router {
         paid_at: formatEasternTime(new Date()),
         payment_method: 'Visa',
         card_last4: '4242',
+        order_amount: '29.99',
+        order_currency: 'USD',
       };
 
       const subject = renderTemplateString(tpl.subject_template, vars);
