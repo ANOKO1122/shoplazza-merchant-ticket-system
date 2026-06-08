@@ -3,7 +3,7 @@
   --primary: #1890ff; --primary-hover: #40a9ff; --success: #52c41a; --warning: #fa8c16;
   --danger: #ff4d4f; --text-main: #262626; --text-secondary: #595959; --text-muted: #8c8c8c;
   --border: #f0f0f0; --border-strong: #d9d9d9; --bg-page: #f5f7fa; --bg-card: #fff;
-  --radius: 8px; --sidebar-w: 220px; --shadow: 0 2px 8px rgba(0,0,0,0.06);
+  --radius: 8px; --sidebar-w: 180px; --shadow: 0 2px 8px rgba(0,0,0,0.06);
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { height: 100%; overflow: hidden; }

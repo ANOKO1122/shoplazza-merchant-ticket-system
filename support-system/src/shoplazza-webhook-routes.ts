@@ -240,7 +240,6 @@ export function createShoplazzaWebhookRouter(): express.Router {
                 cardLast4: normalized.cardLast4,
                 orderAmount: normalized.orderAmount,
                 orderCurrency: normalized.orderCurrency,
-                jobSource: 'webhook',
               });
               console.log(`[webhook] email job ${emailJob.inserted ? 'created' : 'exists'}: ${emailJob.job.email_job_no}`);
             }

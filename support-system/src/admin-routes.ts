@@ -304,18 +304,6 @@ export function createAdminRouter(): express.Router {
     }
   });
 
-  // GET /api/admin/pending-reply-count
-  router.get('/pending-reply-count', async (_req, res) => {
-    try {
-      const r = await query(
-        `SELECT COUNT(*) FROM support_email_jobs WHERE email_type = 'agent_reply_notice' AND status = 'pending'`,
-      );
-      res.json({ ok: true, count: Number(r.rows[0]?.count || 0) });
-    } catch (e: any) {
-      res.status(500).json({ ok: false, error: e.message });
-    }
-  });
-
   // ── 兜底任务（订单自动增量查漏）──
 
   // GET /api/admin/backfill/status
