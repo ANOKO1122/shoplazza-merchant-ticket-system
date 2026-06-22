@@ -296,6 +296,13 @@ export async function ensureTables(): Promise<void> {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_tickets_public_no ON support_tickets(public_ticket_no)`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_ticket_messages_ticket ON support_ticket_messages(public_ticket_no, created_at ASC)`);
 
+  // 阶段：图片附件支持
+  await p.query(`ALTER TABLE support_ticket_messages ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT '[]'::jsonb`);
+  // 允许纯图片消息（content 可为空）
+  await p.query(`ALTER TABLE support_ticket_messages ALTER COLUMN content DROP NOT NULL`);
+  // 存量消息 attachments 列 NULL → '[]' 回填
+  await p.query(`UPDATE support_ticket_messages SET attachments = '[]'::jsonb WHERE attachments IS NULL`);
+
   await p.query(`
     CREATE TABLE IF NOT EXISTS support_agents (
       id BIGSERIAL PRIMARY KEY,

@@ -3,6 +3,7 @@ import { verifyAccessToken, hashToken, createTicketAccessToken } from './token';
 import { createTicket, getTicketByPublicNo, getTicketMessages, addCustomerMessage, closeTicket, getOrderSnapshot, findExistingTicket, requestArbitration, countConsecutiveCustomerMessages } from './ticket-service';
 import { extractTrackingNo } from './admin-preview';
 import { mapPaymentMethodDisplay } from './normalize-order';
+import { uploadAttachments, processAttachments } from './storage-service';
 
 export function createSupportRouter(): express.Router {
   const router = express.Router();
@@ -248,8 +249,10 @@ export function createSupportRouter(): express.Router {
         messages: messages.map((m: any) => ({
           id: m.id,
           sender_type: m.sender_type,
+          sender_email: m.sender_email || null,
           sender_name: m.sender_name,
           content: m.content,
+          attachments: m.attachments || [],
           created_at: m.created_at,
         })),
         remainingMessages: Math.max(0, 5 - consecutiveCount),
@@ -260,13 +263,21 @@ export function createSupportRouter(): express.Router {
   });
 
   // POST /api/support/tickets/:publicTicketNo/messages
-  router.post('/tickets/:publicTicketNo/messages', async (req, res) => {
+  router.post('/tickets/:publicTicketNo/messages', uploadAttachments, async (req, res) => {
     try {
       const { publicTicketNo } = req.params;
       const { token, content } = req.body || {};
+      const contentStr = (content || '').trim();
+      const files = req.files as Express.Multer.File[] | undefined;
 
-      if (!token || !content) {
-        res.status(400).json({ ok: false, error: 'Message content is required' });
+      // 校验：文字和图片至少提供一个
+      if (!contentStr && (!files || files.length === 0)) {
+        res.status(400).json({ ok: false, error: 'Please provide message content or an image' });
+        return;
+      }
+
+      if (!token) {
+        res.status(401).json({ ok: false, error: 'Invalid or expired token' });
         return;
       }
 
@@ -292,10 +303,17 @@ export function createSupportRouter(): express.Router {
         return;
       }
 
+      // 处理图片
+      let attachmentUrls: string[] = [];
+      if (files && files.length > 0) {
+        attachmentUrls = await processAttachments(files);
+      }
+
       await addCustomerMessage({
         publicTicketNo,
         customerEmail: payload.customer_email,
-        content,
+        content: contentStr,
+        attachments: attachmentUrls,
       });
 
       const consecutiveCount = await countConsecutiveCustomerMessages(publicTicketNo);
@@ -306,6 +324,10 @@ export function createSupportRouter(): express.Router {
         return;
       }
       if (e.message && e.message.includes('Message must be under')) {
+        res.status(400).json({ ok: false, error: e.message });
+        return;
+      }
+      if (e.message && e.message.includes('Unsupported file type')) {
         res.status(400).json({ ok: false, error: e.message });
         return;
       }

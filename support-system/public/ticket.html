@@ -258,6 +258,19 @@
   }
   .loading { text-align: center; padding: 60px 20px; color: var(--text-muted); font-size: 15px; }
 
+  /* 图片消息样式 */
+  .msg-images { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .chat-img { width: 200px; height: 200px; object-fit: cover; border-radius: 8px; cursor: pointer; border: 1px solid #e8e8e8; transition: transform 0.2s; }
+  .chat-img:hover { transform: scale(1.05); }
+  .image-lightbox { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; z-index: 9999; cursor: pointer; }
+  .image-lightbox img { max-width: 90vw; max-height: 90vh; object-fit: contain; border-radius: 4px; }
+  .image-preview-area { display: flex; gap: 8px; padding: 4px 0; flex-wrap: wrap; }
+  .image-preview-item { position: relative; width: 64px; height: 64px; border-radius: 6px; overflow: hidden; border: 1px solid #d9d9d9; }
+  .image-preview-item img { width: 100%; height: 100%; object-fit: cover; }
+  .image-preview-item .remove-btn { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; border-radius: 50%; background: rgba(0,0,0,0.5); color: #fff; border: none; font-size: 11px; line-height: 18px; text-align: center; cursor: pointer; }
+  .btn-img-upload { display: inline-flex; align-items: center; justify-content: center; padding: 9px 14px; border-radius: 6px; background: #fff; cursor: pointer; font-size: 13px; border: 1px solid #d9d9d9; transition: background 0.2s; color: var(--text-secondary); }
+  .btn-img-upload:hover { background: #f0f0f0; border-color: var(--primary); color: var(--primary); }
+
   @media (max-width: 768px) {
     .container { padding: 12px; }
     .card { padding: 18px; }
@@ -385,6 +398,7 @@ function renderTicketDetail(data) {
   msgs.forEach(function(m) {
     var roleLabels = { agent: 'Support Agent', customer: 'Customer', system: 'System', platform: 'Platform' };
     var role = roleLabels[m.sender_type] || m.sender_type;
+    var imgHtml = renderAttachments(m.attachments);
     timelineHtml +=
       '<div class="timeline-item ' + m.sender_type + '">' +
       '<div class="timeline-meta">' +
@@ -392,6 +406,7 @@ function renderTicketDetail(data) {
       '<span class="timeline-time">' + formatDate(m.created_at) + '</span>' +
       '</div>' +
       '<div class="timeline-content">' + m.content + '</div>' +
+      imgHtml +
       '</div>';
   });
 
@@ -400,9 +415,13 @@ function renderTicketDetail(data) {
   var replyBlock = t.status === 'closed' ? '' :
     '<div class="reply-area">' +
     '<div id="remainingHint" style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Remaining messages: <strong>' + remainingMessages + '</strong></div>' +
+    '<div class="image-preview-area" id="imagePreview" style="display:none"></div>' +
     '<textarea class="reply-box" id="replyBox" placeholder="Enter your reply here..." maxlength="2000"></textarea>' +
     '<div class="reply-actions">' +
+    '<div style="display:flex;align-items:center;gap:8px">' +
     '<button class="btn btn-primary" onclick="sendReply()">Send</button>' +
+    '<label class="btn-img-upload" title="Attach images">Upload Image<input type="file" id="imageInput" multiple accept="image/jpeg,image/png,image/webp" style="display:none" onchange="onImagesSelected()"></label>' +
+    '</div>' +
     '</div>' +
     '<div id="err2" class="error-msg" style="display:none;margin-top:12px"></div>' +
     '</div>';
@@ -434,7 +453,6 @@ function renderTicketDetail(data) {
     '<div class="info-row"><span class="info-label">Total Amount:</span><span class="info-value">' + (order.order_currency || 'USD') + ' ' + (order.order_amount || '') + '</span></div>' +
     '<div class="info-row"><span class="info-label">Refundable Amount:</span><span class="info-value">' + (order.order_currency || 'USD') + ' ' + (order.order_amount || '') + '</span></div>' +
     '<div class="info-row"><span class="info-label">Order Date:</span><span class="info-value">' + formatDate(order.paid_at) + '</span></div>' +
-    (order.tracking_no ? '<div class="info-row"><span class="info-label">Tracking No:</span><span class="info-value">' + order.tracking_no + '</span></div>' : '') +
     '<div class="info-row"><span class="info-label">Products:</span><span class="info-value">' + items + '</span></div>' +
     '</div>' +
     (actionButtons ? '<div class="btn-group" style="margin-top:24px">' + actionButtons + '</div>' : '') +
@@ -492,6 +510,7 @@ async function refreshMessages() {
       msgs.forEach(function(m) {
         var roleLabels = { agent: 'Support Agent', customer: 'Customer', system: 'System', platform: 'Platform' };
         var role = roleLabels[m.sender_type] || m.sender_type;
+        var imgHtml = renderAttachments(m.attachments);
         html +=
           '<div class="timeline-item ' + m.sender_type + '">' +
           '<div class="timeline-meta">' +
@@ -499,6 +518,7 @@ async function refreshMessages() {
           '<span class="timeline-time">' + formatDate(m.created_at) + '</span>' +
           '</div>' +
           '<div class="timeline-content">' + m.content + '</div>' +
+          imgHtml +
           '</div>';
       });
       timeline.innerHTML = html;
@@ -548,19 +568,25 @@ async function submitTicket() {
 async function sendReply() {
   var box = $('#replyBox');
   var content = box.value.trim();
-  if (!content) { showError('err2', 'Message content is required'); return; }
+  var hasImages = selectedFiles.length > 0;
+  if (!content && !hasImages) { showError('err2', 'Message content or image is required'); return; }
   var btn = document.querySelector('.reply-actions .btn-primary');
   btn.disabled = true;
   hideError('err2');
   try {
+    var formData = new FormData();
+    formData.append('token', accessToken);
+    formData.append('content', content);
+    selectedFiles.forEach(function(file) { formData.append('images', file); });
+
     var result = await (await fetch(API + '/tickets/' + getTicketNo() + '/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: accessToken, content: content }),
+      body: formData,
     })).json();
     if (result.ok) {
       remainingMessages = result.remainingMessages;
       box.value = '';
+      clearSelectedImages();
       await refreshMessages();
     } else {
       showError('err2', result.error || 'Send failed');
@@ -606,6 +632,71 @@ async function requestArbitration() {
 function getTicketNo() {
   var el = document.querySelector('.ticket-id');
   return el ? el.textContent.replace('#', '') : '';
+}
+
+// ── 图片附件功能 ──
+
+var selectedFiles = [];
+
+function onImagesSelected() {
+  var input = $('#imageInput');
+  if (!input || !input.files) return;
+  for (var i = 0; i < input.files.length; i++) {
+    if (selectedFiles.length >= 3) break;
+    selectedFiles.push(input.files[i]);
+  }
+  input.value = '';
+  renderImagePreviews();
+}
+
+function renderImagePreviews() {
+  var container = $('#imagePreview');
+  if (!container) return;
+  if (selectedFiles.length === 0) {
+    container.style.display = 'none';
+    container.innerHTML = '';
+    return;
+  }
+  container.style.display = 'flex';
+  var html = '';
+  selectedFiles.forEach(function(file, idx) {
+    var url = URL.createObjectURL(file);
+    html +=
+      '<div class="image-preview-item">' +
+      '<img src="' + url + '" alt="preview">' +
+      '<button class="remove-btn" onclick="removeImage(' + idx + ')">×</button>' +
+      '</div>';
+  });
+  container.innerHTML = html;
+}
+
+function removeImage(idx) {
+  selectedFiles.splice(idx, 1);
+  renderImagePreviews();
+}
+
+function clearSelectedImages() {
+  selectedFiles = [];
+  var container = $('#imagePreview');
+  if (container) { container.style.display = 'none'; container.innerHTML = ''; }
+}
+
+function renderAttachments(attachments) {
+  if (!attachments || !attachments.length) return '';
+  var html = '<div class="msg-images">';
+  attachments.forEach(function(url) {
+    html += '<img src="' + url + '" class="chat-img" onclick="viewImage(\'' + url + '\')" loading="lazy">';
+  });
+  html += '</div>';
+  return html;
+}
+
+function viewImage(url) {
+  var lb = document.createElement('div');
+  lb.className = 'image-lightbox';
+  lb.innerHTML = '<img src="' + url + '">';
+  lb.onclick = function() { lb.remove(); };
+  document.body.appendChild(lb);
 }
 
 // Init
