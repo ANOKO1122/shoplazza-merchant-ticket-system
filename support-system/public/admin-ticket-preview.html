@@ -256,6 +256,15 @@
   }
   .loading { text-align: center; padding: 60px 20px; color: var(--text-muted); font-size: 15px; }
 
+  /* 图片消息样式 */
+  .msg-images { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .chat-img { width: 200px; height: 200px; object-fit: cover; border-radius: 8px; cursor: pointer; border: 1px solid #e8e8e8; transition: transform 0.2s; }
+  .chat-img:hover { transform: scale(1.05); }
+  .image-lightbox { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; z-index: 9999; cursor: pointer; }
+  .image-lightbox img { max-width: 90vw; max-height: 90vh; object-fit: contain; border-radius: 4px; }
+  .btn-img-upload { display: inline-flex; align-items: center; justify-content: center; padding: 9px 14px; border-radius: 6px; background: #fff; cursor: pointer; font-size: 13px; border: 1px solid #d9d9d9; transition: background 0.2s; color: var(--text-secondary); }
+  .btn-img-upload:hover { background: #f0f0f0; border-color: var(--primary); color: var(--primary); }
+
   @media (max-width: 768px) {
     .container { padding: 12px; }
     .card { padding: 18px; }
@@ -364,6 +373,7 @@ function renderTicketDetail(data) {
   msgs.forEach(function(m) {
     var roleLabels = { agent: 'Merchant', customer: 'Customer', system: 'System', platform: 'Platform' };
     var role = roleLabels[m.sender_type] || m.sender_type;
+    var imgHtml = renderAttachments(m.attachments);
     timelineHtml +=
       '<div class="timeline-item ' + esc(m.sender_type) + '">' +
       '<div class="timeline-meta">' +
@@ -371,6 +381,7 @@ function renderTicketDetail(data) {
       '<span class="timeline-time">' + esc(formatDate(m.created_at)) + '</span>' +
       '</div>' +
       '<div class="timeline-content">' + esc(m.content) + '</div>' +
+      imgHtml +
       '</div>';
   });
 
@@ -380,7 +391,10 @@ function renderTicketDetail(data) {
     '<div class="reply-area">' +
     '<textarea class="reply-box" id="replyBox" placeholder="Enter your reply here..." maxlength="2000" disabled></textarea>' +
     '<div class="reply-actions">' +
+    '<div style="display:flex;align-items:center;gap:8px">' +
     '<button class="btn btn-primary" disabled>Send</button>' +
+    '<label class="btn-img-upload" title="Attach images" style="opacity:0.5;cursor:not-allowed">Upload Image</label>' +
+    '</div>' +
     '</div>' +
     '</div>';
 
@@ -411,7 +425,6 @@ function renderTicketDetail(data) {
     '<div class="info-row"><span class="info-label">Total Amount:</span><span class="info-value">' + esc(order.order_currency || 'USD') + ' ' + esc(order.order_amount || '') + '</span></div>' +
     '<div class="info-row"><span class="info-label">Refundable Amount:</span><span class="info-value">' + esc(order.order_currency || 'USD') + ' ' + esc(order.order_amount || '') + '</span></div>' +
     '<div class="info-row"><span class="info-label">Order Date:</span><span class="info-value">' + esc(formatDate(order.paid_at)) + '</span></div>' +
-    '<div class="info-row"><span class="info-label">Tracking No:</span><span class="info-value">' + esc(order.tracking_no || 'Not shipped') + '</span></div>' +
     '<div class="info-row"><span class="info-label">Products:</span><span class="info-value">' + items + '</span></div>' +
     '</div>' +
     (actionButtons ? '<div class="btn-group" style="margin-top:24px">' + actionButtons + '</div>' : '') +
@@ -451,6 +464,24 @@ async function loadPreview() {
   } catch(e) {
     $('#app').innerHTML = '<div class="card"><div class="error-msg">Failed to load. Please check your connection and refresh.</div></div>';
   }
+}
+
+function renderAttachments(attachments) {
+  if (!attachments || !attachments.length) return '';
+  var html = '<div class="msg-images">';
+  attachments.forEach(function(url) {
+    html += '<img src="' + esc(url) + '" class="chat-img" onclick="viewImage(\'' + esc(url) + '\')" loading="lazy">';
+  });
+  html += '</div>';
+  return html;
+}
+
+function viewImage(url) {
+  var lb = document.createElement('div');
+  lb.className = 'image-lightbox';
+  lb.innerHTML = '<img src="' + url + '">';
+  lb.onclick = function() { lb.remove(); };
+  document.body.appendChild(lb);
 }
 
 (async function init() {

@@ -33,6 +33,10 @@ services:
       - mailpit
     env_file:
       - .env
+    volumes:
+      # 图片持久化：宿主机 ./uploads 目录映射到容器内 /app/public/uploads
+      # 确保 docker compose down 重建容器后用户上传的图片不丢失
+      - ./uploads:/app/public/uploads
     networks:
       - support_net
 

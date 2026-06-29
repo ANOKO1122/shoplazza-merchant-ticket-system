@@ -130,7 +130,7 @@ export async function getTicketByPublicNo(publicTicketNo: string) {
 
 export async function getTicketMessages(publicTicketNo: string) {
   const r = await query(
-    `SELECT id, sender_type, sender_email, sender_name, content, created_at
+    `SELECT id, sender_type, sender_email, sender_name, content, attachments, created_at
      FROM support_ticket_messages
      WHERE public_ticket_no = $1
      ORDER BY created_at ASC`,
@@ -144,12 +144,15 @@ export async function addCustomerMessage(params: {
   customerEmail: string;
   customerName?: string;
   content: string;
+  attachments?: string[];  // 新增：图片附件 URL 数组
 }) {
-  // 校验 content 长度
-  if (!params.content || params.content.trim().length === 0) {
-    throw new Error('Message content is required');
+  // 校验：文字和图片至少提供一个
+  const hasText = params.content && params.content.trim().length > 0;
+  const hasImages = params.attachments && params.attachments.length > 0;
+  if (!hasText && !hasImages) {
+    throw new Error('Message content or image is required');
   }
-  if (params.content.length > MAX_MESSAGE_CONTENT_LENGTH) {
+  if (hasText && params.content.length > MAX_MESSAGE_CONTENT_LENGTH) {
     throw new Error(`Message must be under ${MAX_MESSAGE_CONTENT_LENGTH} characters`);
   }
 
@@ -159,11 +162,19 @@ export async function addCustomerMessage(params: {
     throw new Error('You have reached the maximum of 5 consecutive messages. Please wait for a merchant response.');
   }
 
+  const imageUrls = params.attachments || [];
+
   await query(
     `INSERT INTO support_ticket_messages
-      (public_ticket_no, sender_type, sender_email, sender_name, content)
-     VALUES ($1, 'customer', $2, $3, $4)`,
-    [params.publicTicketNo, params.customerEmail, params.customerName || null, params.content],
+      (public_ticket_no, sender_type, sender_email, sender_name, content, attachments)
+     VALUES ($1, 'customer', $2, $3, $4, $5)`,
+    [
+      params.publicTicketNo,
+      params.customerEmail,
+      params.customerName || null,
+      params.content || '',
+      JSON.stringify(imageUrls),
+    ],
   );
 
   await query(
@@ -309,12 +320,27 @@ export async function addAgentMessage(params: {
   agentId: number;
   agentName: string;
   content: string;
+  attachments?: string[];  // 新增：图片附件 URL 数组
 }) {
+  const hasText = params.content && params.content.trim().length > 0;
+  const hasImages = params.attachments && params.attachments.length > 0;
+  if (!hasText && !hasImages) {
+    throw new Error('Message content or image is required');
+  }
+
+  const imageUrls = params.attachments || [];
+
   await query(
     `INSERT INTO support_ticket_messages
-      (public_ticket_no, sender_type, sender_email, sender_name, content)
-     VALUES ($1, 'agent', $2, $3, $4)`,
-    [params.publicTicketNo, `agent:${params.agentId}`, params.agentName, params.content],
+      (public_ticket_no, sender_type, sender_email, sender_name, content, attachments)
+     VALUES ($1, 'agent', $2, $3, $4, $5)`,
+    [
+      params.publicTicketNo,
+      `agent:${params.agentId}`,
+      params.agentName,
+      params.content || '',
+      JSON.stringify(imageUrls),
+    ],
   );
 
   await query(

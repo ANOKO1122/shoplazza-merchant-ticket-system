@@ -12,6 +12,7 @@ import { buildCustomerPreviewResponse, extractTrackingNo } from './admin-preview
 import { buildStoreDomain } from './config';
 import { registerWebhook, deleteWebhook, findWebhookByTopic, listWebhooks } from './shoplazza-client';
 import { mapPaymentMethodDisplay } from './normalize-order';
+import { uploadAttachments, processAttachments, getStorageProvider } from './storage-service';
 
 export function createAdminRouter(): express.Router {
   const router = express.Router();
@@ -226,6 +227,18 @@ export function createAdminRouter(): express.Router {
         status: 'success',
       });
       res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // GET /api/admin/email-jobs/pending-count — 待发送客服回复提醒邮件数量
+  router.get('/email-jobs/pending-count', async (_req, res) => {
+    try {
+      const r = await query(
+        `SELECT count(*)::int AS cnt FROM support_email_jobs WHERE email_type = 'agent_reply_notice' AND status = 'pending'`,
+      );
+      res.json({ ok: true, count: r.rows[0]?.cnt || 0 });
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e.message });
     }
@@ -477,8 +490,10 @@ export function createAdminRouter(): express.Router {
         messages: messages.map((m: any) => ({
           id: m.id,
           sender_type: m.sender_type,
+          sender_email: m.sender_email || null,
           sender_name: m.sender_name,
           content: m.content,
+          attachments: m.attachments || [],
           created_at: m.created_at,
         })),
       });
@@ -554,12 +569,15 @@ export function createAdminRouter(): express.Router {
   });
 
   // POST /api/admin/tickets/:publicTicketNo/messages
-  router.post('/tickets/:publicTicketNo/messages', async (req, res) => {
+  router.post('/tickets/:publicTicketNo/messages', uploadAttachments, async (req, res) => {
     try {
       const agent = (req as any).agent;
       const { content } = req.body || {};
-      if (!content) {
-        res.status(400).json({ ok: false, error: '缺少 content' });
+      const contentStr = (content || '').trim();
+      const files = req.files as Express.Multer.File[] | undefined;
+
+      if (!contentStr && (!files || files.length === 0)) {
+        res.status(400).json({ ok: false, error: '请提供消息内容或图片' });
         return;
       }
 
@@ -574,11 +592,18 @@ export function createAdminRouter(): express.Router {
         return;
       }
 
+      // 处理图片
+      let attachmentUrls: string[] = [];
+      if (files && files.length > 0) {
+        attachmentUrls = await processAttachments(files);
+      }
+
       await addAgentMessage({
         publicTicketNo: req.params.publicTicketNo,
         agentId: agent.agentId,
         agentName: agent.name,
-        content,
+        content: contentStr,
+        attachments: attachmentUrls,
       });
 
       await ensureAgentReplyNoticeJob({
@@ -593,6 +618,10 @@ export function createAdminRouter(): express.Router {
 
       res.json({ ok: true });
     } catch (e: any) {
+      if (e.message && e.message.includes('Unsupported file type')) {
+        res.status(400).json({ ok: false, error: e.message });
+        return;
+      }
       res.status(500).json({ ok: false, error: e.message });
     }
   });
@@ -833,18 +862,34 @@ export function createAdminRouter(): express.Router {
   // DELETE /api/admin/tickets/:publicTicketNo/messages/:msgId
   router.delete('/tickets/:publicTicketNo/messages/:msgId', async (req, res) => {
     try {
-      const agent = (req as any).agent;
       const msgId = Number(req.params.msgId);
       if (!msgId) { res.status(400).json({ ok: false, error: '无效的消息ID' }); return; }
 
-      const r = await query(
-        `DELETE FROM support_ticket_messages WHERE id = $1 AND public_ticket_no = $2 AND sender_type = 'agent'`,
+      // 删除前先查出附件，清理磁盘文件
+      const msgR = await query(
+        `SELECT attachments FROM support_ticket_messages WHERE id = $1 AND public_ticket_no = $2 AND sender_type = 'agent'`,
         [msgId, req.params.publicTicketNo],
       );
-      if ((r.rowCount || 0) === 0) {
+      if ((msgR.rowCount || 0) === 0) {
         res.status(404).json({ ok: false, error: '消息不存在或无权撤回' });
         return;
       }
+
+      // 清理磁盘上的附件文件
+      const attachments: string[] = msgR.rows[0]?.attachments || [];
+      if (attachments.length > 0) {
+        const provider = getStorageProvider();
+        for (const url of attachments) {
+          await provider.delete(url).catch(() => {});
+        }
+      }
+
+      // 再删除数据库行
+      await query(
+        `DELETE FROM support_ticket_messages WHERE id = $1 AND public_ticket_no = $2 AND sender_type = 'agent'`,
+        [msgId, req.params.publicTicketNo],
+      );
+
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ ok: false, error: e.message }); }
   });

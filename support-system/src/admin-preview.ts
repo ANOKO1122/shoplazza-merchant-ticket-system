@@ -41,6 +41,7 @@ export function buildCustomerPreviewResponse(params: {
       sender_type: m.sender_type,
       sender_name: m.sender_name,
       content: m.content,
+      attachments: m.attachments || [],
       created_at: m.created_at,
     })),
   };

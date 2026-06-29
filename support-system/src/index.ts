@@ -90,6 +90,12 @@ app.use('/api/', apiLimiter);
 
 app.use(express.json({ limit: '512kb' }));
 
+// 挂载上传文件静态目录（图片附件访问）
+app.use('/uploads', express.static(path.resolve(__dirname, '..', 'public', 'uploads'), {
+  maxAge: '7d',          // 图片缓存 7 天
+  immutable: true,       // 文件名含随机 hex，内容永不变
+}));
+
 // Shoplazza Webhook
 app.use('/api/shoplazza', createShoplazzaWebhookRouter());
 
@@ -161,6 +167,33 @@ app.get('/health', (_req, res) => {
     service: 'support-bridge',
     stores: storesConfig ? storesConfig.length : 0,
   });
+});
+
+// ── Multer / 通用错误处理中间件（必须在所有路由之后、404 兜底之前注册） ──
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  // Multer 文件大小超限
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    res.status(413).json({ ok: false, error: 'File too large. Maximum size is 5MB per file.' });
+    return;
+  }
+  // Multer 文件数量超限
+  if (err.code === 'LIMIT_FILE_COUNT') {
+    res.status(400).json({ ok: false, error: 'Too many files. Maximum is 3 per message.' });
+    return;
+  }
+  // Multer 字段名不符
+  if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+    res.status(400).json({ ok: false, error: 'Unexpected file field. Use "images" as the field name.' });
+    return;
+  }
+  // 自定义文件类型错误
+  if (err.message && err.message.includes('Unsupported file type')) {
+    res.status(400).json({ ok: false, error: err.message });
+    return;
+  }
+  // 其他未预期错误
+  console.error('[support-bridge] 未捕获错误:', err);
+  res.status(500).json({ ok: false, error: 'Internal server error' });
 });
 
 // 兜底 404
