@@ -180,6 +180,22 @@ export async function ensureTables(): Promise<void> {
     ON CONFLICT (email_type) DO NOTHING
   `);
 
+  // 手动发起新工单邀请：顾客投诉工单模板
+  await p.query(`
+    INSERT INTO support_email_templates (email_type, subject_template, body_template)
+    VALUES
+      ('customer_complaint_invite',
+       '{{store_name}} - New complaint for order {{order_number}}',
+       '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#333;line-height:1.6">
+    <p>Dear {{customer_name}},</p>
+    <p>Regarding your order <strong>{{order_number}}</strong>, if you have any new issues, please click the link below to submit a complaint:</p>
+    <p><a href="{{client_link}}" style="color:#1890ff">{{client_link}}</a></p>
+    {{#product_image}}<p><img src="{{product_image}}" style="max-width:200px;border-radius:4px" /></p>{{/product_image}}
+    <p style="color:#8c8c8c;font-size:14px;margin-top:24px">Please do not reply directly to this email, it will be ignored.</p>
+  </div>')
+    ON CONFLICT (email_type) DO NOTHING
+  `);
+
   // 邮件模板预设（可切换的多套模板）
   await p.query(`
     CREATE TABLE IF NOT EXISTS support_email_template_presets (
@@ -273,8 +289,7 @@ export async function ensureTables(): Promise<void> {
       closed_by TEXT,
       arbitration_requested BOOLEAN NOT NULL DEFAULT false,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      UNIQUE(store_subdomain, order_id, customer_email)
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `);
 
@@ -294,6 +309,7 @@ export async function ensureTables(): Promise<void> {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_tickets_email ON support_tickets(customer_email)`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_tickets_status_updated ON support_tickets(status, updated_at DESC)`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_tickets_public_no ON support_tickets(public_ticket_no)`);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_support_tickets_store_order_email ON support_tickets(store_subdomain, order_id, customer_email)`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_ticket_messages_ticket ON support_ticket_messages(public_ticket_no, created_at ASC)`);
 
   // 阶段：图片附件支持
@@ -302,6 +318,12 @@ export async function ensureTables(): Promise<void> {
   await p.query(`ALTER TABLE support_ticket_messages ALTER COLUMN content DROP NOT NULL`);
   // 存量消息 attachments 列 NULL → '[]' 回填
   await p.query(`UPDATE support_ticket_messages SET attachments = '[]'::jsonb WHERE attachments IS NULL`);
+
+  // 手动发起新工单邀请功能：移除 support_tickets 唯一约束（允许同一订单多个工单）
+  await p.query(`ALTER TABLE support_tickets DROP CONSTRAINT IF EXISTS support_tickets_store_subdomain_order_id_customer_em_key`);
+
+  // 手动发起新工单邀请功能：support_access_tokens 增加 force_new_ticket 标记
+  await p.query(`ALTER TABLE support_access_tokens ADD COLUMN IF NOT EXISTS force_new_ticket BOOLEAN NOT NULL DEFAULT false`);
 
   await p.query(`
     CREATE TABLE IF NOT EXISTS support_agents (
@@ -343,6 +365,7 @@ export async function ensureTables(): Promise<void> {
       expires_at TIMESTAMPTZ NOT NULL,
       used_at TIMESTAMPTZ,
       revoked_at TIMESTAMPTZ,
+      force_new_ticket BOOLEAN NOT NULL DEFAULT false,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `);

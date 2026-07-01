@@ -119,6 +119,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
       <a class="nav-item active"><span class="nav-icon">📨</span>邮件模板</a>
       <a class="nav-item" href="/thinkpro-admin/settings"><span class="nav-icon">⚙️</span>系统设置</a>
       <a class="nav-item" href="/thinkpro-admin/logs"><span class="nav-icon">📋</span>系统日志</a>
+      <a class="nav-item" href="/mailpit/" target="_blank"><span class="nav-icon">📬</span>邮件调试</a>
     </nav>
     <div class="sidebar-footer"><span>v1.0.0</span><span id="agentName"></span></div>
   </aside>
@@ -140,6 +141,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
         <button class="tab-btn active" data-type="paid_support_invite" onclick="switchTemplate('paid_support_invite')">📦 下单/付款后通知</button>
         <button class="tab-btn" data-type="agent_reply_notice" onclick="switchTemplate('agent_reply_notice')">💬 客服回复提醒</button>
         <button class="tab-btn" data-type="ticket_closed_notice" onclick="switchTemplate('ticket_closed_notice')">✅ 工单关闭提醒</button>
+        <button class="tab-btn" data-type="customer_complaint_invite" onclick="switchTemplate('customer_complaint_invite')">📝 顾客投诉工单</button>
       </div>
 
       <!-- 编辑 + 预览 -->
@@ -172,8 +174,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
             <div class="help-text">
               可用变量：<code>{{store_name}}</code> <code>{{store_domain}}</code> <code>{{order_id}}</code> <code>{{order_number}}</code>
               <code>{{customer_name}}</code> <code>{{customer_email}}</code> <code>{{public_ticket_no}}</code> <code>{{client_link}}</code>
-              <code>{{paid_at}}</code> <code>{{payment_method}}</code> <code>{{card_last4}}</code>
-              <br>条件块：<code>{{#card_last4}}显示内容{{/card_last4}}</code> — 仅当变量非空时显示
+              <code>{{paid_at}}</code> <code>{{payment_method}}</code> <code>{{card_last4}}</code> <code>{{product_image}}</code>
+              <br>条件块：<code>{{#card_last4}}显示内容{{/card_last4}}</code> <code>{{#product_image}}显示内容{{/product_image}}</code> — 仅当变量非空时显示
             </div>
             <div class="template-vars" style="margin-top:8px">
               <span style="font-size:11px;color:var(--text-muted);margin-right:4px">快速插入变量：</span>
@@ -188,6 +190,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
               <span class="var-chip" onclick="insertVar('{{paid_at}}')">paid_at</span>
               <span class="var-chip" onclick="insertVar('{{payment_method}}')">payment_method</span>
               <span class="var-chip" onclick="insertVar('{{card_last4}}')">card_last4</span>
+              <span class="var-chip" onclick="insertVar('{{product_image}}')">product_image</span>
             </div>
           </div>
           <div class="btn-row">
@@ -220,6 +223,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
                 <div class="form-group"><label>card_last4</label><input id="tv_card_last4" value="4242" onchange="livePreview()"></div>
                 <div class="form-group"><label>order_amount</label><input id="tv_order_amount" value="29.99" onchange="livePreview()"></div>
                 <div class="form-group"><label>order_currency</label><input id="tv_order_currency" value="USD" onchange="livePreview()"></div>
+                <div class="form-group"><label>product_image</label><input id="tv_product_image" value="https://img.shoplazza.com/example.jpg" onchange="livePreview()"></div>
               </div>
             </details>
             <!-- 预览 iframe -->
@@ -491,6 +495,7 @@ function livePreview() {
     card_last4: document.getElementById('tv_card_last4').value,
     order_amount: document.getElementById('tv_order_amount').value,
     order_currency: document.getElementById('tv_order_currency').value,
+    product_image: document.getElementById('tv_product_image').value,
   };
 
   // 客户端简单渲染
@@ -555,7 +560,8 @@ async function resetToDefault() {
     var typeLabels = {
       paid_support_invite: '下单/付款后通知',
       agent_reply_notice: '客服回复提醒',
-      ticket_closed_notice: '工单关闭提醒'
+      ticket_closed_notice: '工单关闭提醒',
+      customer_complaint_invite: '顾客投诉工单'
     };
 
     // 硬编码默认值作为回退
@@ -571,6 +577,10 @@ async function resetToDefault() {
       ticket_closed_notice: {
         subject: '{{store_name}} - Your inquiry {{public_ticket_no}} has been closed',
         body: '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#333">\n  <div style="background:#f7f9fc;padding:20px;border-radius:8px;text-align:center">\n    <h2 style="color:#52c41a;margin:0">{{store_name}} Support</h2>\n  </div>\n  <div style="padding:20px 0">\n    <p>Dear {{customer_name}},</p>\n    <p>Your inquiry <strong>{{public_ticket_no}}</strong> regarding order <strong>{{order_number}}</strong> has been resolved and closed.</p>\n    <p>If you need further assistance, please contact us again.</p>\n    <p>Thank you for your patience!</p>\n  </div>\n  <div style="border-top:1px solid #e8e8e8;padding-top:16px;color:#8c8c8c;font-size:12px">\n    <p>This is an automated message from {{store_name}} support system.</p>\n  </div>\n</div>'
+      },
+      customer_complaint_invite: {
+        subject: '{{store_name}} - New complaint for order {{order_number}}',
+        body: '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#333;line-height:1.6">\n    <p>Dear {{customer_name}},</p>\n    <p>Regarding your order <strong>{{order_number}}</strong>, if you have any new issues, please click the link below to submit a complaint:</p>\n    <p><a href="{{client_link}}" style="color:#1890ff">{{client_link}}</a></p>\n    {{#product_image}}<p><img src="{{product_image}}" style="max-width:200px;border-radius:4px" /></p>{{/product_image}}\n    <p style="color:#8c8c8c;font-size:14px;margin-top:24px">Please do not reply directly to this email, it will be ignored.</p>\n  </div>'
       }
     };
 

@@ -16,6 +16,8 @@ services:
   mailpit:
     image: axllent/mailpit:latest
     restart: always
+    environment:
+      MP_WEBROOT: "/mailpit"
     ports:
       - "1025:1025"
       - "8025:8025"

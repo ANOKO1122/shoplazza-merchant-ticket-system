@@ -74,15 +74,6 @@ export async function createTicket(params: {
        customer_email, customer_name, issue_type, status,
        customer_access_token_hash, bootstrap_token_hash)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-     ON CONFLICT (store_subdomain, order_id, customer_email) DO UPDATE SET
-       public_ticket_no = EXCLUDED.public_ticket_no,
-       store_name = EXCLUDED.store_name,
-       order_number = EXCLUDED.order_number,
-       customer_name = EXCLUDED.customer_name,
-       issue_type = EXCLUDED.issue_type,
-       customer_access_token_hash = EXCLUDED.customer_access_token_hash,
-       status = 'open',
-       updated_at = now()
      RETURNING public_ticket_no`,
     [
       publicTicketNo,
@@ -258,6 +249,23 @@ export async function findExistingTicket(params: {
     [params.storeSubdomain, params.orderId, params.customerEmail],
   );
   return r.rows[0] || null;
+}
+
+/** 列出同一订单下所有未关闭工单（用于多工单场景展示） */
+export async function listExistingTickets(params: {
+  storeSubdomain: string;
+  orderId: string;
+  customerEmail: string;
+}) {
+  const r = await query(
+    `SELECT public_ticket_no, status, issue_type, created_at
+     FROM support_tickets
+     WHERE store_subdomain = $1 AND order_id = $2 AND customer_email = $3
+       AND status != 'closed'
+     ORDER BY created_at DESC`,
+    [params.storeSubdomain, params.orderId, params.customerEmail],
+  );
+  return r.rows;
 }
 
 export async function listTickets(params: {

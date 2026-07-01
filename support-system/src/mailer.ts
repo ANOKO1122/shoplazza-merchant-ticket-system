@@ -79,5 +79,26 @@ export async function sendSupportEmail(mail: SupportMail): Promise<{ messageId: 
     text: mail.text,
   });
 
+  // 生产模式：同时抄送一份到本地 Mailpit 供客服预览（fire-and-forget）
+  const testMode = await getMailTestMode().catch(() => false);
+  if (!testMode) {
+    const pitHost = process.env.SUPPORT_MAILPIT_HOST || 'mailpit';
+    const pitTransporter = nodemailer.createTransport({
+      host: pitHost,
+      port: 1025,
+      secure: false,
+    });
+    pitTransporter.sendMail({
+      from: config.mailFrom,
+      to: config.mailReplyTo || config.mailFrom,
+      subject: mail.subject,
+      html: mail.html,
+      text: mail.text,
+    }).catch((e: any) => {
+      // Mailpit 不可用时静默失败，不影响主流程
+      console.warn('[mailer] Mailpit CC 失败:', e.message);
+    });
+  }
+
   return { messageId: result.messageId || '' };
 }

@@ -5,7 +5,7 @@ import { loginAgent, createSession, destroySession, verifySession, changeAgentPa
 import { listTickets, getTicketByPublicNo, getTicketMessages, getOrderSnapshot, addAgentMessage, updateTicketStatus, reopenTicket } from './ticket-service';
 import { listStores, createStore, updateStore, deleteStore, getStoreBySubdomain, decryptToken } from './store-service';
 import { query } from './pg';
-import { cancelEmailJob, ensureAgentReplyNoticeJob, getEmailJobDetail, listEmailJobs, processDueEmailJobs, resendEmailJob, getAutoSendEnabled, setAutoSendEnabled, listEmailTemplates, getEmailTemplate, updateEmailTemplate, renderTemplateString, renderEmailFromTemplate, listTemplatePresets, createTemplatePreset, deleteTemplatePreset, activateTemplatePreset, formatEasternTime, getMailTestMode, setMailTestMode, getPublicBaseUrl, setPublicBaseUrl, getEffectivePublicBaseUrl } from './email-service';
+import { cancelEmailJob, ensureAgentReplyNoticeJob, getEmailJobDetail, listEmailJobs, processDueEmailJobs, resendEmailJob, getAutoSendEnabled, setAutoSendEnabled, listEmailTemplates, getEmailTemplate, updateEmailTemplate, renderTemplateString, renderEmailFromTemplate, listTemplatePresets, createTemplatePreset, deleteTemplatePreset, activateTemplatePreset, formatEasternTime, getMailTestMode, setMailTestMode, getPublicBaseUrl, setPublicBaseUrl, getEffectivePublicBaseUrl, createCustomerComplaintInviteJob } from './email-service';
 import { runBackfillForStore, getAllBackfillStates, getAutoBackfillEnabled, setAutoBackfillEnabled } from './backfill-jobs';
 import { logOperation, listSyncLogs, listOperationLogs } from './log-service';
 import { buildCustomerPreviewResponse, extractTrackingNo } from './admin-preview';
@@ -150,6 +150,18 @@ export function createAdminRouter(): express.Router {
     }
   });
 
+  // GET /api/admin/email-jobs/pending-count — 待发送客服回复提醒邮件数量（必须在 /:id 之前）
+  router.get('/email-jobs/pending-count', async (_req, res) => {
+    try {
+      const r = await query(
+        `SELECT count(*)::int AS cnt FROM support_email_jobs WHERE email_type = 'agent_reply_notice' AND status = 'pending'`,
+      );
+      res.json({ ok: true, count: r.rows[0]?.cnt || 0 });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
   // GET /api/admin/email-jobs/:id
   router.get('/email-jobs/:id', async (req, res) => {
     try {
@@ -227,18 +239,6 @@ export function createAdminRouter(): express.Router {
         status: 'success',
       });
       res.json({ ok: true });
-    } catch (e: any) {
-      res.status(500).json({ ok: false, error: e.message });
-    }
-  });
-
-  // GET /api/admin/email-jobs/pending-count — 待发送客服回复提醒邮件数量
-  router.get('/email-jobs/pending-count', async (_req, res) => {
-    try {
-      const r = await query(
-        `SELECT count(*)::int AS cnt FROM support_email_jobs WHERE email_type = 'agent_reply_notice' AND status = 'pending'`,
-      );
-      res.json({ ok: true, count: r.rows[0]?.cnt || 0 });
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e.message });
     }
@@ -657,6 +657,68 @@ export function createAdminRouter(): express.Router {
     }
   });
 
+  // POST /api/admin/tickets/:publicTicketNo/invite-new-ticket — 手动发起新工单邀请
+  const inviteNewTicketLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 3,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { ok: false, error: '操作过于频繁，请 1 分钟后再试' },
+  });
+
+  router.post('/tickets/:publicTicketNo/invite-new-ticket', inviteNewTicketLimiter, async (req, res) => {
+    try {
+      const ticket = await getTicketByPublicNo(req.params.publicTicketNo);
+      if (!ticket) {
+        res.status(404).json({ ok: false, error: 'Ticket not found' });
+        return;
+      }
+
+      // 从订单快照中获取完整订单信息
+      const snapshot = await getOrderSnapshot({
+        storeSubdomain: ticket.store_subdomain,
+        orderId: ticket.order_id,
+        customerEmail: ticket.customer_email,
+      });
+      if (!snapshot) {
+        res.status(404).json({ ok: false, error: 'Order snapshot not found' });
+        return;
+      }
+
+      const { job } = await createCustomerComplaintInviteJob({
+        storeSubdomain: ticket.store_subdomain,
+        storeName: ticket.store_name || snapshot.store_name || '',
+        storeDomain: buildStoreDomain(ticket.store_subdomain),
+        orderId: ticket.order_id,
+        orderNumber: ticket.order_number || snapshot.order_number || '',
+        orderedAt: snapshot.paid_at || undefined,
+        customerEmail: ticket.customer_email,
+        customerName: snapshot.customer_name || '',
+        paymentMethod: snapshot.payment_method || '',
+        cardLast4: snapshot.card_last4 || '',
+        orderAmount: snapshot.order_amount || '',
+        orderCurrency: snapshot.order_currency || '',
+        itemsJson: snapshot.items_json || [],
+      });
+
+      // 立即发送（不等定时器）
+      await processDueEmailJobs({ limit: 1, onlyJobId: Number(job.id) });
+
+      await logOperation({
+        category: 'ticket',
+        action: 'manual_ticket_invite',
+        actor: (req as any).agent?.name || 'unknown',
+        target: `${req.params.publicTicketNo} → new invite`,
+        summary: `客服为订单 ${ticket.order_id} 手动发起新工单邀请`,
+        status: 'success',
+      });
+
+      res.json({ ok: true, job: { id: job.id, email_job_no: job.email_job_no } });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
   // PATCH /api/admin/tickets/:publicTicketNo/status
   router.patch('/tickets/:publicTicketNo/status', async (req, res) => {
     try {
@@ -974,6 +1036,7 @@ export function createAdminRouter(): express.Router {
         card_last4: '4242',
         order_amount: '29.99',
         order_currency: 'USD',
+        product_image: 'https://img.shoplazza.com/example.jpg',
       };
 
       const subject = renderTemplateString(tpl.subject_template, vars);

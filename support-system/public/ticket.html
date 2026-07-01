@@ -420,7 +420,7 @@ function renderTicketDetail(data) {
     '<div class="reply-actions">' +
     '<div style="display:flex;align-items:center;gap:8px">' +
     '<button class="btn btn-primary" onclick="sendReply()">Send</button>' +
-    '<label class="btn-img-upload" title="Attach images">Upload Image<input type="file" id="imageInput" multiple accept="image/jpeg,image/png,image/webp" style="display:none" onchange="onImagesSelected()"></label>' +
+    '<label class="btn-img-upload" title="Attach images">Upload Image<input type="file" id="imageInput" accept="image/jpeg,image/png,image/webp" style="display:none" onchange="onImagesSelected()"></label>' +
     '</div>' +
     '</div>' +
     '<div id="err2" class="error-msg" style="display:none;margin-top:12px"></div>' +
@@ -642,7 +642,7 @@ function onImagesSelected() {
   var input = $('#imageInput');
   if (!input || !input.files) return;
   for (var i = 0; i < input.files.length; i++) {
-    if (selectedFiles.length >= 3) break;
+    if (selectedFiles.length >= 1) break;
     selectedFiles.push(input.files[i]);
   }
   input.value = '';

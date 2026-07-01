@@ -9,6 +9,7 @@ export interface AccessTokenPayload {
   order_id: string | null;
   public_ticket_no: string | null;
   customer_email: string;
+  force_new_ticket: boolean;
 }
 
 function base64urlEncode(buf: Buffer): string {
@@ -41,12 +42,13 @@ async function storeToken(params: {
   orderId?: string;
   publicTicketNo?: string;
   customerEmail: string;
+  forceNewTicket?: boolean;
 }): Promise<string> {
   const days = getExpiryDays(params.purpose);
   await query(
     `INSERT INTO support_access_tokens
-      (token_hash, purpose, store_subdomain, order_id, public_ticket_no, customer_email, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, now() + ($7 || ' days')::interval)`,
+      (token_hash, purpose, store_subdomain, order_id, public_ticket_no, customer_email, expires_at, force_new_ticket)
+     VALUES ($1, $2, $3, $4, $5, $6, now() + ($7 || ' days')::interval, $8)`,
     [
       params.tokenHash,
       params.purpose,
@@ -55,6 +57,7 @@ async function storeToken(params: {
       params.publicTicketNo || null,
       params.customerEmail,
       String(days),
+      params.forceNewTicket ?? false,
     ],
   );
   return params.tokenHash;
@@ -64,6 +67,7 @@ export async function createBootstrapToken(params: {
   storeSubdomain: string;
   orderId: string;
   customerEmail: string;
+  forceNewTicket?: boolean;
 }): Promise<string> {
   const token = generateOpaqueToken('bt');
   const th = hashToken(token);
@@ -73,6 +77,7 @@ export async function createBootstrapToken(params: {
     storeSubdomain: params.storeSubdomain,
     orderId: params.orderId,
     customerEmail: params.customerEmail,
+    forceNewTicket: params.forceNewTicket,
   });
   return token;
 }
@@ -96,7 +101,7 @@ export async function verifyAccessToken(token: string): Promise<AccessTokenPaylo
   try {
     const th = hashToken(token);
     const r = await query(
-      `SELECT purpose, store_subdomain, order_id, public_ticket_no, customer_email
+      `SELECT purpose, store_subdomain, order_id, public_ticket_no, customer_email, force_new_ticket
        FROM support_access_tokens
        WHERE token_hash = $1
          AND revoked_at IS NULL
@@ -117,6 +122,7 @@ export async function verifyAccessToken(token: string): Promise<AccessTokenPaylo
       order_id: row.order_id,
       public_ticket_no: row.public_ticket_no,
       customer_email: row.customer_email,
+      force_new_ticket: row.force_new_ticket ?? false,
     };
   } catch {
     return null;

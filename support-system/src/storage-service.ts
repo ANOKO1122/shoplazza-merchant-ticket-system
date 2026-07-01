@@ -140,8 +140,11 @@ export const imageUpload = multer({
   },
 });
 
-/** 顾客/管理员发消息时使用的 multer 中间件（字段名 "images"，最多 3 张） */
+/** 管理员发消息时使用的 multer 中间件（字段名 "images"，最多 3 张） */
 export const uploadAttachments = imageUpload.array('images', 3);
+
+/** 顾客发消息时使用的 multer 中间件（字段名 "images"，最多 1 张） */
+export const uploadSingleAttachment = imageUpload.array('images', 1);
 
 /** 处理 multer 文件数组，返回相对 URL 数组。处理完自动清理临时文件 */
 export async function processAttachments(

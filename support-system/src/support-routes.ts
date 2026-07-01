@@ -1,15 +1,25 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { verifyAccessToken, hashToken, createTicketAccessToken } from './token';
-import { createTicket, getTicketByPublicNo, getTicketMessages, addCustomerMessage, closeTicket, getOrderSnapshot, findExistingTicket, requestArbitration, countConsecutiveCustomerMessages } from './ticket-service';
+import { createTicket, getTicketByPublicNo, getTicketMessages, addCustomerMessage, closeTicket, getOrderSnapshot, findExistingTicket, listExistingTickets, requestArbitration, countConsecutiveCustomerMessages } from './ticket-service';
 import { extractTrackingNo } from './admin-preview';
 import { mapPaymentMethodDisplay } from './normalize-order';
-import { uploadAttachments, processAttachments } from './storage-service';
+import { uploadSingleAttachment, processAttachments } from './storage-service';
 
 export function createSupportRouter(): express.Router {
   const router = express.Router();
 
+  // 防滥用：bootstrap 端点独立限流（10次/分钟，正常顾客最多2-3次）
+  const bootstrapLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { ok: false, error: '访问过于频繁，请稍后重试' },
+  });
+
   // GET /api/support/bootstrap?t=BOOTSTRAP_TOKEN  or  ?t=TICKET_ACCESS_TOKEN
-  router.get('/bootstrap', async (req, res) => {
+  router.get('/bootstrap', bootstrapLimiter, async (req, res) => {
     try {
       const rawToken = (req.query.t as string) || '';
       const payload = await verifyAccessToken(rawToken);
@@ -71,12 +81,6 @@ export function createSupportRouter(): express.Router {
         return;
       }
 
-      const existingTicket = await findExistingTicket({
-        storeSubdomain: store_subdomain,
-        orderId: order_id,
-        customerEmail: customer_email,
-      });
-
       const snapshot = await getOrderSnapshot({
         storeSubdomain: store_subdomain,
         orderId: order_id,
@@ -96,6 +100,18 @@ export function createSupportRouter(): express.Router {
         customer_name: snapshot.customer_name || '',
         items: snapshot.items_json || [],
       } : null;
+
+      // 手动邀请场景：跳过已有工单检测，始终返回新建模式
+      if (payload.force_new_ticket) {
+        res.json({ ok: true, mode: 'new_ticket', order, ticket: null });
+        return;
+      }
+
+      const existingTicket = await findExistingTicket({
+        storeSubdomain: store_subdomain,
+        orderId: order_id,
+        customerEmail: customer_email,
+      });
 
       if (existingTicket) {
         const taToken = await createTicketAccessToken({
@@ -143,19 +159,22 @@ export function createSupportRouter(): express.Router {
         return;
       }
 
-      const existingTicket = await findExistingTicket({
-        storeSubdomain: store_subdomain,
-        orderId: order_id,
-        customerEmail: customer_email,
-      });
-
-      if (existingTicket) {
-        res.status(409).json({
-          ok: false,
-          error: 'A dispute already exists for this order',
-          public_ticket_no: existingTicket.public_ticket_no,
+      // 仅当 token 非 force_new_ticket 时才检测已有工单冲突
+      if (!payload.force_new_ticket) {
+        const existingTicket = await findExistingTicket({
+          storeSubdomain: store_subdomain,
+          orderId: order_id,
+          customerEmail: customer_email,
         });
-        return;
+
+        if (existingTicket) {
+          res.status(409).json({
+            ok: false,
+            error: 'A dispute already exists for this order',
+            public_ticket_no: existingTicket.public_ticket_no,
+          });
+          return;
+        }
       }
 
       const snapshot = await getOrderSnapshot({
@@ -263,7 +282,7 @@ export function createSupportRouter(): express.Router {
   });
 
   // POST /api/support/tickets/:publicTicketNo/messages
-  router.post('/tickets/:publicTicketNo/messages', uploadAttachments, async (req, res) => {
+  router.post('/tickets/:publicTicketNo/messages', uploadSingleAttachment, async (req, res) => {
     try {
       const { publicTicketNo } = req.params;
       const { token, content } = req.body || {};

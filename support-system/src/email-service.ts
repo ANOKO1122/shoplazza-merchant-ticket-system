@@ -6,7 +6,7 @@ import { createBootstrapToken, createTicketAccessToken, hashToken } from './toke
 import { logOperation } from './log-service';
 
 export type EmailJobStatus = 'pending' | 'sending' | 'sent' | 'failed' | 'cancelled' | 'skipped';
-export type EmailType = 'paid_support_invite' | 'agent_reply_notice' | 'ticket_closed_notice';
+export type EmailType = 'paid_support_invite' | 'agent_reply_notice' | 'ticket_closed_notice' | 'customer_complaint_invite';
 
 const AUTO_SEND_TYPES: EmailType[] = ['paid_support_invite'];
 
@@ -360,6 +360,107 @@ export async function ensureAgentReplyNoticeJob(params: AgentReplyNoticeSnapshot
   return { job, created: true };
 }
 
+// ── 手动发起新工单邀请 ──
+
+/**
+ * 从订单 items_json 中提取第一件商品的图片 URL。
+ * Shoplazza line_items 的 image 字段可能为：
+ *   - 完整 URL: https://img.shoplazza.com/xxx.jpg
+ *   - 协议相对 URL: //img.shoplazza.com/xxx.jpg
+ * 统一补全为 https:// 前缀。
+ */
+export function extractFirstProductImage(itemsJson: unknown[]): string {
+  if (!Array.isArray(itemsJson) || itemsJson.length === 0) return '';
+  const first = itemsJson[0] as Record<string, unknown> | undefined;
+  if (!first) return '';
+  const src = String(first.image || first.product_image || first.image_src || '');
+  if (!src) return '';
+  if (src.startsWith('//')) return `https:${src}`;
+  if (src.startsWith('http')) return src;
+  return '';
+}
+
+export interface CustomerComplaintInviteSnapshot {
+  storeSubdomain: string;
+  storeName?: string | null;
+  storeDomain?: string | null;
+  orderId: string;
+  orderNumber?: string | null;
+  orderedAt?: string | Date | null;
+  customerEmail: string;
+  customerName?: string | null;
+  paymentMethod?: string | null;
+  cardLast4?: string | null;
+  orderAmount?: string | null;
+  orderCurrency?: string | null;
+  itemsJson?: unknown[];        // 用于提取商品图片
+}
+
+export async function createCustomerComplaintInviteJob(
+  params: CustomerComplaintInviteSnapshot,
+): Promise<{ job: any }> {
+  const publicBaseUrl = await getEffectivePublicBaseUrl();
+  const token = await createBootstrapToken({
+    storeSubdomain: params.storeSubdomain,
+    orderId: params.orderId,
+    customerEmail: params.customerEmail,
+    forceNewTicket: true,  // ★ 关键：标记为强制新建工单
+  });
+  const clientLink = `${publicBaseUrl}/ticket?t=${token}`;
+
+  const productImage = extractFirstProductImage(params.itemsJson || []);
+
+  const rendered = await renderEmailFromTemplate('customer_complaint_invite', {
+    store_name: params.storeName || '',
+    store_domain: params.storeDomain || buildStoreDomain(params.storeSubdomain),
+    order_id: params.orderId,
+    order_number: params.orderNumber || params.orderId,
+    customer_name: params.customerName || '',
+    customer_email: params.customerEmail.trim().toLowerCase(),
+    public_ticket_no: '',     // 新工单尚无 ticket_no
+    client_link: clientLink,
+    paid_at: formatEasternTime(params.orderedAt),
+    payment_method: params.paymentMethod || '',
+    card_last4: params.cardLast4 || '',
+    order_amount: params.orderAmount || '',
+    order_currency: params.orderCurrency || '',
+    product_image: productImage,  // ★ 新增变量
+  });
+
+  const maskedLink = maskClientLink(clientLink);
+  const snapshotBody = rendered.html;
+  const tokenR = await query(
+    `SELECT id FROM support_access_tokens WHERE token_hash = $1`, [hashToken(token)],
+  );
+  const tokenId = tokenR.rows[0] ? Number(tokenR.rows[0].id) : null;
+
+  const result = await query(
+    `INSERT INTO support_email_jobs
+      (email_job_no, store_subdomain, store_name, store_domain, mail_domain,
+       order_id, order_number, ordered_at, email_type, customer_email, status, scheduled_at,
+       token_id, subject_snapshot, body_snapshot, client_link_snapshot, raw_client_link, job_source)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'customer_complaint_invite',$9,'pending',now(),$10,$11,$12,$13,$14,'manual_invite')
+     RETURNING *`,
+    [
+      buildEmailJobNo(),
+      params.storeSubdomain,
+      params.storeName || null,
+      params.storeDomain || buildStoreDomain(params.storeSubdomain),
+      getMailDomain() || null,
+      params.orderId,
+      params.orderNumber || null,
+      params.orderedAt || null,
+      params.customerEmail.trim().toLowerCase(),
+      tokenId,
+      rendered.subject,
+      snapshotBody,
+      maskedLink,
+      clientLink,
+    ],
+  );
+  return { job: result.rows[0] };
+}
+
 export async function listEmailJobs(params: {
   status?: string;
   emailType?: string;
@@ -542,16 +643,19 @@ async function sendEmailJob(id: number): Promise<boolean> {
       text = snapshotBody.replace(/<[^>]+>/g, '');
     } else {
       // 无快照 → 生成新 token 并渲染（使用数据库模板）
-      token = job.email_type === 'agent_reply_notice'
-        ? await createTicketAccessToken({
-            publicTicketNo: job.public_ticket_no,
-            customerEmail: job.customer_email,
-          })
-        : await createBootstrapToken({
-            storeSubdomain: job.store_subdomain,
-            orderId: job.order_id,
-            customerEmail: job.customer_email,
-          });
+      if (job.email_type === 'agent_reply_notice') {
+        token = await createTicketAccessToken({
+          publicTicketNo: job.public_ticket_no,
+          customerEmail: job.customer_email,
+        });
+      } else {
+        token = await createBootstrapToken({
+          storeSubdomain: job.store_subdomain,
+          orderId: job.order_id,
+          customerEmail: job.customer_email,
+          forceNewTicket: job.email_type === 'customer_complaint_invite',
+        });
+      }
       const tokenR = await query(`SELECT id FROM support_access_tokens WHERE token_hash = $1`, [hashToken(token)]);
       tokenId = tokenR.rows[0] ? Number(tokenR.rows[0].id) : null;
 
@@ -728,6 +832,16 @@ const DEFAULT_TEMPLATES: Record<string, { subject: string; body: string }> = {
            <p>This is an automated message from {{store_name}} support system.</p>
          </div>
        </div>`,
+  },
+  customer_complaint_invite: {
+    subject: '{{store_name}} - New complaint for order {{order_number}}',
+    body: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#333;line-height:1.6">
+    <p>Dear {{customer_name}},</p>
+    <p>Regarding your order <strong>{{order_number}}</strong>, if you have any new issues, please click the link below to submit a complaint:</p>
+    <p><a href="{{client_link}}" style="color:#1890ff">{{client_link}}</a></p>
+    {{#product_image}}<p><img src="{{product_image}}" style="max-width:200px;border-radius:4px" /></p>{{/product_image}}
+    <p style="color:#8c8c8c;font-size:14px;margin-top:24px">Please do not reply directly to this email, it will be ignored.</p>
+  </div>`,
   },
 };
 
