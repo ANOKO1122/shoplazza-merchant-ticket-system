@@ -1,9 +1,26 @@
 # 环境变量（含密码/Token/密钥）
 .env
-.env.*.local
+.env.*
+!.env.example
 
 # SSL证书
 support-system/nginx/ssl/
+
+# 用户上传文件（图片附件等，含敏感信息）
+support-system/uploads/
+
+# 依赖与构建产物
+node_modules/
+dist/
+*.log
+*.out.log
+*.err.log
+
+# 测试覆盖率
+coverage/
+
+# Docker覆写
+docker-compose.override.yml
 
 # 系统文件
 .DS_Store
@@ -18,6 +35,3 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
-
-# 用户上传文件（图片附件等）
-support-system/uploads/
