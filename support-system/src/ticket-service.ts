@@ -410,20 +410,33 @@ export async function updateTicketStatus(publicTicketNo: string, status: string)
   }
 }
 
-/** Reopen a closed ticket (admin only) */
-export async function reopenTicket(publicTicketNo: string) {
+/** Reopen a closed ticket. reopenedBy: 'agent' | 'customer' */
+export async function reopenTicket(publicTicketNo: string, reopenedBy: 'agent' | 'customer' = 'agent') {
+  // 顾客最多重开一次
+  if (reopenedBy === 'customer') {
+    const ticket = await query(
+      `SELECT status, reopen_count FROM support_tickets WHERE public_ticket_no = $1`,
+      [publicTicketNo],
+    );
+    if (!ticket.rows[0]) throw new Error('Ticket not found');
+    if (ticket.rows[0].status !== 'closed') throw new Error('Only closed disputes can be reopened');
+    if (ticket.rows[0].reopen_count >= 1) throw new Error('This dispute has already been reopened once');
+  }
+
   await query(
     `UPDATE support_tickets
-     SET status = 'open', closed_by = NULL, closed_at = NULL, updated_at = now()
+     SET status = 'open', closed_by = NULL, closed_at = NULL,
+         reopen_count = reopen_count + 1, updated_at = now()
      WHERE public_ticket_no = $1`,
     [publicTicketNo],
   );
 
   const etNow = formatEasternTime(new Date());
+  const actor = reopenedBy === 'customer' ? 'Customer' : 'Platform';
   await query(
     `INSERT INTO support_ticket_messages
       (public_ticket_no, sender_type, content)
      VALUES ($1, 'system', $2)`,
-    [publicTicketNo, `Platform reopened the dispute at ${etNow}`],
+    [publicTicketNo, `${actor} reopened the dispute at ${etNow}`],
   );
 }

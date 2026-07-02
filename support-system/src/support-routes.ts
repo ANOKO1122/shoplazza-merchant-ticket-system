@@ -1,7 +1,7 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import { verifyAccessToken, hashToken, createTicketAccessToken } from './token';
-import { createTicket, getTicketByPublicNo, getTicketMessages, addCustomerMessage, closeTicket, getOrderSnapshot, findExistingTicket, listExistingTickets, requestArbitration, countConsecutiveCustomerMessages } from './ticket-service';
+import { createTicket, getTicketByPublicNo, getTicketMessages, addCustomerMessage, closeTicket, getOrderSnapshot, findExistingTicket, listExistingTickets, requestArbitration, countConsecutiveCustomerMessages, reopenTicket } from './ticket-service';
 import { extractTrackingNo } from './admin-preview';
 import { mapPaymentMethodDisplay } from './normalize-order';
 import { uploadSingleAttachment, processAttachments } from './storage-service';
@@ -263,6 +263,7 @@ export function createSupportRouter(): express.Router {
           issue_type: ticket.issue_type,
           created_at: ticket.created_at,
           arbitration_requested: ticket.arbitration_requested || false,
+          reopen_count: ticket.reopen_count || 0,
         },
         order,
         messages: messages.map((m: any) => ({
@@ -426,6 +427,43 @@ export function createSupportRouter(): express.Router {
 
       res.json({ ok: true });
     } catch (e: any) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // POST /api/support/tickets/:publicTicketNo/reopen — 顾客重开工单（最多一次）
+  router.post('/tickets/:publicTicketNo/reopen', async (req, res) => {
+    try {
+      const { publicTicketNo } = req.params;
+      const { token } = req.body || {};
+
+      if (!token) {
+        res.status(400).json({ ok: false, error: 'Invalid request' });
+        return;
+      }
+
+      const payload = await verifyAccessToken(token);
+      if (!payload || payload.purpose !== 'ticket_access') {
+        res.status(401).json({ ok: false, error: 'Invalid or expired token' });
+        return;
+      }
+
+      if (payload.public_ticket_no !== publicTicketNo) {
+        res.status(401).json({ ok: false, error: 'Invalid or expired token' });
+        return;
+      }
+
+      await reopenTicket(publicTicketNo, 'customer');
+      res.json({ ok: true });
+    } catch (e: any) {
+      if (e.message && e.message.includes('already been reopened')) {
+        res.status(400).json({ ok: false, error: e.message });
+        return;
+      }
+      if (e.message && e.message.includes('only closed')) {
+        res.status(400).json({ ok: false, error: e.message });
+        return;
+      }
       res.status(500).json({ ok: false, error: e.message });
     }
   });

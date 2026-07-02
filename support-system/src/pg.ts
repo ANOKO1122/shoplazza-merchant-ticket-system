@@ -288,6 +288,7 @@ export async function ensureTables(): Promise<void> {
       closed_at TIMESTAMPTZ,
       closed_by TEXT,
       arbitration_requested BOOLEAN NOT NULL DEFAULT false,
+      reopen_count INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
@@ -324,6 +325,9 @@ export async function ensureTables(): Promise<void> {
 
   // 手动发起新工单邀请功能：support_access_tokens 增加 force_new_ticket 标记
   await p.query(`ALTER TABLE support_access_tokens ADD COLUMN IF NOT EXISTS force_new_ticket BOOLEAN NOT NULL DEFAULT false`);
+
+  // 顾客重开工单功能：support_tickets 增加 reopen_count 列
+  await p.query(`ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS reopen_count INTEGER NOT NULL DEFAULT 0`);
 
   await p.query(`
     CREATE TABLE IF NOT EXISTS support_agents (

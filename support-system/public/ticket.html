@@ -432,6 +432,8 @@ function renderTicketDetail(data) {
     if (!t.arbitration_requested) {
       actionButtons += '<button class="btn btn-primary" id="arbitrationBtn" onclick="requestArbitration()">Apply For Arbitration</button>';
     }
+  } else if ((t.reopen_count || 0) < 1) {
+    actionButtons += '<button class="btn btn-primary" onclick="reopenTicket()">Reopen Dispute</button>';
   }
 
   $('#app').innerHTML =
@@ -626,6 +628,21 @@ async function requestArbitration() {
     alert('Network error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Apply For Arbitration'; }
+  }
+}
+
+async function reopenTicket() {
+  if (!confirm('Are you sure you want to reopen this dispute? You can only reopen once.')) return;
+  try {
+    var result = await (await fetch(API + '/tickets/' + getTicketNo() + '/reopen', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: accessToken }),
+    })).json();
+    if (result.ok) location.reload();
+    else alert(result.error || 'Reopen failed');
+  } catch(e) {
+    alert('Network error');
   }
 }
 
