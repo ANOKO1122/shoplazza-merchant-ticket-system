@@ -7,17 +7,28 @@ import { formatEasternTime } from './email-service';
 /** 顾客单条消息最大长度（字符数） */
 export const MAX_MESSAGE_CONTENT_LENGTH = 5000;
 
-/** 有效的工单问题类型白名单（与前端 ticket.html 的 disputeTypes 保持一致） */
+/** 有效的工单问题类型白名单（与前端 ticket.html 的 supportTypes / complaintTypes 合并保持一致） */
 export const VALID_ISSUE_TYPES = [
-  'Unknow',
-  'Fraud',
-  'Unauthorized',
+  // 联系支持（常规售后）
   'Products Discrepancies',
   'Product Not Received',
   'Defective Merchandise',
   'Incorrect Transaction',
-  'Wrong address',
+  'Wrong Address',
   'Credit Not Processed',
+  'Other / General Inquiry',
+  // 投诉商家（严重违规，保留旧值兼容）
+  'Unknow',
+  'Fraud',
+  'Unauthorized',
+  'Unauthorized Transaction',
+  'Counterfeit / Fake Products',
+  'Misleading or False Advertising',
+  'Refusal to Honor Refund / Return Policy',
+  'Privacy or Data Misuse',
+  'Unsafe or Harmful Products',
+  'Discrimination or Unfair Treatment',
+  'Intellectual Property Violation',
 ] as const;
 
 async function nextSequence(): Promise<number> {
@@ -43,6 +54,7 @@ export async function createTicket(params: {
   issueType?: string;
   description: string;
   bootstrapTokenHash?: string;
+  attachments?: string[];
 }): Promise<{
   publicTicketNo: string;
   accessToken: string;
@@ -103,9 +115,9 @@ export async function createTicket(params: {
 
   await query(
     `INSERT INTO support_ticket_messages
-      (public_ticket_no, sender_type, sender_email, sender_name, content)
-     VALUES ($1, 'customer', $2, $3, $4)`,
-    [ticketNo, params.customerEmail, params.customerName || null, params.description],
+      (public_ticket_no, sender_type, sender_email, sender_name, content, attachments)
+     VALUES ($1, 'customer', $2, $3, $4, $5)`,
+    [ticketNo, params.customerEmail, params.customerName || null, params.description, JSON.stringify(params.attachments || [])],
   );
 
   return { publicTicketNo: ticketNo, accessToken };
@@ -266,6 +278,18 @@ export async function listExistingTickets(params: {
     [params.storeSubdomain, params.orderId, params.customerEmail],
   );
   return r.rows;
+}
+
+/** 通过 bootstrap token hash 查找由其创建的工单（一个 bt 链接对应一个工单） */
+export async function findTicketByBootstrapTokenHash(tokenHash: string) {
+  const r = await query(
+    `SELECT public_ticket_no, status FROM support_tickets
+     WHERE bootstrap_token_hash = $1
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [tokenHash],
+  );
+  return r.rows[0] || null;
 }
 
 export async function listTickets(params: {

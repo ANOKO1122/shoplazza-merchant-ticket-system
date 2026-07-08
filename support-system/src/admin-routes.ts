@@ -5,7 +5,7 @@ import { loginAgent, createSession, destroySession, verifySession, changeAgentPa
 import { listTickets, getTicketByPublicNo, getTicketMessages, getOrderSnapshot, addAgentMessage, updateTicketStatus, reopenTicket } from './ticket-service';
 import { listStores, createStore, updateStore, deleteStore, getStoreBySubdomain, decryptToken } from './store-service';
 import { query } from './pg';
-import { cancelEmailJob, ensureAgentReplyNoticeJob, getEmailJobDetail, listEmailJobs, processDueEmailJobs, resendEmailJob, getAutoSendEnabled, setAutoSendEnabled, listEmailTemplates, getEmailTemplate, updateEmailTemplate, renderTemplateString, renderEmailFromTemplate, listTemplatePresets, createTemplatePreset, deleteTemplatePreset, activateTemplatePreset, formatEasternTime, getMailTestMode, setMailTestMode, getPublicBaseUrl, setPublicBaseUrl, getEffectivePublicBaseUrl, createCustomerComplaintInviteJob } from './email-service';
+import { cancelEmailJob, ensureAgentReplyNoticeJob, getEmailJobDetail, listEmailJobs, processDueEmailJobs, resendEmailJob, getAutoSendEnabled, setAutoSendEnabled, listEmailTemplates, getEmailTemplate, updateEmailTemplate, renderTemplateString, renderEmailFromTemplate, listTemplatePresets, createTemplatePreset, deleteTemplatePreset, activateTemplatePreset, formatEasternTime, getMailTestMode, setMailTestMode, getPublicBaseUrl, setPublicBaseUrl, getEffectivePublicBaseUrl, createCustomerComplaintInviteJob, extractStoreCustomDomain, extractFirstProductImage, buildTemplateItems } from './email-service';
 import { runBackfillForStore, getAllBackfillStates, getAutoBackfillEnabled, setAutoBackfillEnabled } from './backfill-jobs';
 import { logOperation, listSyncLogs, listOperationLogs } from './log-service';
 import { buildCustomerPreviewResponse, extractTrackingNo } from './admin-preview';
@@ -264,15 +264,28 @@ export function createAdminRouter(): express.Router {
       const { getEffectivePublicBaseUrl } = await import('./email-service');
       const baseUrl = await getEffectivePublicBaseUrl();
       const clientLink = j.client_link_snapshot || baseUrl + '/ticket?t=...';
+      const complaintLink = j.email_type === 'customer_complaint_invite'
+        ? clientLink.replace(/\?t=([^&]+)/, '?t=$1&mode=complaint')
+        : '';
+      const storeDomainForPreview = j.store_domain || '';
+      const storeLinkForPreview = storeDomainForPreview
+        ? (storeDomainForPreview.startsWith('http') ? storeDomainForPreview : `https://${storeDomainForPreview}`)
+        : '';
       const rendered = await renderEmailFromTemplate(j.email_type, {
         store_name: j.store_name || '',
-        store_domain: j.store_domain || '',
+        store_domain: storeDomainForPreview,
+        store_link: storeLinkForPreview,
         order_id: j.order_id || '',
         order_number: j.order_number || j.order_id || '',
         customer_name: snap.customer_name || '',
         customer_email: j.customer_email,
         public_ticket_no: j.public_ticket_no || '',
         client_link: clientLink,
+        complaint_link: complaintLink,
+        product_items_html: '',
+        items: await buildTemplateItems(snap.items_json || []),
+        has_items: (snap.items_json && Array.isArray(snap.items_json) && snap.items_json.length > 0) ? '1' : '',
+        product_image: extractFirstProductImage(snap.items_json || []),
         paid_at: formatEasternTime(j.ordered_at || snap.paid_at),
         payment_method: mapPaymentMethodDisplay(snap.payment_method || ''),
         card_last4: snap.card_last4 || '',
@@ -606,10 +619,18 @@ export function createAdminRouter(): express.Router {
         attachments: attachmentUrls,
       });
 
+      // 查订单快照获取自定义域名
+      const snapForDomain = await getOrderSnapshot({
+        storeSubdomain: ticket.store_subdomain,
+        orderId: ticket.order_id,
+        customerEmail: ticket.customer_email,
+      });
+      const customStoreDomain = extractStoreCustomDomain(snapForDomain?.raw_order_json) || buildStoreDomain(ticket.store_subdomain);
+
       await ensureAgentReplyNoticeJob({
         storeSubdomain: ticket.store_subdomain,
         storeName: ticket.store_name,
-        storeDomain: buildStoreDomain(ticket.store_subdomain),
+        storeDomain: customStoreDomain,
         orderId: ticket.order_id,
         orderNumber: ticket.order_number,
         customerEmail: ticket.customer_email,
@@ -639,10 +660,18 @@ export function createAdminRouter(): express.Router {
         return;
       }
 
+      // 查订单快照获取自定义域名
+      const snapForNotify = await getOrderSnapshot({
+        storeSubdomain: ticket.store_subdomain,
+        orderId: ticket.order_id,
+        customerEmail: ticket.customer_email,
+      });
+      const notifyStoreDomain = extractStoreCustomDomain(snapForNotify?.raw_order_json) || buildStoreDomain(ticket.store_subdomain);
+
       const { job } = await ensureAgentReplyNoticeJob({
         storeSubdomain: ticket.store_subdomain,
         storeName: ticket.store_name,
-        storeDomain: buildStoreDomain(ticket.store_subdomain),
+        storeDomain: notifyStoreDomain,
         orderId: ticket.order_id,
         orderNumber: ticket.order_number,
         customerEmail: ticket.customer_email,
@@ -688,7 +717,7 @@ export function createAdminRouter(): express.Router {
       const { job } = await createCustomerComplaintInviteJob({
         storeSubdomain: ticket.store_subdomain,
         storeName: ticket.store_name || snapshot.store_name || '',
-        storeDomain: buildStoreDomain(ticket.store_subdomain),
+        storeDomain: extractStoreCustomDomain(snapshot.raw_order_json) || buildStoreDomain(ticket.store_subdomain),
         orderId: ticket.order_id,
         orderNumber: ticket.order_number || snapshot.order_number || '',
         orderedAt: snapshot.paid_at || undefined,

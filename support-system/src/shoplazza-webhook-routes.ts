@@ -3,7 +3,7 @@ import { loadStoresConfig, buildStoreDomain } from './config';
 import { query } from './pg';
 import { getOrderByNumber, getOrderDetail, getOrderTransactions, ShoplazzaTransaction } from './shoplazza-client';
 import { normalizeOrder } from './normalize-order';
-import { createPaidSupportInviteEmailJob } from './email-service';
+import { createPaidSupportInviteEmailJob, extractStoreCustomDomain } from './email-service';
 import { logSync } from './log-service';
 
 /** 需要查卡号后四位的支付渠道（店匠自有支付），第三方支付（PayPal等）跳过交易查询 */
@@ -230,7 +230,7 @@ export function createShoplazzaWebhookRouter(): express.Router {
               const emailJob = await createPaidSupportInviteEmailJob({
                 storeSubdomain: normalized.storeSubdomain,
                 storeName: normalized.storeName,
-                storeDomain: buildStoreDomain(normalized.storeSubdomain),
+                storeDomain: extractStoreCustomDomain(normalized.rawOrderJson) || buildStoreDomain(normalized.storeSubdomain),
                 orderId: normalized.orderId,
                 orderNumber: normalized.orderNumber,
                 orderedAt: normalized.paidAt,

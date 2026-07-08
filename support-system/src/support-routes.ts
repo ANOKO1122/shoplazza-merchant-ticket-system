@@ -1,10 +1,26 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import { verifyAccessToken, hashToken, createTicketAccessToken } from './token';
-import { createTicket, getTicketByPublicNo, getTicketMessages, addCustomerMessage, closeTicket, getOrderSnapshot, findExistingTicket, listExistingTickets, requestArbitration, countConsecutiveCustomerMessages, reopenTicket } from './ticket-service';
+import { createTicket, getTicketByPublicNo, getTicketMessages, addCustomerMessage, closeTicket, getOrderSnapshot, findExistingTicket, listExistingTickets, requestArbitration, countConsecutiveCustomerMessages, reopenTicket, findTicketByBootstrapTokenHash } from './ticket-service';
 import { extractTrackingNo } from './admin-preview';
 import { mapPaymentMethodDisplay } from './normalize-order';
-import { uploadSingleAttachment, processAttachments } from './storage-service';
+import { extractStoreCustomDomain } from './email-service';
+import { buildStoreDomain } from './config';
+import { resolveThumbnailUrl } from './thumbnail-service';
+
+/** 为 items_json 每项补上 thumbnail_url（仅计算 URL，不触发下载） */
+function enrichItemsWithThumbnails(items: any[]): any[] {
+  if (!Array.isArray(items)) return [];
+  return items.map((it: any) => {
+    const raw = it.image;
+    let src = '';
+    if (raw && typeof raw === 'object' && raw.src) src = String(raw.src);
+    else src = String(raw || it.product_image || it.image_src || '');
+    if (src && src.startsWith('//')) src = 'https:' + src;
+    return { ...it, thumbnail_url: src ? resolveThumbnailUrl(src) : '' };
+  });
+}
+import { uploadSingleAttachment, processAttachments, uploadTicketAttachments } from './storage-service';
 
 export function createSupportRouter(): express.Router {
   const router = express.Router();
@@ -47,6 +63,7 @@ export function createSupportRouter(): express.Router {
         const order = snapshot ? {
           store_subdomain: snapshot.store_subdomain || '',
           store_name: snapshot.store_name || '',
+          store_domain: extractStoreCustomDomain(snapshot.raw_order_json) || buildStoreDomain(snapshot.store_subdomain),
           order_number: snapshot.order_number || '',
           order_amount: snapshot.order_amount || '',
           order_currency: snapshot.order_currency || '',
@@ -55,7 +72,7 @@ export function createSupportRouter(): express.Router {
           card_last4: snapshot.card_last4 || '',
           tracking_no: extractTrackingNo(snapshot),
           customer_name: snapshot.customer_name || '',
-          items: snapshot.items_json || [],
+          items: enrichItemsWithThumbnails(snapshot.items_json || []),
         } : null;
         res.json({
           ok: true,
@@ -90,6 +107,7 @@ export function createSupportRouter(): express.Router {
       const order = snapshot ? {
         store_subdomain: snapshot.store_subdomain || '',
         store_name: snapshot.store_name || '',
+        store_domain: extractStoreCustomDomain(snapshot.raw_order_json) || buildStoreDomain(snapshot.store_subdomain),
         order_number: snapshot.order_number || '',
         order_amount: snapshot.order_amount || '',
         order_currency: snapshot.order_currency || '',
@@ -98,11 +116,33 @@ export function createSupportRouter(): express.Router {
         card_last4: snapshot.card_last4 || '',
         tracking_no: extractTrackingNo(snapshot),
         customer_name: snapshot.customer_name || '',
-        items: snapshot.items_json || [],
+        items: enrichItemsWithThumbnails(snapshot.items_json || []),
       } : null;
 
-      // 手动邀请场景：跳过已有工单检测，始终返回新建模式
+      // 手动邀请场景：检查此 bt 链接是否已生成过工单（一个bt链接对应一个工单）
       if (payload.force_new_ticket) {
+        const tokenHash = hashToken(rawToken);
+        const ticketFromToken = await findTicketByBootstrapTokenHash(tokenHash);
+
+        if (ticketFromToken) {
+          const taToken = await createTicketAccessToken({
+            publicTicketNo: ticketFromToken.public_ticket_no,
+            customerEmail: customer_email,
+          });
+          res.json({
+            ok: true,
+            mode: 'existing_ticket',
+            order,
+            ticket: {
+              public_ticket_no: ticketFromToken.public_ticket_no,
+              status: ticketFromToken.status,
+            },
+            accessToken: taToken,
+          });
+          return;
+        }
+
+        // 尚未生成工单，返回新建模式
         res.json({ ok: true, mode: 'new_ticket', order, ticket: null });
         return;
       }
@@ -138,12 +178,20 @@ export function createSupportRouter(): express.Router {
   });
 
   // POST /api/support/tickets
-  router.post('/tickets', async (req, res) => {
+  router.post('/tickets', uploadTicketAttachments, async (req, res) => {
     try {
       const { token, issue_type, description } = req.body || {};
+      const contentStr = (description || '').trim();
+      const files = req.files as Express.Multer.File[] | undefined;
 
       if (!token || !description) {
         res.status(400).json({ ok: false, error: 'Please describe your dispute' });
+        return;
+      }
+
+      // 校验：文字和图片至少提供一个
+      if (!contentStr && (!files || files.length === 0)) {
+        res.status(400).json({ ok: false, error: 'Please provide a description or attach images' });
         return;
       }
 
@@ -177,6 +225,26 @@ export function createSupportRouter(): express.Router {
         }
       }
 
+      // force_new_ticket：检查此 bt 链接是否已生成过工单（一个bt链接对应一个工单）
+      if (payload.force_new_ticket) {
+        const tokenHash = hashToken(token);
+        const ticketFromToken = await findTicketByBootstrapTokenHash(tokenHash);
+
+        if (ticketFromToken) {
+          // 已有工单，生成 ta_ 令牌返回
+          const taToken = await createTicketAccessToken({
+            publicTicketNo: ticketFromToken.public_ticket_no,
+            customerEmail: customer_email,
+          });
+          res.json({
+            ok: true,
+            publicTicketNo: ticketFromToken.public_ticket_no,
+            accessToken: taToken,
+          });
+          return;
+        }
+      }
+
       const snapshot = await getOrderSnapshot({
         storeSubdomain: store_subdomain,
         orderId: order_id,
@@ -187,6 +255,12 @@ export function createSupportRouter(): express.Router {
       const orderNumber = snapshot?.order_number || '';
       const customerName = snapshot?.customer_name || '';
 
+      // 处理图片附件
+      let attachmentUrls: string[] = [];
+      if (files && files.length > 0) {
+        attachmentUrls = await processAttachments(files);
+      }
+
       const result = await createTicket({
         storeSubdomain: store_subdomain,
         storeName,
@@ -195,8 +269,9 @@ export function createSupportRouter(): express.Router {
         customerEmail: customer_email,
         customerName,
         issueType: issue_type || null,
-        description,
+        description: contentStr,
         bootstrapTokenHash: hashToken(token),
+        attachments: attachmentUrls,
       });
 
       res.json({ ok: true, ...result });
@@ -241,6 +316,7 @@ export function createSupportRouter(): express.Router {
       const order = snapshot ? {
         store_subdomain: snapshot.store_subdomain || '',
         store_name: snapshot.store_name || '',
+        store_domain: extractStoreCustomDomain(snapshot.raw_order_json) || buildStoreDomain(snapshot.store_subdomain),
         order_number: snapshot.order_number || '',
         order_amount: snapshot.order_amount || '',
         order_currency: snapshot.order_currency || '',
@@ -249,7 +325,7 @@ export function createSupportRouter(): express.Router {
         card_last4: snapshot.card_last4 || '',
         tracking_no: extractTrackingNo(snapshot),
         customer_name: snapshot.customer_name || '',
-        items: snapshot.items_json || [],
+        items: enrichItemsWithThumbnails(snapshot.items_json || []),
       } : null;
 
       const messages = await getTicketMessages(publicTicketNo);

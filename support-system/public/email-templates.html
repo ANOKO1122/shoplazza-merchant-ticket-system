@@ -164,7 +164,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
               <label>📧 邮件主题 (Subject)</label>
               <input type="text" id="subjectInput" placeholder="输入邮件主题模板...">
               <div class="help-text">
-                可用变量：<code>{{store_name}}</code> <code>{{order_number}}</code> <code>{{public_ticket_no}}</code> <code>{{customer_name}}</code>
+                可用变量：<code>{{store_name}}</code> <code>{{order_number}}</code> <code>{{public_ticket_no}}</code> <code>{{customer_name}}</code> <code>{{order_currency}}</code> <code>{{order_amount}}</code> <code>{{paid_at}}</code>
               </div>
             </div>
             <div class="form-group">
@@ -172,25 +172,44 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
               <textarea class="body-editor" id="bodyInput" placeholder="输入邮件正文 HTML 模板..."></textarea>
             </div>
             <div class="help-text">
-              可用变量：<code>{{store_name}}</code> <code>{{store_domain}}</code> <code>{{order_id}}</code> <code>{{order_number}}</code>
-              <code>{{customer_name}}</code> <code>{{customer_email}}</code> <code>{{public_ticket_no}}</code> <code>{{client_link}}</code>
-              <code>{{paid_at}}</code> <code>{{payment_method}}</code> <code>{{card_last4}}</code> <code>{{product_image}}</code>
-              <br>条件块：<code>{{#card_last4}}显示内容{{/card_last4}}</code> <code>{{#product_image}}显示内容{{/product_image}}</code> — 仅当变量非空时显示
+              通用变量：<code>{{store_name}}</code> <code>{{store_domain}}</code> <code>{{store_link}}</code> <code>{{order_id}}</code> <code>{{order_number}}</code>
+              <code>{{customer_name}}</code> <code>{{customer_email}}</code> <code>{{public_ticket_no}}</code> <code>{{client_link}}</code> <code>{{complaint_link}}</code>
+              <code>{{paid_at}}</code> <code>{{payment_method}}</code> <code>{{card_last4}}</code> <code>{{order_amount}}</code> <code>{{order_currency}}</code>
+              <code>{{product_image}}</code> <code>{{has_items}}</code>
+              <br>条件块：<code>{{#card_last4}}内容{{/card_last4}}</code> <code>{{#has_items}}内容{{/has_items}}</code>
+              <br><strong>商品迭代（顾客投诉模板）：</strong>
+              <code>{{#items}}&lt;tr&gt;...{{product_title}} ×{{quantity}} ...{{/items}}</code>
+              迭代内可用：<code>{{product_title}}</code> <code>{{quantity}}</code> <code>{{image_url}}</code> <code>{{_index}}</code>
+              <br>图片链接包装：<code>{{#image_url}}&lt;a href="{{image_url}}"&gt;{{product_title}}&lt;/a&gt;{{/image_url}}</code>
+              <br>原始HTML（不转义）：<code>{{{var}}}</code> 三重花括号直接输出不转义
             </div>
             <div class="template-vars" style="margin-top:8px">
-              <span style="font-size:11px;color:var(--text-muted);margin-right:4px">快速插入变量：</span>
+              <span style="font-size:11px;color:var(--text-muted);margin-right:4px">快速插入：</span>
               <span class="var-chip" onclick="insertVar('{{store_name}}')">store_name</span>
               <span class="var-chip" onclick="insertVar('{{store_domain}}')">store_domain</span>
+              <span class="var-chip" onclick="insertVar('{{store_link}}')">store_link</span>
               <span class="var-chip" onclick="insertVar('{{order_id}}')">order_id</span>
               <span class="var-chip" onclick="insertVar('{{order_number}}')">order_number</span>
               <span class="var-chip" onclick="insertVar('{{customer_name}}')">customer_name</span>
               <span class="var-chip" onclick="insertVar('{{customer_email}}')">customer_email</span>
               <span class="var-chip" onclick="insertVar('{{public_ticket_no}}')">public_ticket_no</span>
               <span class="var-chip" onclick="insertVar('{{client_link}}')">client_link</span>
+              <span class="var-chip" onclick="insertVar('{{complaint_link}}')">complaint_link</span>
               <span class="var-chip" onclick="insertVar('{{paid_at}}')">paid_at</span>
               <span class="var-chip" onclick="insertVar('{{payment_method}}')">payment_method</span>
               <span class="var-chip" onclick="insertVar('{{card_last4}}')">card_last4</span>
+              <span class="var-chip" onclick="insertVar('{{order_amount}}')">order_amount</span>
+              <span class="var-chip" onclick="insertVar('{{order_currency}}')">order_currency</span>
               <span class="var-chip" onclick="insertVar('{{product_image}}')">product_image</span>
+              <span class="var-chip" onclick="insertVar('{{has_items}}')">has_items</span>
+              <hr style="margin:4px 0;border-color:var(--border)">
+              <span style="font-size:11px;color:var(--text-muted);margin-right:4px">迭代语法：</span>
+              <span class="var-chip" onclick="insertVar('{{#items}}\n{{/items}}')" style="background:#f6ffed;color:#52c41a">#items 块</span>
+              <span class="var-chip" onclick="insertVar('{{#image_url}}\n{{/image_url}}')" style="background:#f6ffed;color:#52c41a">#image_url 块</span>
+              <span class="var-chip" onclick="insertVar('{{product_title}}')" style="background:#fff7e6;color:#fa8c16">product_title</span>
+              <span class="var-chip" onclick="insertVar('{{quantity}}')" style="background:#fff7e6;color:#fa8c16">quantity</span>
+              <span class="var-chip" onclick="insertVar('{{image_url}}')" style="background:#fff7e6;color:#fa8c16">image_url</span>
+              <span class="var-chip" onclick="insertVar('{{_index}}')" style="background:#fff7e6;color:#fa8c16">_index</span>
             </div>
           </div>
           <div class="btn-row">
@@ -223,7 +242,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
                 <div class="form-group"><label>card_last4</label><input id="tv_card_last4" value="4242" onchange="livePreview()"></div>
                 <div class="form-group"><label>order_amount</label><input id="tv_order_amount" value="29.99" onchange="livePreview()"></div>
                 <div class="form-group"><label>order_currency</label><input id="tv_order_currency" value="USD" onchange="livePreview()"></div>
+                <div class="form-group"><label>store_link</label><input id="tv_store_link" value="https://test.myshoplaza.com" onchange="livePreview()"></div>
+                <div class="form-group"><label>complaint_link</label><input id="tv_complaint_link" value="https://example.com/ticket?t=test&mode=complaint" onchange="livePreview()"></div>
                 <div class="form-group"><label>product_image</label><input id="tv_product_image" value="https://img.shoplazza.com/example.jpg" onchange="livePreview()"></div>
+                <div class="form-group"><label>has_items</label><input id="tv_has_items" value="1" onchange="livePreview()"></div>
+                <div class="form-group"><label>items (JSON数组，用于预览迭代)</label><textarea id="tv_items" onchange="livePreview()" rows="4" style="font-family:monospace;font-size:11px">[{"product_title":"Summer Dress 7632","quantity":"1","image_url":"https://img.shoplazza.com/dress.jpg"},{"product_title":"Winter Coat 9135","quantity":"2","image_url":"https://img.shoplazza.com/coat.jpg"}]</textarea></div>
               </div>
             </details>
             <!-- 预览 iframe -->
@@ -484,6 +507,8 @@ function livePreview() {
   var vars = {
     store_name: document.getElementById('tv_store_name').value,
     store_domain: document.getElementById('tv_store_domain').value,
+    store_link: document.getElementById('tv_store_link').value,
+    complaint_link: document.getElementById('tv_complaint_link').value,
     order_id: document.getElementById('tv_order_id').value,
     order_number: document.getElementById('tv_order_number').value,
     customer_name: document.getElementById('tv_customer_name').value,
@@ -496,7 +521,14 @@ function livePreview() {
     order_amount: document.getElementById('tv_order_amount').value,
     order_currency: document.getElementById('tv_order_currency').value,
     product_image: document.getElementById('tv_product_image').value,
+    has_items: document.getElementById('tv_has_items').value,
   };
+  // 解析 items JSON 数组
+  try {
+    vars.items = JSON.parse(document.getElementById('tv_items').value);
+  } catch(e) {
+    vars.items = [];
+  }
 
   // 客户端简单渲染
   var previewSubject = renderTemplate(subject, vars);
@@ -509,17 +541,33 @@ function livePreview() {
   frame.srcdoc = doc;
 }
 
-// 客户端模板渲染（简单实现，用于预览）
+// 客户端模板渲染（与服务端行为一致：{{{var}}} 原始, {{var}} 转义, {{#arr}} 迭代, _index 自动注入）
 function renderTemplate(tpl, vars) {
   var result = tpl;
-  // 条件块
+  // 条件/迭代块 {{#var}}...{{/var}}
   result = result.replace(/\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g, function(m, key, content) {
-    if (vars[key] && vars[key].trim()) return content;
+    var val = vars[key];
+    if (Array.isArray(val)) {
+      // 数组迭代：每项作为子上下文递归渲染
+      return val.map(function(item, idx) {
+        var ctx = {};
+        for (var k in item) { if (item.hasOwnProperty(k)) ctx[k] = item[k]; }
+        ctx._index = String(idx + 1);
+        return renderTemplate(content, ctx);
+      }).join('');
+    }
+    // 非数组真值：递归处理内层模板变量
+    if (val && (typeof val === 'string' ? val.trim() : true)) return renderTemplate(content, vars);
     return '';
   });
-  // 变量替换
+  // 原始 HTML：{{{var}}}
   for (var k in vars) {
-    if (!vars.hasOwnProperty(k)) continue;
+    if (!vars.hasOwnProperty(k) || Array.isArray(vars[k])) continue;
+    result = result.replace(new RegExp('\\{\\{\\{' + k + '\\}\\}\\}', 'g'), String(vars[k]));
+  }
+  // 转义输出：{{var}}
+  for (var k in vars) {
+    if (!vars.hasOwnProperty(k) || Array.isArray(vars[k])) continue;
     result = result.replace(new RegExp('\\{\\{' + k + '\\}\\}', 'g'), function() {
       return escapeHtml(String(vars[k]));
     });
@@ -579,8 +627,8 @@ async function resetToDefault() {
         body: '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#333">\n  <div style="background:#f7f9fc;padding:20px;border-radius:8px;text-align:center">\n    <h2 style="color:#52c41a;margin:0">{{store_name}} Support</h2>\n  </div>\n  <div style="padding:20px 0">\n    <p>Dear {{customer_name}},</p>\n    <p>Your inquiry <strong>{{public_ticket_no}}</strong> regarding order <strong>{{order_number}}</strong> has been resolved and closed.</p>\n    <p>If you need further assistance, please contact us again.</p>\n    <p>Thank you for your patience!</p>\n  </div>\n  <div style="border-top:1px solid #e8e8e8;padding-top:16px;color:#8c8c8c;font-size:12px">\n    <p>This is an automated message from {{store_name}} support system.</p>\n  </div>\n</div>'
       },
       customer_complaint_invite: {
-        subject: '{{store_name}} - New complaint for order {{order_number}}',
-        body: '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#333;line-height:1.6">\n    <p>Dear {{customer_name}},</p>\n    <p>Regarding your order <strong>{{order_number}}</strong>, if you have any new issues, please click the link below to submit a complaint:</p>\n    <p><a href="{{client_link}}" style="color:#1890ff">{{client_link}}</a></p>\n    {{#product_image}}<p><img src="{{product_image}}" style="max-width:200px;border-radius:4px" /></p>{{/product_image}}\n    <p style="color:#8c8c8c;font-size:14px;margin-top:24px">Please do not reply directly to this email, it will be ignored.</p>\n  </div>'
+        subject: 'After-Sales Assistance Notice – Order {{order_number}}',
+        body: '<!DOCTYPE html>\n<html lang="en">\n<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>After-Sales Assistance Notice</title></head>\n<body style="margin:0;padding:0;background-color:#ffffff">\n<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="border-collapse:collapse;width:100%">\n<tr><td align="center" style="padding:32px 24px">\n<table border="0" cellpadding="0" cellspacing="0" width="600" role="presentation" style="max-width:600px;width:100%;border-collapse:collapse;font-family:-apple-system,BlinkMacSystemFont,segoe ui,Roboto,Helvetica,Arial,sans-serif;color:#333;line-height:1.6;text-align:left">\n\n<tr><td style="padding-top:0;padding-bottom:8px;font-size:16px;color:#111">Dear {{customer_name}},</td></tr>\n\n<tr><td style="font-size:14px;color:#555;padding-bottom:24px">We noticed that there may be an after-sales issue with your order <strong style="color:#111">{{order_number}}</strong> at <a href="{{store_link}}" target="_blank" style="color:#1890ff;text-decoration:none;font-weight:600">{{store_name}}</a>. Your order details are provided below for reference.</td></tr>\n\n<tr><td style="padding-bottom:28px">\n<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="background-color:#fcfcfc;border:1px solid #eaedf1;border-radius:8px;border-collapse:collapse;width:100%">\n<tr><td style="padding:20px">\n<div style="font-size:13px;color:#8c8c8c;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;font-weight:600">Order Details</div>\n<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="width:100%;border-collapse:collapse;font-size:14px">\n<tr><td style="padding:6px 0;color:#8c8c8c;width:140px;vertical-align:top">Order Number</td><td style="padding:6px 0;font-weight:600;color:#111">{{order_number}}</td></tr>\n<tr><td style="padding:6px 0;color:#8c8c8c;vertical-align:top">Amount</td><td style="padding:6px 0;font-weight:600;color:#ff4d4f">{{order_currency}} {{order_amount}}</td></tr>\n<tr><td style="padding:6px 0;color:#8c8c8c;vertical-align:top">Payment Date</td><td style="padding:6px 0;color:#111">{{paid_at}}</td></tr>\n<tr><td style="padding:6px 0;color:#8c8c8c;vertical-align:top">Payment Method</td><td style="padding:6px 0;color:#111">{{payment_method}}{{#card_last4}} (ending in <strong style="color:#111">{{card_last4}}</strong>){{/card_last4}}</td></tr>\n</table>\n{{#has_items}}\n<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="border-collapse:collapse;width:100%"><tr><td style="padding:12px 0 0;border-top:1px solid #eaedf1;height:0;line-height:0"></td></tr></table>\n<div style="font-size:13px;color:#8c8c8c;text-transform:uppercase;letter-spacing:0.5px;margin-top:12px;margin-bottom:6px;font-weight:600">Purchased Items</div>\n{{#items}}\n<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="border-collapse:collapse;width:100%;margin-bottom:6px"><tr>{{#image_url}}<td width="72" style="width:72px;padding:0 12px 0 0;vertical-align:top"><img src="{{{image_url}}}" width="64" height="64" style="width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid #e8e8e8;display:block" alt=""></td>{{/image_url}}<td style="vertical-align:middle;font-size:13px;line-height:1.5"><div style="color:#262626;font-weight:500;margin-bottom:2px">{{product_title}}</div><div style="color:#8c8c8c;font-size:12px">Qty: {{quantity}}</div></td></tr></table>\n{{/items}}\n{{/has_items}}\n</td></tr></table></td></tr>\n\n<tr><td style="font-size:14px;color:#555;padding-bottom:16px">If the merchant has not properly resolved your issue, please click the <strong style="color:#1890ff">Contact Support</strong> button below to explain your situation in detail. We will actively assist you in communicating with the merchant and work to resolve the matter promptly, safeguarding your legitimate rights and interests.</td></tr>\n\n<tr><td style="font-size:14px;color:#555;padding-bottom:28px">If the merchant refuses to fulfill their after-sales obligations, provides misleading services, or you are unable to reach a consensus through initial communication, you may click the <strong style="color:#ff4d4f">Complain About Merchant</strong> button below to file a complaint with us. We will immediately launch an investigation and, based on the findings, take appropriate action against the seller in accordance with laws and regulations.</td></tr>\n\n<tr><td style="padding-bottom:36px">\n<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="background-color:#f4f7f9;border-radius:8px;border-left:4px solid #1890ff;border-collapse:collapse;width:100%">\n<tr><td style="padding:24px">\n<p style="margin-top:0;margin-bottom:20px;font-size:15px;color:#111"><strong>Please choose an action below based on your current situation:</strong></p>\n<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="border-collapse:collapse;width:100%">\n<tr>\n<td width="170" style="padding-right:12px;padding-bottom:12px;vertical-align:middle;width:170px"><a href="{{client_link}}" style="display:inline-block;background-color:#1890ff;color:#fff;text-decoration:none;padding:11px 24px;border-radius:6px;font-weight:600;font-size:14px;box-shadow:0 2px 4px rgba(24,144,255,0.15);white-space:nowrap">Contact Support</a></td>\n<td style="padding-bottom:12px;vertical-align:middle"><a href="{{complaint_link}}" style="display:inline-block;background-color:#ff4d4f;color:#fff;text-decoration:none;padding:11px 24px;border-radius:6px;font-weight:600;font-size:14px;box-shadow:0 2px 4px rgba(255,77,79,0.15);white-space:nowrap">Complain About Merchant</a></td>\n</tr></table>\n</td></tr></table></td></tr>\n\n<tr><td style="color:#999;font-size:12px;border-top:1px solid #eee;padding-top:16px;line-height:1.6">This is an automated message. Please do not reply directly to this email as this inbox is unmonitored. If you need further assistance or wish to manage your support tickets, please <a href="{{client_link}}" style="color:#1890ff;text-decoration:underline">click here to contact our support center</a>.</td></tr>\n\n</table></td></tr></table>\n</body></html>'
       }
     };
 

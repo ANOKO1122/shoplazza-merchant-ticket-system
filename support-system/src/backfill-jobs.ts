@@ -15,7 +15,7 @@ import { getEnabledStores, StoreRecord } from './store-service';
 import { query } from './pg';
 import { listPaidOrdersCreatedSince, getOrderTransactions, ShoplazzaOrderDetail } from './shoplazza-client';
 import { normalizeOrder } from './normalize-order';
-import { createPaidSupportInviteEmailJob } from './email-service';
+import { createPaidSupportInviteEmailJob, extractStoreCustomDomain } from './email-service';
 import { logSync, logOperation } from './log-service';
 import { buildStoreDomain } from './config';
 
@@ -256,7 +256,7 @@ async function backfillOneStore(
         const { inserted } = await createPaidSupportInviteEmailJob({
           storeSubdomain: normalized.storeSubdomain,
           storeName: normalized.storeName,
-          storeDomain: buildStoreDomain(normalized.storeSubdomain),
+          storeDomain: extractStoreCustomDomain(normalized.rawOrderJson) || buildStoreDomain(normalized.storeSubdomain),
           orderId: normalized.orderId,
           orderNumber: normalized.orderNumber,
           orderedAt: normalized.paidAt,

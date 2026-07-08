@@ -271,6 +271,19 @@
   .btn-img-upload { display: inline-flex; align-items: center; justify-content: center; padding: 9px 14px; border-radius: 6px; background: #fff; cursor: pointer; font-size: 13px; border: 1px solid #d9d9d9; transition: background 0.2s; color: var(--text-secondary); }
   .btn-img-upload:hover { background: #f0f0f0; border-color: var(--primary); color: var(--primary); }
 
+  /* 投诉页订单详情卡片 */
+  .order-detail-card { background: #fafafa; border: 1px solid #f0f0f0; border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; }
+  .order-detail-row { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 13px; line-height: 1.8; }
+  .order-detail-row span { color: #8c8c8c; }
+  .order-detail-row strong { color: #262626; }
+  .product-list-compact { margin-top: 10px; border-top: 1px solid #f0f0f0; padding-top: 8px; }
+  .product-item-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid #f5f5f5; }
+  .product-item-row:last-child { border-bottom: none; }
+  .product-item-img { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; border: 1px solid #e8e8e8; flex-shrink: 0; background: #fff; }
+  .product-item-info { flex: 1; min-width: 0; font-size: 13px; line-height: 1.5; }
+  .product-item-info .pname { color: #262626; font-weight: 500; word-break: break-word; }
+  .product-item-info .pqty { color: #8c8c8c; font-size: 12px; }
+
   @media (max-width: 768px) {
     .container { padding: 12px; }
     .card { padding: 18px; }
@@ -281,6 +294,8 @@
     .reply-area { padding: 14px 16px 18px; }
     .info-row { gap: 8px; }
     .ticket-header h2 { font-size: 16px; }
+    .product-item-img { width: 52px; height: 52px; }
+  }
     .reply-box { font-size: 16px; }
   }
 </style>
@@ -302,6 +317,13 @@ var token = new URLSearchParams(location.search).get('t');
 var accessToken = '';
 var currentTicketNo = '';
 var remainingMessages = 5;
+var isComplaintMode = new URLSearchParams(location.search).get('mode') === 'complaint';
+
+// 联系支持 — 常规售后问题
+var supportTypes = ['Products Discrepancies', 'Product Not Received', 'Defective Merchandise', 'Incorrect Transaction', 'Wrong Address', 'Credit Not Processed', 'Other / General Inquiry'];
+
+// 投诉商家 — 严重违规 / 电商平台常见争议
+var complaintTypes = ['Fraud', 'Unauthorized Transaction', 'Counterfeit / Fake Products', 'Misleading or False Advertising', 'Refusal to Honor Refund / Return Policy', 'Privacy or Data Misuse', 'Unsafe or Harmful Products', 'Discrimination or Unfair Treatment', 'Intellectual Property Violation'];
 
 function $(sel) { return document.querySelector(sel); }
 
@@ -329,19 +351,74 @@ function statusLabel(s) {
   return map[s] || s;
 }
 
-var disputeTypes = ['Unknow', 'Fraud', 'Unauthorized', 'Products Discrepancies', 'Product Not Received', 'Defective Merchandise', 'Incorrect Transaction', 'Wrong address', 'Credit Not Processed'];
+var disputeTypes = isComplaintMode ? complaintTypes : supportTypes;
+
+/** 从 Shoplazza line_item 提取图片 URL（处理嵌套对象和协议相对URL） */
+function getItemImageUrl(item) {
+  var raw = item.image;
+  var src = '';
+  if (raw && typeof raw === 'object' && raw.src) {
+    src = String(raw.src);
+  } else {
+    src = String(raw || item.product_image || item.image_src || '');
+  }
+  if (!src || src === 'null' || src === 'undefined') return '';
+  if (src.startsWith('//')) return 'https:' + src;
+  if (src.startsWith('http')) return src;
+  return '';
+}
 
 function renderNewTicket(order) {
   var card = order.card_last4 || '';
   var paymentMethod = (order.payment_method || '').replace(/_/g, ' ');
-  var storeUrl = (order.store_subdomain || '');
-  if (storeUrl.indexOf('.') === -1) storeUrl += '.myshoplaza.com';
+  // 优先使用顾客访问时的自定义域名，fallback 到店匠子域名
+  var storeDomain = order.store_domain || '';
+  var storeUrl = storeDomain || (order.store_subdomain || '');
+  if (!storeUrl.includes('.')) storeUrl += '.myshoplaza.com';
+  var storeDisplay = storeDomain || storeUrl;
 
+  var types = isComplaintMode ? complaintTypes : supportTypes;
   var opts = '';
-  disputeTypes.forEach(function(t) { opts += '<option>' + t + '</option>'; });
+  types.forEach(function(t) { opts += '<option>' + t + '</option>'; });
 
   var amountDisplay = (order.order_currency || 'USD') + ' ' + (order.order_amount || '0.00');
   var dateDisplay = formatDate(order.paid_at);
+  var orderNumber = order.order_number || '';
+
+  // 投诉模式专用标题与说明
+  var pageTitle = isComplaintMode ? 'Submit a Complaint' : 'Customer Support';
+  var pageSubtitle = isComplaintMode
+    ? '<p class="order-summary" style="color:#ff4d4f;font-weight:600">You are filing a formal complaint against the merchant. Please select the most relevant category below and provide detailed information.</p>'
+    : '';
+
+  // 构建完整订单详情卡片（联系支持 + 投诉商家均显示）
+  var orderDetailCard = '';
+  var items = Array.isArray(order.items) ? order.items : [];
+    var productRows = '';
+    items.forEach(function(it) {
+      var imgUrl = getItemImageUrl(it);
+      var title = it.product_title || it.title || it.name || 'Product';
+      var qty = it.quantity || 1;
+      productRows +=
+        '<div class="product-item-row">' +
+        (imgUrl ? '<img src="' + imgUrl + '" class="product-item-img" alt="" loading="lazy" onerror="this.style.display=\'none\'">' : '') +
+        '<div class="product-item-info"><div class="pname">' + title + '</div><div class="pqty">Qty: ' + qty + '</div></div>' +
+        '</div>';
+    });
+    orderDetailCard =
+      '<div class="card">' +
+      '<div class="section-title">Order Summary</div>' +
+      '<div class="order-detail-card">' +
+      '<div class="order-detail-row">' +
+      '<div><span>Store: </span><strong>' + (order.store_name || '-') + '</strong></div>' +
+      '<div><span>Order: </span><strong>' + (order.order_number || '-') + '</strong></div>' +
+      '<div><span>Amount: </span><strong style="color:#ff4d4f">' + amountDisplay + '</strong></div>' +
+      '<div><span>Date: </span>' + dateDisplay + '</div>' +
+      (paymentMethod ? '<div><span>Payment: </span>' + paymentMethod + (card ? ' (ending in ' + card + ')' : '') + '</div>' : '') +
+      '</div>' +
+      (productRows ? '<div class="product-list-compact">' + productRows + '</div>' : '') +
+      '</div>' +
+      '</div>';
 
   var paymentRow = '';
   if (card) {
@@ -349,33 +426,47 @@ function renderNewTicket(order) {
   } else if (paymentMethod) {
     paymentRow = '<div class="form-group"><label class="form-label">Payment Method</label><input type="text" class="form-control" value="' + paymentMethod + '" disabled></div>';
   }
+  var orderNumberRow = orderNumber ? '<p class="order-summary">Order number: <strong>' + orderNumber + '</strong></p>' : '';
 
   $('#app').innerHTML =
     '<div class="page active">' +
     '<div class="card">' +
-    '<h1 class="page-title">Dispute initiated</h1>' +
+    '<h1 class="page-title"' + (isComplaintMode ? ' style="color:#ff4d4f"' : '') + '>' + pageTitle + '</h1>' +
     '<p class="greeting">Dear ' + (order.customer_name || 'Customer') + '</p>' +
     '<p class="order-summary">' +
     'You made a <span class="highlight-money">' + amountDisplay + '</span> purchase on ' +
-    '<a href="https://' + storeUrl + '" target="_blank" rel="noopener" class="highlight-link">' + storeUrl + '</a> from ' +
+    '<a href="https://' + storeUrl + '" target="_blank" rel="noopener" class="highlight-link">' + storeDisplay + '</a> from ' +
     '<span class="highlight-time">' + dateDisplay + '</span>' +
     '</p>' +
+    orderNumberRow +
+    pageSubtitle +
     '<p class="order-summary">' +
-    'If you have any questions about this order, please enter and send dispute information' +
+    (isComplaintMode
+      ? 'Please provide a clear and detailed description of the issue. Our mediation team will review your complaint and take appropriate action.'
+      : 'Please describe your issue below and we will help you contact the merchant. We will respond as soon as possible.') +
     '</p>' +
     '</div>' +
+    orderDetailCard +
     '<div class="card">' +
-    '<div class="section-title">Initiate Disputes</div>' +
+    '<div class="section-title">' + (isComplaintMode ? 'Complaint Category' : 'Your Inquiry') + '</div>' +
     paymentRow +
     '<div class="form-group">' +
-    '<label class="form-label">Dispute Type</label>' +
+    '<label class="form-label">' + (isComplaintMode ? 'Violation Type' : 'Inquiry Type') + '</label>' +
     '<select class="form-control" id="issueType">' + opts + '</select>' +
     '</div>' +
     '<div class="form-group">' +
-    '<label class="form-label">Claims</label>' +
-    '<textarea class="form-control" id="description" placeholder="Please describe your issue in detail..."></textarea>' +
+    '<label class="form-label">' + (isComplaintMode ? 'Complaint Details' : 'Details') + '</label>' +
+    '<textarea class="form-control" id="description" placeholder="' + (isComplaintMode ? 'Please describe the issue in detail. Include dates, amounts, and any relevant evidence...' : 'Please describe your issue in detail...') + '"></textarea>' +
     '</div>' +
-    '<button class="btn btn-primary" onclick="submitTicket()">Submit</button>' +
+    '<div class="form-group">' +
+    '<label class="form-label">Attach Images <span style="font-weight:400;color:#8c8c8c;font-size:11px">(max 2, JPEG/PNG/WEBP, up to 5MB each)</span></label>' +
+    '<div style="display:flex;align-items:center;gap:10px">' +
+    '<label class="btn-img-upload" title="Attach images">Upload Images<input type="file" id="ticketImages" accept="image/jpeg,image/png,image/webp" multiple onchange="onTicketImagesChange()" style="display:none"></label>' +
+    '<span id="imgCount" style="font-size:12px;color:#8c8c8c"></span>' +
+    '</div>' +
+    '<div id="imgPreview" class="img-preview-row" style="display:none;margin-top:8px"></div>' +
+    '</div>' +
+    '<button class="btn btn-primary"' + (isComplaintMode ? ' style="background:#ff4d4f"' : '') + ' onclick="submitTicket()">' + (isComplaintMode ? 'Submit Complaint' : 'Submit') + '</button>' +
     '<div id="err" class="error-msg" style="display:none;margin-top:12px"></div>' +
     '</div></div>';
 }
@@ -532,27 +623,28 @@ async function refreshMessages() {
 
 async function submitTicket() {
   var description = $('#description').value.trim();
-  if (!description) {
-    showError('err', 'Please describe your dispute');
+  var hasImages = ticketImagesFiles.length > 0;
+  if (!description && !hasImages) {
+    showError('err', 'Please provide a description or attach images');
     return;
   }
   var btn = document.querySelector('.btn-primary');
   btn.disabled = true;
   btn.textContent = 'Submitting...';
   try {
-    var body = JSON.stringify({
-      token: token,
-      issue_type: $('#issueType').value,
-      description: description,
-    });
+    var formData = new FormData();
+    formData.append('token', token);
+    formData.append('issue_type', $('#issueType').value);
+    formData.append('description', description);
+    ticketImagesFiles.forEach(function(file) { formData.append('images', file); });
+
     var result = await (await fetch(API + '/tickets', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: body,
+      body: formData,
     })).json();
     if (result.ok) {
       accessToken = result.accessToken;
-      token = result.accessToken;  // 同步更新全局 token，防止后续被旧 bootstrap token 覆盖
+      token = result.accessToken;
       history.replaceState(null, '', '/ticket?t=' + result.accessToken);
       var data = await api(API + '/tickets/' + result.publicTicketNo + '?t=' + result.accessToken);
       if (data.ok) renderTicketDetail(data);
@@ -563,7 +655,7 @@ async function submitTicket() {
     showError('err', 'Network error');
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Submit';
+    btn.textContent = isComplaintMode ? 'Submit Complaint' : 'Submit';
   }
 }
 
@@ -696,6 +788,54 @@ function clearSelectedImages() {
   selectedFiles = [];
   var container = $('#imagePreview');
   if (container) { container.style.display = 'none'; container.innerHTML = ''; }
+}
+
+// ── 工单提交图片附件（最多2张）──
+
+var ticketImagesFiles = [];
+
+function onTicketImagesChange() {
+  var input = $('#ticketImages');
+  if (!input || !input.files) return;
+  for (var i = 0; i < input.files.length; i++) {
+    if (ticketImagesFiles.length >= 2) break;
+    ticketImagesFiles.push(input.files[i]);
+  }
+  input.value = '';
+  renderTicketImagePreviews();
+  updateImgCount();
+}
+
+function renderTicketImagePreviews() {
+  var container = $('#imgPreview');
+  if (!container) return;
+  if (ticketImagesFiles.length === 0) {
+    container.style.display = 'none';
+    container.innerHTML = '';
+    return;
+  }
+  container.style.display = 'flex';
+  var html = '';
+  ticketImagesFiles.forEach(function(file, idx) {
+    var url = URL.createObjectURL(file);
+    html +=
+      '<div class="image-preview-item">' +
+      '<img src="' + url + '" alt="preview">' +
+      '<button class="remove-btn" onclick="removeTicketImg(' + idx + ')">&times;</button>' +
+      '</div>';
+  });
+  container.innerHTML = html;
+}
+
+function removeTicketImg(idx) {
+  ticketImagesFiles.splice(idx, 1);
+  renderTicketImagePreviews();
+  updateImgCount();
+}
+
+function updateImgCount() {
+  var el = $('#imgCount');
+  if (el) el.textContent = ticketImagesFiles.length + ' / 2';
 }
 
 function renderAttachments(attachments) {

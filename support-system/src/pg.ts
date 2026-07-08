@@ -125,22 +125,44 @@ export async function ensureTables(): Promise<void> {
   // 兼容已有表：添加 active_preset_name 列
   await p.query(`ALTER TABLE support_email_templates ADD COLUMN IF NOT EXISTS active_preset_name TEXT`);
 
-  // 插入默认模板（如果不存在）
+  // 插入默认模板（首次安装时写入，已存在则更新为最新版）
   await p.query(`
     INSERT INTO support_email_templates (email_type, subject_template, body_template)
     VALUES
       ('paid_support_invite',
        'Order Notification',
-       '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#333;line-height:1.6">
-        <p>Dear customer,</p>
-        <p>You made a {{order_currency}} {{order_amount}} purchase on {{paid_at}}.</p>
-        <p>Order number: <strong>{{order_number}}</strong></p>
-        <p>Payment method: {{payment_method}}{{#card_last4}} (card ending in {{card_last4}}){{/card_last4}}</p>
-        <p>If you have any questions about this order, please visit:</p>
-        <p><a href="{{client_link}}" style="color:#1890ff">{{client_link}}</a></p>
-        <p style="color:#8c8c8c;font-size:14px;margin-top:24px">Please do not reply directly to this email, it will be ignored.</p>
-      </div>')
-    ON CONFLICT (email_type) DO NOTHING
+       '<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Transaction Notification</title></head>
+<body style="margin:0;padding:0;background-color:#ffffff;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%">
+<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="border-collapse:collapse;width:100%">
+<tr><td align="center" style="padding:32px 24px">
+<table border="0" cellpadding="0" cellspacing="0" width="600" role="presentation" style="max-width:600px;width:100%;border-collapse:collapse;font-family:-apple-system,BlinkMacSystemFont,segoe ui,Roboto,Helvetica,Arial,sans-serif;color:#333;line-height:1.6;text-align:left">
+<tr><td style="padding-top:0;padding-bottom:8px;font-size:16px;color:#111">Dear {{customer_name}},</td></tr>
+<tr><td style="font-size:14px;color:#555;padding-bottom:24px">This is an automated notification from our customer support center regarding your order at <strong style="color:#111">{{store_name}}</strong>.</td></tr>
+<tr><td style="padding-bottom:28px">
+<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="background-color:#fcfcfc;border:1px solid #eaedf1;border-radius:8px;border-collapse:collapse;width:100%">
+<tr><td style="padding:20px">
+<div style="font-size:13px;color:#8c8c8c;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;font-weight:600">Transaction Details</div>
+<p style="margin:0 0 8px;font-size:15px">You made a <strong style="font-size:18px;color:#111">{{order_currency}} {{order_amount}}</strong> purchase on <strong style="color:#111">{{paid_at}}</strong>.</p>
+<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="border-collapse:collapse;width:100%"><tr><td style="padding:12px 0;border-top:1px solid #eaedf1;height:0;line-height:0"></td></tr></table>
+<p style="margin:0 0 6px;font-size:14px;color:#555">Order number: <strong style="color:#111">{{order_number}}</strong></p>
+<p style="margin:0;font-size:14px;color:#555">Payment method: <strong style="color:#111">{{payment_method}}</strong>{{#card_last4}} (ending in <strong style="color:#111">{{card_last4}}</strong>){{/card_last4}}</p>
+</td></tr></table></td></tr>
+<tr><td style="padding-bottom:36px">
+<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="background-color:#f4f7f9;border-radius:8px;border-left:4px solid #1890ff;border-collapse:collapse;width:100%">
+<tr><td style="padding:24px">
+<p style="margin-top:0;margin-bottom:8px;font-size:15px;color:#111"><strong>Need assistance with this order?</strong></p>
+<p style="margin-bottom:20px;font-size:13px;color:#666;line-height:1.5">If you have any questions, or need support, please click the button below to visit your dedicated support page:</p>
+<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="border-collapse:collapse;width:100%"><tr><td align="left"><a href="{{client_link}}" style="display:inline-block;padding:11px 24px;background-color:#1890ff;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;box-shadow:0 2px 4px rgba(24,144,255,0.15)">Contact Support</a></td></tr></table>
+</td></tr></table></td></tr>
+<tr><td style="color:#999;font-size:12px;border-top:1px solid #eee;padding-top:16px;line-height:1.6">This is a transactional notification regarding your recent purchase. Please do not reply directly to this email as this inbox is unmonitored. If you need further assistance or wish to manage your support tickets, please <a href="{{client_link}}" style="color:#1890ff;text-decoration:underline">click here to contact our support center</a>.</td></tr>
+</table></td></tr></table>
+</body></html>')
+    ON CONFLICT (email_type) DO UPDATE SET
+      subject_template = EXCLUDED.subject_template,
+      body_template = EXCLUDED.body_template,
+      updated_at = now()
   `);
 
   await p.query(`
@@ -148,14 +170,37 @@ export async function ensureTables(): Promise<void> {
     VALUES
       ('agent_reply_notice',
        '{{store_name}} replied to your inquiry {{public_ticket_no}}',
-       '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#333;line-height:1.6">
-  <p>Dear {{customer_name}},</p>
-  <p>Our support team has replied to your inquiry <strong>{{public_ticket_no}}</strong> regarding order <strong>{{order_number}}</strong>.</p>
-  <p>Please use the secure link below to view the reply:</p>
-  <p><a href="{{client_link}}" style="color:#1890ff">{{client_link}}</a></p>
-  <p style="color:#8c8c8c;font-size:14px;margin-top:24px">Please do not reply directly to this email, it will be ignored.</p>
-</div>')
-    ON CONFLICT (email_type) DO NOTHING
+       '<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Support Ticket Update</title></head>
+<body style="margin:0;padding:0;background-color:#ffffff;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%">
+<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="border-collapse:collapse;width:100%">
+<tr><td align="center" style="padding:32px 24px">
+<table border="0" cellpadding="0" cellspacing="0" width="600" role="presentation" style="max-width:600px;width:100%;border-collapse:collapse;font-family:-apple-system,BlinkMacSystemFont,segoe ui,Roboto,Helvetica,Arial,sans-serif;color:#333;line-height:1.6;text-align:left">
+<tr><td style="padding-top:0;padding-bottom:8px;font-size:16px;color:#111">Dear {{customer_name}},</td></tr>
+<tr><td style="font-size:14px;color:#555;padding-bottom:24px">This is an update from our customer support center regarding your inquiry at <strong style="color:#111">{{store_name}}</strong>.</td></tr>
+<tr><td style="padding-bottom:28px">
+<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="background-color:#fcfcfc;border:1px solid #eaedf1;border-radius:8px;border-collapse:collapse;width:100%">
+<tr><td style="padding:20px">
+<div style="font-size:13px;color:#8c8c8c;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;font-weight:600">Inquiry Information</div>
+<p style="margin:0 0 8px;font-size:15px">Our support team has replied to your ticket: <strong style="color:#1890ff;font-size:16px">#{{public_ticket_no}}</strong></p>
+<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="border-collapse:collapse;width:100%"><tr><td style="padding:12px 0;border-top:1px solid #eaedf1;height:0;line-height:0"></td></tr></table>
+<p style="margin:0;font-size:14px;color:#555">Related Order: <strong style="color:#111">{{order_number}}</strong></p>
+</td></tr></table></td></tr>
+<tr><td style="padding-bottom:36px">
+<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="background-color:#f4f7f9;border-radius:8px;border-left:4px solid #1890ff;border-collapse:collapse;width:100%">
+<tr><td style="padding:24px">
+<p style="margin-top:0;margin-bottom:8px;font-size:15px;color:#111"><strong>Please use the secure link below to view the reply:</strong></p>
+<p style="margin-bottom:20px;font-size:13px;color:#666;line-height:1.5">To protect your privacy and security, click the button below to log in and access your dedicated message thread:</p>
+<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="border-collapse:collapse;width:100%"><tr><td align="left"><a href="{{client_link}}" style="display:inline-block;padding:11px 24px;background-color:#1890ff;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;box-shadow:0 2px 4px rgba(24,144,255,0.15)">View Reply &amp; Message History</a></td></tr></table>
+</td></tr></table></td></tr>
+<tr><td style="color:#999;font-size:12px;border-top:1px solid #eee;padding-top:16px;line-height:1.6">Please do not reply directly to this email. This inbox is unattended. If you need further assistance, please follow the link above to update your ticket.</td></tr>
+</table></td></tr></table>
+</body></html>')
+    ON CONFLICT (email_type) DO UPDATE SET
+      subject_template = EXCLUDED.subject_template,
+      body_template = EXCLUDED.body_template,
+      updated_at = now()
   `);
 
   await p.query(`
@@ -177,23 +222,72 @@ export async function ensureTables(): Promise<void> {
            <p>This is an automated message from {{store_name}} support system.</p>
          </div>
        </div>')
-    ON CONFLICT (email_type) DO NOTHING
+    ON CONFLICT (email_type) DO UPDATE SET
+      subject_template = EXCLUDED.subject_template,
+      body_template = EXCLUDED.body_template,
+      updated_at = now()
   `);
 
-  // 手动发起新工单邀请：顾客投诉工单模板
+  // 手动发起新工单邀请：顾客投诉工单模板（英文版，完整HTML邮件格式，含店铺蓝链+商品列表）
   await p.query(`
     INSERT INTO support_email_templates (email_type, subject_template, body_template)
     VALUES
       ('customer_complaint_invite',
-       '{{store_name}} - New complaint for order {{order_number}}',
-       '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#333;line-height:1.6">
-    <p>Dear {{customer_name}},</p>
-    <p>Regarding your order <strong>{{order_number}}</strong>, if you have any new issues, please click the link below to submit a complaint:</p>
-    <p><a href="{{client_link}}" style="color:#1890ff">{{client_link}}</a></p>
-    {{#product_image}}<p><img src="{{product_image}}" style="max-width:200px;border-radius:4px" /></p>{{/product_image}}
-    <p style="color:#8c8c8c;font-size:14px;margin-top:24px">Please do not reply directly to this email, it will be ignored.</p>
-  </div>')
-    ON CONFLICT (email_type) DO NOTHING
+       'After-Sales Assistance Notice – Order {{order_number}}',
+       '<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>After-Sales Assistance Notice</title></head>
+<body style="margin:0;padding:0;background-color:#ffffff;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%">
+<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="border-collapse:collapse;width:100%">
+<tr><td align="center" style="padding:32px 24px">
+<table border="0" cellpadding="0" cellspacing="0" width="600" role="presentation" style="max-width:600px;width:100%;border-collapse:collapse;font-family:-apple-system,BlinkMacSystemFont,segoe ui,Roboto,Helvetica,Arial,sans-serif;color:#333;line-height:1.6;text-align:left">
+<tr><td style="padding-top:0;padding-bottom:8px;font-size:16px;color:#111">Dear {{customer_name}},</td></tr>
+<tr><td style="font-size:14px;color:#555;padding-bottom:24px">We noticed that there may be an after-sales issue with your order <strong style="color:#111">{{order_number}}</strong> at <a href="{{store_link}}" target="_blank" style="color:#1890ff;text-decoration:none;font-weight:600">{{store_name}}</a>. Your order details are provided below for reference.</td></tr>
+<tr><td style="padding-bottom:28px">
+<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="background-color:#fcfcfc;border:1px solid #eaedf1;border-radius:8px;border-collapse:collapse;width:100%">
+<tr><td style="padding:20px">
+<div style="font-size:13px;color:#8c8c8c;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;font-weight:600">Order Details</div>
+<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="width:100%;border-collapse:collapse;font-size:14px">
+<tr><td style="padding:6px 0;color:#8c8c8c;width:140px;vertical-align:top">Order Number</td><td style="padding:6px 0;font-weight:600;color:#111">{{order_number}}</td></tr>
+<tr><td style="padding:6px 0;color:#8c8c8c;vertical-align:top">Amount</td><td style="padding:6px 0;font-weight:600;color:#ff4d4f">{{order_currency}} {{order_amount}}</td></tr>
+<tr><td style="padding:6px 0;color:#8c8c8c;vertical-align:top">Payment Date</td><td style="padding:6px 0;color:#111">{{paid_at}}</td></tr>
+<tr><td style="padding:6px 0;color:#8c8c8c;vertical-align:top">Payment Method</td><td style="padding:6px 0;color:#111">{{payment_method}}{{#card_last4}} (ending in <strong style="color:#111">{{card_last4}}</strong>){{/card_last4}}</td></tr>
+</table>
+{{#has_items}}
+<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="border-collapse:collapse;width:100%"><tr><td style="padding:12px 0 0;border-top:1px solid #eaedf1;height:0;line-height:0"></td></tr></table>
+<div style="font-size:13px;color:#8c8c8c;text-transform:uppercase;letter-spacing:0.5px;margin-top:12px;margin-bottom:8px;font-weight:600">Purchased Items</div>
+{{#items}}
+<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="border-collapse:collapse;width:100%;margin-bottom:6px">
+<tr>
+{{#image_url}}<td width="72" style="width:72px;padding:0 12px 0 0;vertical-align:top"><img src="{{{image_url}}}" width="64" height="64" style="width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid #e8e8e8;display:block" alt=""></td>{{/image_url}}
+<td style="vertical-align:middle;font-size:13px;line-height:1.5">
+<div style="color:#262626;font-weight:500;margin-bottom:2px">{{product_title}}</div>
+<div style="color:#8c8c8c;font-size:12px">Qty: {{quantity}}</div>
+</td>
+</tr>
+</table>
+{{/items}}
+{{/has_items}}
+</td></tr></table></td></tr>
+<tr><td style="font-size:14px;color:#555;padding-bottom:16px">If the merchant has not properly resolved your issue, please click the <strong style="color:#1890ff">Contact Support</strong> button below to explain your situation in detail. We will actively assist you in communicating with the merchant and work to resolve the matter promptly, safeguarding your legitimate rights and interests.</td></tr>
+<tr><td style="font-size:14px;color:#555;padding-bottom:28px">If you believe a seller has engaged in improper business practices such as fraud, refusal to honor after-sales obligations, or false advertising, you may also click the <strong style="color:#ff4d4f">Complain About Merchant</strong> button below to file a complaint with us. We will immediately launch an investigation and, based on the findings, take appropriate action against the seller in accordance with laws and regulations.</td></tr>
+<tr><td style="padding-bottom:36px">
+<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="background-color:#f4f7f9;border-radius:8px;border-left:4px solid #1890ff;border-collapse:collapse;width:100%">
+<tr><td style="padding:24px">
+<p style="margin-top:0;margin-bottom:20px;font-size:15px;color:#111"><strong>Please choose an action below based on your current situation:</strong></p>
+<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation" style="border-collapse:collapse;width:100%">
+<tr>
+<td width="170" style="padding-right:12px;padding-bottom:12px;vertical-align:middle;width:170px"><a href="{{client_link}}" style="display:inline-block;background-color:#1890ff;color:#fff;text-decoration:none;padding:11px 24px;border-radius:6px;font-weight:600;font-size:14px;box-shadow:0 2px 4px rgba(24,144,255,0.15);white-space:nowrap">Contact Support</a></td>
+<td style="padding-bottom:12px;vertical-align:middle"><a href="{{complaint_link}}" style="display:inline-block;background-color:#ff4d4f;color:#fff;text-decoration:none;padding:11px 24px;border-radius:6px;font-weight:600;font-size:14px;box-shadow:0 2px 4px rgba(255,77,79,0.15);white-space:nowrap">Complain About Merchant</a></td>
+</tr></table>
+</td></tr></table></td></tr>
+<tr><td style="color:#999;font-size:12px;border-top:1px solid #eee;padding-top:16px;line-height:1.6">This is an automated message. Please do not reply directly to this email as this inbox is unmonitored. If you need further assistance or wish to manage your support tickets, please <a href="{{client_link}}" style="color:#1890ff;text-decoration:underline">click here to contact our support center</a>.</td></tr>
+</table></td></tr></table>
+</body></html>')
+    ON CONFLICT (email_type) DO UPDATE SET
+      subject_template = EXCLUDED.subject_template,
+      body_template = EXCLUDED.body_template,
+      updated_at = now()
   `);
 
   // 邮件模板预设（可切换的多套模板）
@@ -321,6 +415,8 @@ export async function ensureTables(): Promise<void> {
   await p.query(`UPDATE support_ticket_messages SET attachments = '[]'::jsonb WHERE attachments IS NULL`);
 
   // 手动发起新工单邀请功能：移除 support_tickets 唯一约束（允许同一订单多个工单）
+  // 约束名可能是完整版（email）或截断版（em），两者都要尝试删除
+  await p.query(`ALTER TABLE support_tickets DROP CONSTRAINT IF EXISTS support_tickets_store_subdomain_order_id_customer_email_key`);
   await p.query(`ALTER TABLE support_tickets DROP CONSTRAINT IF EXISTS support_tickets_store_subdomain_order_id_customer_em_key`);
 
   // 手动发起新工单邀请功能：support_access_tokens 增加 force_new_ticket 标记
