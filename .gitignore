@@ -8,6 +8,8 @@ support-system/nginx/ssl/
 
 # 用户上传文件（图片附件等，含敏感信息）
 support-system/uploads/
+# 邮件商品缩略图缓存（运行时下载生成）
+support-system/thumbnails/
 
 # 依赖与构建产物
 node_modules/
