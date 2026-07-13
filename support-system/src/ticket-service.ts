@@ -31,6 +31,23 @@ export const VALID_ISSUE_TYPES = [
   'Intellectual Property Violation',
 ] as const;
 
+/** 投诉商家的问题类型列表 */
+const COMPLAINT_ISSUE_TYPES: readonly string[] = [
+  'Fraud',
+  'Unauthorized Transaction',
+  'Counterfeit / Fake Products',
+  'Misleading or False Advertising',
+  'Refusal to Honor Refund / Return Policy',
+  'Privacy or Data Misuse',
+  'Unsafe or Harmful Products',
+  'Discrimination or Unfair Treatment',
+  'Intellectual Property Violation',
+];
+
+function isComplaintIssueType(issueType: string | null | undefined): boolean {
+  return !!issueType && COMPLAINT_ISSUE_TYPES.includes(issueType);
+}
+
 async function nextSequence(): Promise<number> {
   const r = await query(`SELECT nextval('support_tickets_id_seq') AS n`);
   return Number(r.rows[0].n);
@@ -104,13 +121,17 @@ export async function createTicket(params: {
 
   const ticketNo = result.rows[0].public_ticket_no;
 
-  // System message first, then customer message
+  // System message first, then customer message (投诉工单用投诉专用文案)
   const now = new Date().toISOString();
+  const isComplaint = isComplaintIssueType(sanitizedIssueType);
+  const createMsg = isComplaint
+    ? `Customer filed a formal complaint at ${now}`
+    : `Customer opened a support ticket at ${now}`;
   await query(
     `INSERT INTO support_ticket_messages
       (public_ticket_no, sender_type, content)
      VALUES ($1, 'system', $2)`,
-    [ticketNo, `Consumer initiates a dispute at ${now}`],
+    [ticketNo, createMsg],
   );
 
   await query(
@@ -225,14 +246,22 @@ export async function closeTicket(params: {
     [params.publicTicketNo, params.closedBy],
   );
 
-  // Insert system message with Eastern Time
+  // Insert system message with Eastern Time（投诉工单用投诉专用文案）
   const etNow = formatEasternTime(new Date());
   const actor = params.closedBy === 'customer' ? 'Customer' : 'Platform';
+  const ticketR = await query(
+    `SELECT issue_type FROM support_tickets WHERE public_ticket_no = $1`,
+    [params.publicTicketNo],
+  );
+  const isComplaint = isComplaintIssueType(ticketR.rows[0]?.issue_type);
+  const verb = isComplaint
+    ? (params.closedBy === 'customer' ? 'withdrew the complaint' : 'closed the complaint')
+    : 'closed the ticket';
   await query(
     `INSERT INTO support_ticket_messages
       (public_ticket_no, sender_type, content)
      VALUES ($1, 'system', $2)`,
-    [params.publicTicketNo, `${actor} closed the dispute at ${etNow}`],
+    [params.publicTicketNo, `${actor} ${verb} at ${etNow}`],
   );
 }
 
@@ -397,7 +426,7 @@ export async function requestArbitration(publicTicketNo: string): Promise<void> 
     `INSERT INTO support_ticket_messages
       (public_ticket_no, sender_type, content)
      VALUES ($1, 'platform', $2)`,
-    [publicTicketNo, "I'll do the arbitration process, and I'll get the result later."],
+    [publicTicketNo, "We will proceed with the arbitration process. We will coordinate with the merchant to facilitate communication and ensure you receive a prompt response."],
   );
 
   await query(
@@ -422,29 +451,39 @@ export async function updateTicketStatus(publicTicketNo: string, status: string)
     values,
   );
 
-  // Insert system message when ticket is closed
+  // Insert system message when ticket is closed（投诉工单用投诉专用文案）
   if (status === 'closed') {
     const etNow = formatEasternTime(new Date());
+    const ticketR = await query(
+      `SELECT issue_type FROM support_tickets WHERE public_ticket_no = $1`,
+      [publicTicketNo],
+    );
+    const isComplaint = isComplaintIssueType(ticketR.rows[0]?.issue_type);
+    const msg = isComplaint
+      ? `Platform closed the complaint at ${etNow}`
+      : `Platform closed the ticket at ${etNow}`;
     await query(
       `INSERT INTO support_ticket_messages
         (public_ticket_no, sender_type, content)
        VALUES ($1, 'system', $2)`,
-      [publicTicketNo, `Platform closed the dispute at ${etNow}`],
+      [publicTicketNo, msg],
     );
   }
 }
 
 /** Reopen a closed ticket. reopenedBy: 'agent' | 'customer' */
 export async function reopenTicket(publicTicketNo: string, reopenedBy: 'agent' | 'customer' = 'agent') {
+  // 查询工单信息（含 issue_type 以区分投诉工单文案）
+  const ticket = await query(
+    `SELECT status, reopen_count, issue_type FROM support_tickets WHERE public_ticket_no = $1`,
+    [publicTicketNo],
+  );
+  if (!ticket.rows[0]) throw new Error('Ticket not found');
+
   // 顾客最多重开一次
   if (reopenedBy === 'customer') {
-    const ticket = await query(
-      `SELECT status, reopen_count FROM support_tickets WHERE public_ticket_no = $1`,
-      [publicTicketNo],
-    );
-    if (!ticket.rows[0]) throw new Error('Ticket not found');
-    if (ticket.rows[0].status !== 'closed') throw new Error('Only closed disputes can be reopened');
-    if (ticket.rows[0].reopen_count >= 1) throw new Error('This dispute has already been reopened once');
+    if (ticket.rows[0].status !== 'closed') throw new Error('Only closed tickets can be reopened');
+    if (ticket.rows[0].reopen_count >= 1) throw new Error('This ticket has already been reopened once');
   }
 
   await query(
@@ -455,12 +494,15 @@ export async function reopenTicket(publicTicketNo: string, reopenedBy: 'agent' |
     [publicTicketNo],
   );
 
+  // 系统消息（投诉工单用投诉专用文案）
   const etNow = formatEasternTime(new Date());
   const actor = reopenedBy === 'customer' ? 'Customer' : 'Platform';
+  const isComplaint = isComplaintIssueType(ticket.rows[0]?.issue_type);
+  const verb = isComplaint ? 'reopened the complaint' : 'reopened the ticket';
   await query(
     `INSERT INTO support_ticket_messages
       (public_ticket_no, sender_type, content)
      VALUES ($1, 'system', $2)`,
-    [publicTicketNo, `${actor} reopened the dispute at ${etNow}`],
+    [publicTicketNo, `${actor} ${verb} at ${etNow}`],
   );
 }

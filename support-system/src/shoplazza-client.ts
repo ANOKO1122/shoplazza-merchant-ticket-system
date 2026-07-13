@@ -139,22 +139,42 @@ export async function getOrderTransactions(store: ShoplazzaStoreConfig, orderId:
   try {
     const res = await shoplazzaFetch(url, store);
     const text = await res.text();
-    if (!res.ok) return [];
+    if (!res.ok) {
+      console.warn(`[shoplazza-client] getOrderTransactions HTTP ${res.status}: ${text.slice(0, 300)}`);
+      return [];
+    }
     const json = JSON.parse(text);
     let arr: any[] = [];
+
+    // 兼容多种 API 响应格式：
+    // 1. 直接返回数组
+    // 2. { transactions: [...] }
+    // 3. { data: { transactions: [...] } }
+    // 4. { data: [...] }  （常见于新版 API）
+    // 5. { data: { transaction: {...} } } 单条
     if (Array.isArray(json)) {
       arr = json;
     } else if (Array.isArray(json.transactions)) {
       arr = json.transactions;
+    } else if (json.data && Array.isArray(json.data)) {
+      arr = json.data;
     } else if (json.data && Array.isArray(json.data.transactions)) {
       arr = json.data.transactions;
     } else if (json.data && typeof json.data === 'object' && !Array.isArray(json.data)) {
       const d = json.data;
       if (Array.isArray(d.transactions)) arr = d.transactions;
-      else if (Array.isArray(d)) arr = d;
+      else if (d.transaction) arr = [d.transaction];
+    } else if (json.transaction) {
+      arr = [json.transaction];
     }
-    return arr.filter((t: any) => t && typeof t === 'object');
-  } catch {
+
+    const result = arr.filter((t: any) => t && typeof t === 'object');
+    if (result.length === 0) {
+      console.warn(`[shoplazza-client] getOrderTransactions parsed 0 items, raw response keys: ${Object.keys(json).join(', ')}, has data: ${!!json.data}, data type: ${json.data ? (Array.isArray(json.data) ? 'array' : typeof json.data) : 'N/A'}`);
+    }
+    return result;
+  } catch (e: any) {
+    console.warn(`[shoplazza-client] getOrderTransactions error for ${id}: ${e.message}`);
     return [];
   }
 }

@@ -136,7 +136,9 @@ export function createShoplazzaWebhookRouter(): express.Router {
 
             // 只对店匠官方支付查 transactions（拿卡号后四位），第三方支付跳过以节省 API 配额
             const paymentChannel = String(
-              (detail.payment_line as any)?.payment_channel || ''
+              (detail.payment_line as any)?.payment_channel
+              || (Array.isArray(detail.payment_lines) && detail.payment_lines[0] ? (detail.payment_lines[0] as any)?.payment_channel : '')
+              || ''
             ).toLowerCase();
             let transactions: ShoplazzaTransaction[] = [];
             const txApiStart = Date.now();
@@ -185,12 +187,12 @@ export function createShoplazzaWebhookRouter(): express.Router {
                  refund_status = EXCLUDED.refund_status,
                  refund_amount = EXCLUDED.refund_amount,
                  transaction_id_masked = EXCLUDED.transaction_id_masked,
-                 card_last4 = EXCLUDED.card_last4,
+                 card_last4 = CASE WHEN EXCLUDED.card_last4 <> '' THEN EXCLUDED.card_last4 ELSE support_order_snapshots.card_last4 END,
                  items_json = EXCLUDED.items_json,
                  shipping_address_json = EXCLUDED.shipping_address_json,
                  billing_address_json = EXCLUDED.billing_address_json,
                  logistics_json = EXCLUDED.logistics_json,
-                 payment_detail_json = EXCLUDED.payment_detail_json,
+                 payment_detail_json = CASE WHEN EXCLUDED.payment_detail_json::text <> '{}'::text THEN EXCLUDED.payment_detail_json ELSE support_order_snapshots.payment_detail_json END,
                  raw_order_json = EXCLUDED.raw_order_json,
                  last_webhook_topic = EXCLUDED.last_webhook_topic,
                  last_webhook_received_at = EXCLUDED.last_webhook_received_at,

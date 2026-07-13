@@ -159,18 +159,27 @@ async function backfillOneStore(
       const orderNumber = String(order.number || order.order_number || '').trim();
       if (!orderId) continue;
 
-      // 判断是否需要查卡号（已存在快照则跳过，节省 API 次数）
+      // 判断是否需要查卡号
+      // 策略：快照不存在 → 查；快照存在但 card_last4 为空且是店匠自有支付 → 补查
       const existingSnapshot = await query(
         `SELECT card_last4 FROM support_order_snapshots WHERE store_subdomain=$1 AND order_id=$2 AND customer_email=$3`,
         [store.subdomain, orderId, String((order as any)?.customer?.email || (order as any)?.shipping_address?.email || (order as any)?.billing_address?.email || '').trim().toLowerCase()]
       ).catch(() => ({ rows: [] }));
       
       const paymentChannel = String(
-        (order.payment_line as any)?.payment_channel || ''
+        (order.payment_line as any)?.payment_channel
+        || (Array.isArray(order.payment_lines) && order.payment_lines[0] ? (order.payment_lines[0] as any)?.payment_channel : '')
+        || ''
       ).toLowerCase();
 
+      const isShoplazzaPayment = CARD_LOOKUP_CHANNELS.some(ch => paymentChannel.includes(ch));
+      const existingCardLast4 = existingSnapshot.rows[0]?.card_last4 || '';
+      const needCardLookup = isShoplazzaPayment && (
+        existingSnapshot.rows.length === 0 || !existingCardLast4
+      );
+
       let cardTransactions: any[] = [];
-      if (existingSnapshot.rows.length === 0 && CARD_LOOKUP_CHANNELS.some(ch => paymentChannel.includes(ch))) {
+      if (needCardLookup) {
         cardLookups++;
         cardTransactions = await getOrderTransactions(storeConfig, orderId);
       }
@@ -207,12 +216,12 @@ async function backfillOneStore(
            refund_status = EXCLUDED.refund_status,
            refund_amount = EXCLUDED.refund_amount,
            transaction_id_masked = EXCLUDED.transaction_id_masked,
-           card_last4 = EXCLUDED.card_last4,
+           card_last4 = CASE WHEN EXCLUDED.card_last4 <> '' THEN EXCLUDED.card_last4 ELSE support_order_snapshots.card_last4 END,
            items_json = EXCLUDED.items_json,
            shipping_address_json = EXCLUDED.shipping_address_json,
            billing_address_json = EXCLUDED.billing_address_json,
            logistics_json = EXCLUDED.logistics_json,
-           payment_detail_json = EXCLUDED.payment_detail_json,
+           payment_detail_json = CASE WHEN EXCLUDED.payment_detail_json::text <> '{}'::text THEN EXCLUDED.payment_detail_json ELSE support_order_snapshots.payment_detail_json END,
            raw_order_json = EXCLUDED.raw_order_json,
            snapshot_source = 'backfill_sync',
            updated_at = now()

@@ -98,6 +98,7 @@
     background: #fff;
     transition: border-color .2s, box-shadow .2s;
     -webkit-appearance: none;
+    appearance: none;
   }
   .form-control:disabled { background: #f5f5f5; color: #8c8c8c; cursor: not-allowed; }
   .form-control:focus {
@@ -284,6 +285,24 @@
   .product-item-info .pname { color: #262626; font-weight: 500; word-break: break-word; }
   .product-item-info .pqty { color: #8c8c8c; font-size: 12px; }
 
+  /* 投诉工单顶部提示横幅 */
+  .complaint-banner {
+    background: linear-gradient(135deg, #fff2f0 0%, #ffebee 100%);
+    border: 1px solid #ffa39e;
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 16px;
+    font-size: 14px;
+    color: #cf1322;
+    line-height: 1.6;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .complaint-banner .banner-icon { font-size: 20px; flex-shrink: 0; line-height: 1.4; }
+  .complaint-banner .banner-text { flex: 1; }
+  .complaint-banner .banner-text strong { display: block; margin-bottom: 2px; }
+
   @media (max-width: 768px) {
     .container { padding: 12px; }
     .card { padding: 18px; }
@@ -295,7 +314,6 @@
     .info-row { gap: 8px; }
     .ticket-header h2 { font-size: 16px; }
     .product-item-img { width: 52px; height: 52px; }
-  }
     .reply-box { font-size: 16px; }
   }
 </style>
@@ -318,6 +336,7 @@ var accessToken = '';
 var currentTicketNo = '';
 var remainingMessages = 5;
 var isComplaintMode = new URLSearchParams(location.search).get('mode') === 'complaint';
+var isComplaintTicket = false; // 由 renderTicketDetail 根据 issue_type 设置
 
 // 联系支持 — 常规售后问题
 var supportTypes = ['Products Discrepancies', 'Product Not Received', 'Defective Merchandise', 'Incorrect Transaction', 'Wrong Address', 'Credit Not Processed', 'Other / General Inquiry'];
@@ -414,7 +433,7 @@ function renderNewTicket(order) {
       '<div><span>Order: </span><strong>' + (order.order_number || '-') + '</strong></div>' +
       '<div><span>Amount: </span><strong style="color:#ff4d4f">' + amountDisplay + '</strong></div>' +
       '<div><span>Date: </span>' + dateDisplay + '</div>' +
-      (paymentMethod ? '<div><span>Payment: </span>' + paymentMethod + (card ? ' (ending in ' + card + ')' : '') + '</div>' : '') +
+      (card || paymentMethod ? '<div><span>Payment: </span>' + (paymentMethod || 'Credit Card') + (card ? ' (ending in ' + card + ')' : '') + '</div>' : '') +
       '</div>' +
       (productRows ? '<div class="product-list-compact">' + productRows + '</div>' : '') +
       '</div>' +
@@ -481,6 +500,10 @@ function renderTicketDetail(data) {
   }
   remainingMessages = data.remainingMessages !== undefined ? data.remainingMessages : 5;
 
+  // 根据 issue_type 判断是否为投诉工单（同时更新全局变量供其他函数使用）
+  var ticketIssueType = t.issue_type || '';
+  isComplaintTicket = complaintTypes.indexOf(ticketIssueType) !== -1;
+
   var items = Array.isArray(order.items) ? order.items.map(function(it) {
     return '<div style="font-size:13px;line-height:1.6"><span style="color:#262626">' + (it.product_title || it.title || it.name || '') + '</span> <span style="color:#8c8c8c">x' + (it.quantity || 1) + '</span></div>';
   }).join('') : '';
@@ -501,8 +524,8 @@ function renderTicketDetail(data) {
       '</div>';
   });
 
-  var statusColor = t.status === 'closed' ? 'var(--text-muted)' : 'var(--warning)';
-  var statusText = t.status === 'closed' ? 'Closed' : (t.arbitration_requested ? 'In Arbitration' : 'In Coordination');
+  var statusColor = t.status === 'closed' ? 'var(--text-muted)' : (isComplaintTicket ? 'var(--danger)' : 'var(--warning)');
+  var statusText = t.status === 'closed' ? 'Closed' : (t.arbitration_requested ? 'In Arbitration' : (isComplaintTicket ? 'Under Investigation' : 'In Coordination'));
   var replyBlock = t.status === 'closed' ? '' :
     '<div class="reply-area">' +
     '<div id="remainingHint" style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Remaining messages: <strong>' + remainingMessages + '</strong></div>' +
@@ -519,12 +542,13 @@ function renderTicketDetail(data) {
 
   var actionButtons = '';
   if (t.status !== 'closed') {
-    actionButtons += '<button class="btn btn-success" onclick="closeTicket()">Close Dispute</button>';
-    if (!t.arbitration_requested) {
+    actionButtons += '<button class="btn btn-success" onclick="closeTicket()">' + (isComplaintTicket ? 'Withdraw Complaint' : 'Close Ticket') + '</button>';
+    // 投诉工单不显示仲裁按钮（投诉本身已是对商家的正式申诉）
+    if (!t.arbitration_requested && !isComplaintTicket) {
       actionButtons += '<button class="btn btn-primary" id="arbitrationBtn" onclick="requestArbitration()">Apply For Arbitration</button>';
     }
   } else if ((t.reopen_count || 0) < 1) {
-    actionButtons += '<button class="btn btn-primary" onclick="reopenTicket()">Reopen Dispute</button>';
+    actionButtons += '<button class="btn btn-primary" onclick="reopenTicket()">' + (isComplaintTicket ? 'Reopen Complaint' : 'Reopen Ticket') + '</button>';
   }
 
   $('#app').innerHTML =
@@ -537,7 +561,7 @@ function renderTicketDetail(data) {
     '<span class="status-dot" style="background:' + statusColor + '"></span>' +
     '<span>' + statusText + '</span></div>' +
     '<div class="status-meta">' +
-    '<div>Dispute ID: ' + t.public_ticket_no + '</div>' +
+    '<div>' + (isComplaintTicket ? 'Dispute ID' : 'Ticket ID') + ': ' + t.public_ticket_no + '</div>' +
     '<div>Initiation Time: ' + formatDate(t.created_at) + '</div>' +
     '</div></div>' +
     '<div class="info-list">' +
@@ -551,7 +575,8 @@ function renderTicketDetail(data) {
     (actionButtons ? '<div class="btn-group" style="margin-top:24px">' + actionButtons + '</div>' : '') +
     '</div></aside>' +
     '<section class="ticket-body">' +
-    '<div class="ticket-header"><h2>Dispute Processing Record</h2><span class="ticket-id">#' + t.public_ticket_no + '</span></div>' +
+    (isComplaintTicket ? '<div class="complaint-banner"><div class="banner-text"><strong>Formal Complaint in Progress</strong>This is a formal complaint against the merchant. The platform mediation team is handling your case. Please provide truthful and detailed information only.</div></div>' : '') +
+    '<div class="ticket-header"><h2>' + (isComplaintTicket ? 'Complaint Processing Record' : 'Support Ticket Record') + '</h2><span class="ticket-id">#' + t.public_ticket_no + '</span></div>' +
     '<div class="timeline">' + timelineHtml + '</div>' +
     replyBlock +
     '</section>' +
@@ -694,7 +719,7 @@ async function sendReply() {
 }
 
 async function closeTicket() {
-  if (!confirm('Are you sure you want to close this dispute?')) return;
+  if (!confirm(isComplaintTicket ? 'Are you sure you want to withdraw this complaint?' : 'Are you sure you want to close this ticket?')) return;
   var result = await (await fetch(API + '/tickets/' + getTicketNo() + '/close', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -724,7 +749,7 @@ async function requestArbitration() {
 }
 
 async function reopenTicket() {
-  if (!confirm('Are you sure you want to reopen this dispute? You can only reopen once.')) return;
+  if (!confirm(isComplaintTicket ? 'Are you sure you want to reopen this complaint? You can only reopen once.' : 'Are you sure you want to reopen this ticket? You can only reopen once.')) return;
   try {
     var result = await (await fetch(API + '/tickets/' + getTicketNo() + '/reopen', {
       method: 'POST',

@@ -836,23 +836,31 @@ export function createAdminRouter(): express.Router {
     }
   });
 
-  // PUT /api/admin/stores/:id  (only allows updating store_name)
+  // PUT /api/admin/stores/:id  (update store config: subdomain, store_name, access_token)
   router.put('/stores/:id', async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const { store_name } = req.body || {};
-      const store = await updateStore(id, { store_name });
+      const { subdomain, store_name, access_token } = req.body || {};
+      const updates: { subdomain?: string; store_name?: string; access_token?: string } = {};
+      if (subdomain !== undefined && subdomain !== '') updates.subdomain = subdomain;
+      if (store_name !== undefined) updates.store_name = store_name;
+      if (access_token !== undefined && access_token !== '') updates.access_token = access_token;
+      const store = await updateStore(id, updates);
       if (!store) {
         res.status(404).json({ ok: false, error: '店铺不存在' });
         return;
       }
+      const changed: string[] = [];
+      if (updates.subdomain) changed.push('域名');
+      if (updates.store_name !== undefined) changed.push('名称');
+      if (updates.access_token) changed.push('Token');
       await logOperation({
         category: 'store',
         action: 'store_update',
         actor: (req as any).agent?.name || 'unknown',
         storeSubdomain: store.subdomain,
         target: store.store_name || store.subdomain,
-        summary: `修改店铺名称: ${store.subdomain} → ${store.store_name || '(空)'}`,
+        summary: `修改店铺${changed.join('、')}: ${store.subdomain}`,
         status: 'success',
       });
       res.json({ ok: true, store: { id: store.id, subdomain: store.subdomain, store_name: store.store_name, enabled: store.enabled } });
