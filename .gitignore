@@ -37,3 +37,7 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+# Certbot runtime state and ACME challenge files
+support-system/nginx/letsencrypt/
+support-system/nginx/acme-challenge/*
+!support-system/nginx/acme-challenge/.gitkeep
