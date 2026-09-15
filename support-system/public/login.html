@@ -24,17 +24,37 @@
 </div>
 <script>
 var API = '/api/admin';
+var ADMIN_HOME = '/thinkpro-admin';
 function $(s){ return document.querySelector(s); }
+
+// 只允许跳回后台已知地址：
+// 1) 防开放重定向 / javascript: 注入（redirect 参数可被伪造）
+// 2) 清理从聊天工具、Markdown 表格、文档里复制链接带进来的尾部杂字符（如 | ），
+//    否则 location.replace() 会跳到不存在的路径，被服务端兜底 404 拦成 "Not Found"
+function safeRedirect(){
+  var raw = new URLSearchParams(location.search).get('redirect') || '';
+  try { raw = decodeURIComponent(raw); } catch(e) {}
+  var p = String(raw).split('#')[0].split('?')[0].trim()
+            .replace(/\\/g, '/').replace(/\/{2,}/g, '/');
+  p = p.replace(/[\s|"'`<>“”‘’]+$/g, '').replace(/\/+$/g, '');
+  if (p.indexOf('/') !== 0 || p.indexOf('//') === 0) return ADMIN_HOME;
+  if (/[\s\\|"'`<>]/.test(p)) return ADMIN_HOME;
+  if (!/^\/thinkpro-admin(\/[A-Za-z0-9._-]+)*$/.test(p)) return ADMIN_HOME;
+  return p;
+}
+
+function showErr(msg){
+  var e = $('#loginErr');
+  e.textContent = msg;
+  e.style.display = 'block';
+}
 
 // 检查是否已登录 — 若已登录直接跳回目标页
 (async function(){
   try {
     var r = await fetch(API + '/me', { credentials: 'same-origin' });
     var d = await r.json();
-    if (d.ok) {
-      var redir = new URLSearchParams(location.search).get('redirect') || '/thinkpro-admin';
-      location.replace(redir);
-    }
+    if (d.ok) location.replace(safeRedirect());
   } catch(e) {}
 })();
 
@@ -54,17 +74,25 @@ async function doLogin() {
     });
     var d = await r.json();
     if (d.ok) {
-      var redir = new URLSearchParams(location.search).get('redirect') || '/thinkpro-admin';
-      location.replace(redir);
-    } else {
-      var e = $('#loginErr');
-      e.textContent = d.error || '登录失败';
-      e.style.display = 'block';
+      // 会话可能没落地（浏览器禁用 Cookie / 隐私模式拦截），先确认再跳，
+      // 否则会出现“登录页 ↔ 后台”来回跳、看起来像跳到坏页面
+      var sessionOk = null;
+      try {
+        var r2 = await fetch(API + '/me', { credentials: 'same-origin' });
+        var d2 = await r2.json();
+        sessionOk = !!d2.ok;
+      } catch(e) { sessionOk = null; }
+      if (sessionOk === false) {
+        showErr('登录成功，但浏览器未保存登录状态，请检查是否禁用了 Cookie 或处于隐私模式');
+        btn.disabled = false; btn.textContent = '登录';
+        return;
+      }
+      location.replace(safeRedirect());
+      return;
     }
+    showErr(d.error || '登录失败');
   } catch(e) {
-    var e = $('#loginErr');
-    e.textContent = '网络错误，请检查连接';
-    e.style.display = 'block';
+    showErr('网络错误，请检查连接');
   }
   btn.disabled = false; btn.textContent = '登录';
 }

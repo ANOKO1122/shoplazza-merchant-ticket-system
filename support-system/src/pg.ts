@@ -419,9 +419,6 @@ export async function ensureTables(): Promise<void> {
   await p.query(`ALTER TABLE support_tickets DROP CONSTRAINT IF EXISTS support_tickets_store_subdomain_order_id_customer_email_key`);
   await p.query(`ALTER TABLE support_tickets DROP CONSTRAINT IF EXISTS support_tickets_store_subdomain_order_id_customer_em_key`);
 
-  // 手动发起新工单邀请功能：support_access_tokens 增加 force_new_ticket 标记
-  await p.query(`ALTER TABLE support_access_tokens ADD COLUMN IF NOT EXISTS force_new_ticket BOOLEAN NOT NULL DEFAULT false`);
-
   // 顾客重开工单功能：support_tickets 增加 reopen_count 列
   await p.query(`ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS reopen_count INTEGER NOT NULL DEFAULT 0`);
 
@@ -473,6 +470,10 @@ export async function ensureTables(): Promise<void> {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_access_tokens_hash ON support_access_tokens(token_hash)`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_access_tokens_ticket ON support_access_tokens(public_ticket_no)`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_access_tokens_order ON support_access_tokens(store_subdomain, order_id)`);
+
+  // 手动发起新工单邀请功能：support_access_tokens 增加 force_new_ticket 标记
+  // 注意：必须放在上面的 CREATE TABLE 之后，否则全新数据库初始化时会报 relation does not exist
+  await p.query(`ALTER TABLE support_access_tokens ADD COLUMN IF NOT EXISTS force_new_ticket BOOLEAN NOT NULL DEFAULT false`);
 
   await p.query(`
     CREATE TABLE IF NOT EXISTS support_stores (

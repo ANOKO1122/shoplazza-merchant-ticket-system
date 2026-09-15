@@ -1,7 +1,7 @@
 import express from 'express';
 import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
-import { loginAgent, createSession, destroySession, verifySession, changeAgentPassword } from './auth';
+import { SESSION_COOKIE_NAME, getRequestAgent, parseSessionCookie, loginAgent, createSession, destroySession, changeAgentPassword } from './auth';
 import { listTickets, getTicketByPublicNo, getTicketMessages, getOrderSnapshot, addAgentMessage, updateTicketStatus, reopenTicket } from './ticket-service';
 import { listStores, createStore, updateStore, deleteStore, getStoreBySubdomain, decryptToken } from './store-service';
 import { query } from './pg';
@@ -17,24 +17,10 @@ import { uploadAttachments, processAttachments, getStorageProvider } from './sto
 export function createAdminRouter(): express.Router {
   const router = express.Router();
 
-  const COOKIE_NAME = 'support_session';
+  const COOKIE_NAME = SESSION_COOKIE_NAME;
 
-  function parseCookies(req: express.Request): Record<string, string> {
-    const header = req.headers.cookie;
-    if (!header) return {};
-    const map: Record<string, string> = {};
-    header.split(';').forEach(pair => {
-      const [k, ...rest] = pair.trim().split('=');
-      if (k && rest.length) map[k] = rest.join('=');
-    });
-    return map;
-  }
-
-  async function getAgent(req: express.Request) {
-    const raw = parseCookies(req)[COOKIE_NAME];
-    if (!raw) return null;
-    return verifySession(raw);
-  }
+  // 会话解析统一由 auth.ts 提供（与 /thinkpro-admin 页面级鉴权共用同一套规则）
+  const getAgent = (req: express.Request) => getRequestAgent(req);
 
   // POST /api/admin/login
   const loginLimiter = rateLimit({
@@ -73,7 +59,7 @@ export function createAdminRouter(): express.Router {
 
   // POST /api/admin/logout
   router.post('/logout', async (req, res) => {
-    const raw = parseCookies(req)[COOKIE_NAME];
+    const raw = parseSessionCookie(req);
     if (raw) {
       const tokenHash = crypto.createHash('sha256').update(raw).digest('hex');
       await destroySession(tokenHash);
@@ -109,7 +95,7 @@ export function createAdminRouter(): express.Router {
         res.status(400).json({ ok: false, error: '新密码至少 6 位' });
         return;
       }
-      const ok = await changeAgentPassword(agent.agentId, String(old_password), String(new_password));
+      const ok = await changeAgentPassword(agent.agentId, String(old_password), String(new_password), parseSessionCookie(req));
       if (!ok) {
         res.status(401).json({ ok: false, error: '旧密码错误' });
         return;
