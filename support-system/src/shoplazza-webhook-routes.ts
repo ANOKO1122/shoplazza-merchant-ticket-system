@@ -1,13 +1,33 @@
 import express from 'express';
 import { loadStoresConfig, buildStoreDomain } from './config';
 import { query } from './pg';
-import { getOrderByNumber, getOrderDetail, getOrderTransactions, ShoplazzaTransaction } from './shoplazza-client';
+import { getOrderByNumber, getOrderDetail, getOrderTransactions, ShoplazzaOrderDetail, ShoplazzaTransaction } from './shoplazza-client';
 import { normalizeOrder } from './normalize-order';
 import { createPaidSupportInviteEmailJob, extractStoreCustomDomain } from './email-service';
 import { logSync } from './log-service';
 
 /** 需要查卡号后四位的支付渠道（店匠自有支付），第三方支付（PayPal等）跳过交易查询 */
 const CARD_LOOKUP_CHANNELS = ['shoplazzapayment'];
+
+function extractPaymentChannel(order: any): string {
+  return String(
+    order?.payment_line?.payment_channel
+    || (Array.isArray(order?.payment_lines) && order.payment_lines[0]?.payment_channel)
+    || ''
+  ).trim();
+}
+
+/** 推送正文已含快照所需字段时，可直接替代订单详情接口。缺任一项则退回详情查询。 */
+function isCompletePaidOrder(order: any): boolean {
+  if (!order || typeof order !== 'object') return false;
+  const id = String(order.id || '').trim();
+  const email = String(
+    order.customer?.email || order.shipping_address?.email || order.billing_address?.email || ''
+  ).trim();
+  const financial = String(order.financial_status || '').trim().toLowerCase();
+  const hasItems = Array.isArray(order.line_items) && order.line_items.length > 0;
+  return Boolean(id && email && financial === 'paid' && extractPaymentChannel(order) && hasItems);
+}
 
 function buildEventKey(params: {
   topic: string;
@@ -112,22 +132,40 @@ export function createShoplazzaWebhookRouter(): express.Router {
         const orderTopics = ['orders/paid', 'orders/fulfilled', 'orders/updated'];
         if (orderTopics.includes(topic) && (orderId || orderNumber)) {
           try {
-            // API补全：查询订单详情
+            // 正文齐全则直接当订单详情；缺字段再打详情接口
             const detailApiStart = Date.now();
-            let detail = orderId ? await getOrderDetail(store, orderId) : null;
-            if (!detail && orderNumber) {
-              detail = await getOrderByNumber(store, orderNumber);
+            let detailSource: 'webhook_payload' | 'api' = 'api';
+            let detail: ShoplazzaOrderDetail | null = null;
+            if (isCompletePaidOrder(order)) {
+              detail = order as ShoplazzaOrderDetail;
+              detailSource = 'webhook_payload';
+              console.log(`[webhook] 使用推送正文，跳过订单详情: ${orderId || orderNumber}`);
+              await logSync({
+                source: 'webhook',
+                action: 'order_detail_from_payload',
+                storeSubdomain,
+                storeName: store.storeName,
+                targetId: orderId || orderNumber || '',
+                status: 'success',
+                durationMs: Date.now() - detailApiStart,
+                detailJson: { orderId, orderNumber, skippedApi: true },
+              });
+            } else {
+              detail = orderId ? await getOrderDetail(store, orderId) : null;
+              if (!detail && orderNumber) {
+                detail = await getOrderByNumber(store, orderNumber);
+              }
+              await logSync({
+                source: 'api',
+                action: 'order_detail_fetch',
+                storeSubdomain,
+                storeName: store.storeName,
+                targetId: orderId || orderNumber || '',
+                status: detail ? 'success' : 'failed',
+                durationMs: Date.now() - detailApiStart,
+                detailJson: { orderId, orderNumber, found: !!detail },
+              });
             }
-            await logSync({
-              source: 'api',
-              action: 'order_detail_fetch',
-              storeSubdomain,
-              storeName: store.storeName,
-              targetId: orderId || orderNumber || '',
-              status: detail ? 'success' : 'failed',
-              durationMs: Date.now() - detailApiStart,
-              detailJson: { orderId, orderNumber, found: !!detail },
-            });
             if (!detail) {
               console.warn(`[webhook] 订单详情查询失败: id=${orderId} number=${orderNumber}`);
               return;
@@ -135,11 +173,7 @@ export function createShoplazzaWebhookRouter(): express.Router {
             const actualOrderId = detail.id || orderId;
 
             // 只对店匠官方支付查 transactions（拿卡号后四位），第三方支付跳过以节省 API 配额
-            const paymentChannel = String(
-              (detail.payment_line as any)?.payment_channel
-              || (Array.isArray(detail.payment_lines) && detail.payment_lines[0] ? (detail.payment_lines[0] as any)?.payment_channel : '')
-              || ''
-            ).toLowerCase();
+            const paymentChannel = extractPaymentChannel(detail).toLowerCase();
             let transactions: ShoplazzaTransaction[] = [];
             const txApiStart = Date.now();
             if (CARD_LOOKUP_CHANNELS.some(ch => paymentChannel.includes(ch))) {
@@ -262,6 +296,7 @@ export function createShoplazzaWebhookRouter(): express.Router {
               status: 'success',
               detailJson: {
                 topic,
+                detailSource,
                 card_last4: normalized.cardLast4 || null,
               },
             });
