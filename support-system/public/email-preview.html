@@ -20,6 +20,7 @@
   .loading { padding: 60px; text-align: center; color: #8c8c8c; font-size: 14px; }
   .error { padding: 60px; text-align: center; color: #ff4d4f; font-size: 14px; }
 </style>
+<script src="/safe-render.js"></script>
 </head>
 <body>
 <div class="toolbar">
@@ -60,7 +61,7 @@ var API = '/api/admin';
     var r = await fetch(API + '/email-jobs/' + jobId + '/preview', { credentials: 'same-origin' });
     var d = await r.json();
     if (!d.ok) {
-      document.getElementById('emailBody').innerHTML = '<div class="error">' + (d.error || '加载失败') + '</div>';
+      document.getElementById('emailBody').innerHTML = '<div class="error">' + SupportSafe.escape(d.error || '加载失败') + '</div>';
       return;
     }
 
@@ -72,21 +73,17 @@ var API = '/api/admin';
     var iframe = document.createElement('iframe');
     iframe.style.width = '100%';
     iframe.style.minHeight = '400px';
+    iframe.style.height = '75vh';
+    iframe.setAttribute('sandbox', '');
     iframe.style.border = 'none';
     iframe.srcdoc = d.html;
 
     document.getElementById('emailBody').innerHTML = '';
     document.getElementById('emailBody').appendChild(iframe);
 
-    // 自动调整 iframe 高度
-    iframe.onload = function() {
-      try {
-        var h = iframe.contentDocument.body.scrollHeight;
-        if (h > 0) iframe.style.height = h + 'px';
-      } catch(e) {}
-    };
+    // Sandboxed email content keeps its own scroll area and cannot access the admin page.
   } catch(e) {
-    document.getElementById('emailBody').innerHTML = '<div class="error">加载失败: ' + e.message + '</div>';
+    document.getElementById('emailBody').innerHTML = '<div class="error">加载失败: ' + SupportSafe.escape(e.message) + '</div>';
   }
 })();
 </script>

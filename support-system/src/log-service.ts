@@ -2,8 +2,8 @@
  * 系统日志服务
  *
  * 两张表：
- *  - support_sync_logs    高频（数据同步），30 天自动清理
- *  - support_operation_logs  低频（管理员/系统操作），永久保留
+ *  - support_sync_logs       高频（数据同步），默认保留 60 天
+ *  - support_operation_logs  管理员/系统操作，默认保留 60 天
  */
 import { query } from './pg';
 
@@ -104,6 +104,7 @@ export async function logOperation(params: OperationLogParams): Promise<void> {
 
 export async function listSyncLogs(params: {
   source?: string;
+  action?: string;
   status?: string;
   storeSubdomain?: string;
   page: number;
@@ -117,6 +118,14 @@ export async function listSyncLogs(params: {
     conditions.push(`source = $${idx++}`);
     values.push(params.source);
   }
+  if (params.action === 'order_paid') {
+    conditions.push(`(action = 'order_paid' OR (action = 'order_upsert' AND COALESCE(detail_json->>'topic', '') = 'orders/paid'))`);
+  } else if (params.action === 'order_unpaid') {
+    conditions.push(`(action = 'order_unpaid' OR (action = 'order_upsert' AND COALESCE(detail_json->>'topic', '') = 'orders/create'))`);
+  } else if (params.action && params.action !== 'all') {
+    conditions.push(`action = $${idx++}`);
+    values.push(params.action);
+  }
   if (params.status && params.status !== 'all') {
     conditions.push(`status = $${idx++}`);
     values.push(params.status);
@@ -126,6 +135,7 @@ export async function listSyncLogs(params: {
     values.push(params.storeSubdomain);
   }
 
+  conditions.push(`NOT (source = 'backfill' AND action = 'order_unpaid')`);
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const countR = await query(`SELECT COUNT(*) FROM support_sync_logs ${where}`, values);
   const total = Number(countR.rows[0].count);
@@ -138,6 +148,46 @@ export async function listSyncLogs(params: {
     [...values, params.pageSize, offset],
   );
   return { total, logs: rows.rows };
+}
+
+export async function getUnpaidSummaryOrders(id: number): Promise<{ orders: Array<{ orderNumber: string; kind: string }>; legacy: boolean } | null> {
+  const r = await query(
+    `SELECT action, store_subdomain, created_at, duration_ms, detail_json
+     FROM support_sync_logs WHERE id = $1`,
+    [id],
+  );
+  const row = r.rows[0];
+  if (!row || row.action !== 'unpaid_summary') return null;
+  const embedded = row.detail_json && Array.isArray(row.detail_json.orders) ? row.detail_json.orders : null;
+  if (embedded) {
+    return {
+      legacy: false,
+      orders: embedded
+        .map((item: any) => ({ orderNumber: String(item.orderNumber || ''), kind: String(item.kind || '') }))
+        .filter((item: { orderNumber: string }) => item.orderNumber),
+    };
+  }
+  const duration = Math.max(0, Number(row.duration_ms) || 0);
+  const windowMs = duration + 15000;
+  const children = await query(
+    `SELECT target_id, items_new, items_updated, items_skipped
+     FROM support_sync_logs
+     WHERE source = 'backfill'
+       AND action = 'order_unpaid'
+       AND store_subdomain = $1
+       AND created_at <= $2
+       AND created_at >= $2 - ($3 * interval '1 millisecond')
+     ORDER BY id ASC
+     LIMIT 1000`,
+    [row.store_subdomain, row.created_at, windowMs],
+  );
+  return {
+    legacy: true,
+    orders: children.rows.map((child: any) => ({
+      orderNumber: String(child.target_id || ''),
+      kind: Number(child.items_skipped) > 0 ? 'kept' : Number(child.items_new) > 0 ? 'new' : 'updated',
+    })).filter((item: { orderNumber: string }) => item.orderNumber),
+  };
 }
 
 export async function listOperationLogs(params: {
@@ -189,17 +239,39 @@ export async function listOperationLogs(params: {
 // 清理
 // ══════════════════════════════════════════════════
 
-export async function cleanupSyncLogs(retentionDays: number = 30): Promise<number> {
+function normalizeRetentionDays(value: number, fallback: number): number {
+  const days = Math.floor(Number(value));
+  if (!Number.isFinite(days) || days < 1 || days > 3650) return fallback;
+  return days;
+}
+
+async function deleteOlderThan(table: 'support_sync_logs' | 'support_operation_logs', retentionDays: number): Promise<number> {
+  const days = normalizeRetentionDays(retentionDays, 60);
+  const r = await query(
+    `DELETE FROM ${table} WHERE created_at < now() - ($1::int * interval '1 day')`,
+    [days],
+  );
+  return r.rowCount || 0;
+}
+
+export async function cleanupSyncLogs(retentionDays: number = 60): Promise<number> {
   try {
-    const r = await query(
-      `DELETE FROM support_sync_logs WHERE created_at < now() - interval '${retentionDays} days'`,
-    );
-    if ((r.rowCount || 0) > 0) {
-      console.log(`[log-service] 清理了 ${r.rowCount} 条过期同步日志`);
-    }
-    return r.rowCount || 0;
+    const removed = await deleteOlderThan('support_sync_logs', retentionDays);
+    if (removed > 0) console.log(`[log-service] 清理了 ${removed} 条超过 ${normalizeRetentionDays(retentionDays, 60)} 天的同步日志`);
+    return removed;
   } catch (e: any) {
     console.error('[log-service] cleanupSyncLogs failed:', e.message);
+    return 0;
+  }
+}
+
+export async function cleanupOperationLogs(retentionDays: number = 60): Promise<number> {
+  try {
+    const removed = await deleteOlderThan('support_operation_logs', retentionDays);
+    if (removed > 0) console.log(`[log-service] 清理了 ${removed} 条超过 ${normalizeRetentionDays(retentionDays, 60)} 天的操作日志`);
+    return removed;
+  } catch (e: any) {
+    console.error('[log-service] cleanupOperationLogs failed:', e.message);
     return 0;
   }
 }

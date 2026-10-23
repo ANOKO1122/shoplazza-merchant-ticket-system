@@ -317,6 +317,7 @@
     .reply-box { font-size: 16px; }
   }
 </style>
+<script src="/safe-render.js"></script>
 </head>
 <body>
 
@@ -345,6 +346,7 @@ var supportTypes = ['Products Discrepancies', 'Product Not Received', 'Defective
 var complaintTypes = ['Fraud', 'Unauthorized Transaction', 'Counterfeit / Fake Products', 'Misleading or False Advertising', 'Refusal to Honor Refund / Return Policy', 'Privacy or Data Misuse', 'Unsafe or Harmful Products', 'Discrimination or Unfair Treatment', 'Intellectual Property Violation'];
 
 function $(sel) { return document.querySelector(sel); }
+function esc(value) { return SupportSafe.escape(value); }
 
 async function api(url, opts) {
   opts = opts || {};
@@ -381,10 +383,7 @@ function getItemImageUrl(item) {
   } else {
     src = String(raw || item.product_image || item.image_src || '');
   }
-  if (!src || src === 'null' || src === 'undefined') return '';
-  if (src.startsWith('//')) return 'https:' + src;
-  if (src.startsWith('http')) return src;
-  return '';
+  return SupportSafe.url(src);
 }
 
 function renderNewTicket(order) {
@@ -420,8 +419,8 @@ function renderNewTicket(order) {
       var qty = it.quantity || 1;
       productRows +=
         '<div class="product-item-row">' +
-        (imgUrl ? '<img src="' + imgUrl + '" class="product-item-img" alt="" loading="lazy" onerror="this.style.display=\'none\'">' : '') +
-        '<div class="product-item-info"><div class="pname">' + title + '</div><div class="pqty">Qty: ' + qty + '</div></div>' +
+        (imgUrl ? '<img src="' + esc(imgUrl) + '" class="product-item-img" alt="" loading="lazy" onerror="this.style.display=\'none\'">' : '') +
+        '<div class="product-item-info"><div class="pname">' + esc(title) + '</div><div class="pqty">Qty: ' + esc(qty) + '</div></div>' +
         '</div>';
     });
     orderDetailCard =
@@ -429,11 +428,11 @@ function renderNewTicket(order) {
       '<div class="section-title">Order Summary</div>' +
       '<div class="order-detail-card">' +
       '<div class="order-detail-row">' +
-      '<div><span>Store: </span><strong>' + (order.store_name || '-') + '</strong></div>' +
-      '<div><span>Order: </span><strong>' + (order.order_number || '-') + '</strong></div>' +
-      '<div><span>Amount: </span><strong style="color:#ff4d4f">' + amountDisplay + '</strong></div>' +
-      '<div><span>Date: </span>' + dateDisplay + '</div>' +
-      (card || paymentMethod ? '<div><span>Payment: </span>' + (paymentMethod || 'Credit Card') + (card ? ' (ending in ' + card + ')' : '') + '</div>' : '') +
+      '<div><span>Store: </span><strong>' + esc((order.store_name || '-')) + '</strong></div>' +
+      '<div><span>Order: </span><strong>' + esc((order.order_number || '-')) + '</strong></div>' +
+      '<div><span>Amount: </span><strong style="color:#ff4d4f">' + esc(amountDisplay) + '</strong></div>' +
+      '<div><span>Date: </span>' + esc(dateDisplay) + '</div>' +
+      (card || paymentMethod ? '<div><span>Payment: </span>' + (paymentMethod || 'Credit Card') + (card ? ' (ending in ' + esc(card) + ')' : '') + '</div>' : '') +
       '</div>' +
       (productRows ? '<div class="product-list-compact">' + productRows + '</div>' : '') +
       '</div>' +
@@ -441,21 +440,21 @@ function renderNewTicket(order) {
 
   var paymentRow = '';
   if (card) {
-    paymentRow = '<div class="form-group"><label class="form-label">Last 4 Digits Of Card Number</label><input type="text" class="form-control" value="' + card + '" maxlength="4" disabled></div>';
+    paymentRow = '<div class="form-group"><label class="form-label">Last 4 Digits Of Card Number</label><input type="text" class="form-control" value="' + esc(card) + '" maxlength="4" disabled></div>';
   } else if (paymentMethod) {
-    paymentRow = '<div class="form-group"><label class="form-label">Payment Method</label><input type="text" class="form-control" value="' + paymentMethod + '" disabled></div>';
+    paymentRow = '<div class="form-group"><label class="form-label">Payment Method</label><input type="text" class="form-control" value="' + esc(paymentMethod) + '" disabled></div>';
   }
-  var orderNumberRow = orderNumber ? '<p class="order-summary">Order number: <strong>' + orderNumber + '</strong></p>' : '';
+  var orderNumberRow = orderNumber ? '<p class="order-summary">Order number: <strong>' + esc(orderNumber) + '</strong></p>' : '';
 
   $('#app').innerHTML =
     '<div class="page active">' +
     '<div class="card">' +
     '<h1 class="page-title"' + (isComplaintMode ? ' style="color:#ff4d4f"' : '') + '>' + pageTitle + '</h1>' +
-    '<p class="greeting">Dear ' + (order.customer_name || 'Customer') + '</p>' +
+    '<p class="greeting">Dear ' + esc((order.customer_name || 'Customer')) + '</p>' +
     '<p class="order-summary">' +
-    'You made a <span class="highlight-money">' + amountDisplay + '</span> purchase on ' +
-    '<a href="https://' + storeUrl + '" target="_blank" rel="noopener" class="highlight-link">' + storeDisplay + '</a> from ' +
-    '<span class="highlight-time">' + dateDisplay + '</span>' +
+    'You made a <span class="highlight-money">' + esc(amountDisplay) + '</span> purchase on ' +
+    '<a href="' + esc(SupportSafe.url('https://' + storeUrl)) + '" target="_blank" rel="noopener" class="highlight-link">' + esc(storeDisplay) + '</a> from ' +
+    '<span class="highlight-time">' + esc(dateDisplay) + '</span>' +
     '</p>' +
     orderNumberRow +
     pageSubtitle +
@@ -505,7 +504,7 @@ function renderTicketDetail(data) {
   isComplaintTicket = complaintTypes.indexOf(ticketIssueType) !== -1;
 
   var items = Array.isArray(order.items) ? order.items.map(function(it) {
-    return '<div style="font-size:13px;line-height:1.6"><span style="color:#262626">' + (it.product_title || it.title || it.name || '') + '</span> <span style="color:#8c8c8c">x' + (it.quantity || 1) + '</span></div>';
+    return '<div style="font-size:13px;line-height:1.6"><span style="color:#262626">' + esc((it.product_title || it.title || it.name || '')) + '</span> <span style="color:#8c8c8c">x' + esc((it.quantity || 1)) + '</span></div>';
   }).join('') : '';
 
   var timelineHtml = '';
@@ -514,12 +513,12 @@ function renderTicketDetail(data) {
     var role = roleLabels[m.sender_type] || m.sender_type;
     var imgHtml = renderAttachments(m.attachments);
     timelineHtml +=
-      '<div class="timeline-item ' + m.sender_type + '">' +
+      '<div class="timeline-item ' + SupportSafe.role(m.sender_type) + '">' +
       '<div class="timeline-meta">' +
-      '<span class="timeline-role ' + m.sender_type + '">' + role + '</span>' +
+      '<span class="timeline-role ' + SupportSafe.role(m.sender_type) + '">' + esc(role) + '</span>' +
       '<span class="timeline-time">' + formatDate(m.created_at) + '</span>' +
       '</div>' +
-      '<div class="timeline-content">' + m.content + '</div>' +
+      '<div class="timeline-content">' + esc(m.content) + '</div>' +
       imgHtml +
       '</div>';
   });
@@ -528,7 +527,7 @@ function renderTicketDetail(data) {
   var statusText = t.status === 'closed' ? 'Closed' : (t.arbitration_requested ? 'In Arbitration' : (isComplaintTicket ? 'Under Investigation' : 'In Coordination'));
   var replyBlock = t.status === 'closed' ? '' :
     '<div class="reply-area">' +
-    '<div id="remainingHint" style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Remaining messages: <strong>' + remainingMessages + '</strong></div>' +
+    '<div id="remainingHint" style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Remaining messages: <strong>' + esc(remainingMessages) + '</strong></div>' +
     '<div class="image-preview-area" id="imagePreview" style="display:none"></div>' +
     '<textarea class="reply-box" id="replyBox" placeholder="Enter your reply here..." maxlength="2000"></textarea>' +
     '<div class="reply-actions">' +
@@ -561,14 +560,14 @@ function renderTicketDetail(data) {
     '<span class="status-dot" style="background:' + statusColor + '"></span>' +
     '<span>' + statusText + '</span></div>' +
     '<div class="status-meta">' +
-    '<div>' + (isComplaintTicket ? 'Dispute ID' : 'Ticket ID') + ': ' + t.public_ticket_no + '</div>' +
+    '<div>' + (isComplaintTicket ? 'Dispute ID' : 'Ticket ID') + ': ' + esc(t.public_ticket_no) + '</div>' +
     '<div>Initiation Time: ' + formatDate(t.created_at) + '</div>' +
     '</div></div>' +
     '<div class="info-list">' +
-    '<div class="info-row"><span class="info-label">Serial Number:</span><span class="info-value">' + t.public_ticket_no + '</span></div>' +
-    '<div class="info-row"><span class="info-label">Order Number:</span><span class="info-value">' + (order.order_number || '') + '</span></div>' +
-    '<div class="info-row"><span class="info-label">Total Amount:</span><span class="info-value">' + (order.order_currency || 'USD') + ' ' + (order.order_amount || '') + '</span></div>' +
-    '<div class="info-row"><span class="info-label">Refundable Amount:</span><span class="info-value">' + (order.order_currency || 'USD') + ' ' + (order.order_amount || '') + '</span></div>' +
+    '<div class="info-row"><span class="info-label">Serial Number:</span><span class="info-value">' + esc(t.public_ticket_no) + '</span></div>' +
+    '<div class="info-row"><span class="info-label">Order Number:</span><span class="info-value">' + esc((order.order_number || '')) + '</span></div>' +
+    '<div class="info-row"><span class="info-label">Total Amount:</span><span class="info-value">' + esc((order.order_currency || 'USD')) + ' ' + esc((order.order_amount || '')) + '</span></div>' +
+    '<div class="info-row"><span class="info-label">Refundable Amount:</span><span class="info-value">' + esc((order.order_currency || 'USD')) + ' ' + esc((order.order_amount || '')) + '</span></div>' +
     '<div class="info-row"><span class="info-label">Order Date:</span><span class="info-value">' + formatDate(order.paid_at) + '</span></div>' +
     '<div class="info-row"><span class="info-label">Products:</span><span class="info-value">' + items + '</span></div>' +
     '</div>' +
@@ -576,7 +575,7 @@ function renderTicketDetail(data) {
     '</div></aside>' +
     '<section class="ticket-body">' +
     (isComplaintTicket ? '<div class="complaint-banner"><div class="banner-text"><strong>Formal Complaint in Progress</strong>This is a formal complaint against the merchant. The platform mediation team is handling your case. Please provide truthful and detailed information only.</div></div>' : '') +
-    '<div class="ticket-header"><h2>' + (isComplaintTicket ? 'Complaint Processing Record' : 'Support Ticket Record') + '</h2><span class="ticket-id">#' + t.public_ticket_no + '</span></div>' +
+    '<div class="ticket-header"><h2>' + (isComplaintTicket ? 'Complaint Processing Record' : 'Support Ticket Record') + '</h2><span class="ticket-id">#' + esc(t.public_ticket_no) + '</span></div>' +
     '<div class="timeline">' + timelineHtml + '</div>' +
     replyBlock +
     '</section>' +
@@ -596,7 +595,7 @@ function hideError(id) {
 function updateRemainingDisplay() {
   var hint = $('#remainingHint');
   if (hint) {
-    hint.innerHTML = 'Remaining messages: <strong>' + remainingMessages + '</strong>';
+    hint.innerHTML = 'Remaining messages: <strong>' + esc(remainingMessages) + '</strong>';
     if (remainingMessages <= 0) {
       hint.style.color = 'var(--danger)';
     } else if (remainingMessages <= 2) {
@@ -630,12 +629,12 @@ async function refreshMessages() {
         var role = roleLabels[m.sender_type] || m.sender_type;
         var imgHtml = renderAttachments(m.attachments);
         html +=
-          '<div class="timeline-item ' + m.sender_type + '">' +
+          '<div class="timeline-item ' + SupportSafe.role(m.sender_type) + '">' +
           '<div class="timeline-meta">' +
-          '<span class="timeline-role ' + m.sender_type + '">' + role + '</span>' +
+          '<span class="timeline-role ' + SupportSafe.role(m.sender_type) + '">' + esc(role) + '</span>' +
           '<span class="timeline-time">' + formatDate(m.created_at) + '</span>' +
           '</div>' +
-          '<div class="timeline-content">' + m.content + '</div>' +
+          '<div class="timeline-content">' + esc(m.content) + '</div>' +
           imgHtml +
           '</div>';
       });
@@ -665,6 +664,7 @@ async function submitTicket() {
 
     var result = await (await fetch(API + '/tickets', {
       method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token },
       body: formData,
     })).json();
     if (result.ok) {
@@ -700,6 +700,7 @@ async function sendReply() {
 
     var result = await (await fetch(API + '/tickets/' + getTicketNo() + '/messages', {
       method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + accessToken },
       body: formData,
     })).json();
     if (result.ok) {
@@ -797,7 +798,7 @@ function renderImagePreviews() {
     var url = URL.createObjectURL(file);
     html +=
       '<div class="image-preview-item">' +
-      '<img src="' + url + '" alt="preview">' +
+      '<img src="' + esc(url) + '" alt="preview">' +
       '<button class="remove-btn" onclick="removeImage(' + idx + ')">×</button>' +
       '</div>';
   });
@@ -845,7 +846,7 @@ function renderTicketImagePreviews() {
     var url = URL.createObjectURL(file);
     html +=
       '<div class="image-preview-item">' +
-      '<img src="' + url + '" alt="preview">' +
+      '<img src="' + esc(url) + '" alt="preview">' +
       '<button class="remove-btn" onclick="removeTicketImg(' + idx + ')">&times;</button>' +
       '</div>';
   });
@@ -864,21 +865,11 @@ function updateImgCount() {
 }
 
 function renderAttachments(attachments) {
-  if (!attachments || !attachments.length) return '';
-  var html = '<div class="msg-images">';
-  attachments.forEach(function(url) {
-    html += '<img src="' + url + '" class="chat-img" onclick="viewImage(\'' + url + '\')" loading="lazy">';
-  });
-  html += '</div>';
-  return html;
+  return SupportSafe.images(attachments);
 }
 
 function viewImage(url) {
-  var lb = document.createElement('div');
-  lb.className = 'image-lightbox';
-  lb.innerHTML = '<img src="' + url + '">';
-  lb.onclick = function() { lb.remove(); };
-  document.body.appendChild(lb);
+  SupportSafe.showImage(url);
 }
 
 // Init
@@ -887,7 +878,7 @@ if (!token) {
 } else {
   fetch(API + '/bootstrap?t=' + token).then(function(r) { return r.json(); }).then(function(data) {
     if (!data.ok) {
-      $('#app').innerHTML = '<div class="card"><div class="error-msg">' + (data.error || 'Link is invalid or expired') + '</div></div>';
+      $('#app').innerHTML = '<div class="card"><div class="error-msg">' + esc((data.error || 'Link is invalid or expired')) + '</div></div>';
       return;
     }
     if (data.mode === 'new_ticket') {

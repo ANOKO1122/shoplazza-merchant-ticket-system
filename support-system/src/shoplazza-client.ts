@@ -235,6 +235,66 @@ export async function listPaidOrdersCreatedSince(
   return allOrders;
 }
 
+/**
+ * 未支付兜底：按 updated_at 拉取仍在 waiting 的订单。
+ * 任一页失败或超过页数上限时抛错，调用方不得推进未支付进度。
+ */
+export async function listWaitingOrdersUpdatedSince(
+  store: ShoplazzaStoreConfig,
+  updatedAtMin: string,
+  updatedAtMax: string,
+): Promise<ShoplazzaOrderDetail[]> {
+  const allOrders: ShoplazzaOrderDetail[] = [];
+  let cursor: string | null = null;
+  let page = 0;
+  const maxPages = 200;
+  const seenCursors = new Set<string>();
+
+  while (page < maxPages) {
+    const params = new URLSearchParams();
+    params.set('financial_status', 'waiting');
+    params.set('page_size', '250');
+    params.set('updated_at_min', updatedAtMin);
+    params.set('updated_at_max', updatedAtMax);
+    if (cursor) params.set('cursor', cursor);
+
+    const url = `https://${buildApiHost(store.subdomain)}/openapi/2025-06/orders?${params.toString()}`;
+    page++;
+    const res = await shoplazzaFetch(url, store);
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`waiting list HTTP ${res.status}: ${text.slice(0, 200)}`);
+    }
+    const json = JSON.parse(text);
+    let orders: ShoplazzaOrderDetail[] = json.data?.orders ?? json.orders;
+    // 店匠空窗口实测返回 { code: 'Success', data: {} }，只兼容这个明确成功的空对象。
+    if (orders === undefined && json.code === 'Success'
+      && json.data && typeof json.data === 'object' && !Array.isArray(json.data)
+      && Object.keys(json.data).length === 0) {
+      orders = [];
+    }
+    if (!Array.isArray(orders)) {
+      throw new Error('waiting list response has no orders array');
+    }
+    const hasMore: boolean = json.data?.has_more ?? json.has_more ?? false;
+    const nextCursor: string | null = json.data?.cursor || json.cursor || null;
+    allOrders.push(...orders);
+    if (!hasMore) return allOrders;
+    if (orders.length === 0) {
+      throw new Error('waiting list has more pages but returned an empty page');
+    }
+    if (!nextCursor) {
+      throw new Error('waiting list has more pages but no cursor');
+    }
+    if (seenCursors.has(nextCursor)) {
+      throw new Error('waiting list returned a repeated cursor');
+    }
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+  throw Object.assign(new Error('waiting list exceeded 200 pages'), { code: 'WAITING_WINDOW_TOO_LARGE' });
+}
+
 // ── Webhook 管理 ──
 
 async function shoplazzaFetchWithBody(
@@ -282,6 +342,16 @@ export interface ShoplazzaWebhook {
   created_at?: string;
 }
 
+/** 店铺管理里一次注册的事件：支付，以及发货后的运单更新。未支付改由兜底按更新时间拉取。 */
+export const STORE_WEBHOOK_TOPICS = [
+  'orders/paid',
+  'orders/fulfilled',
+  'orders/partially_fulfilled',
+] as const;
+
+/** 以前注册过、现在要删掉的事件。 */
+export const RETIRED_WEBHOOK_TOPICS = ['orders/create'] as const;
+
 export async function registerWebhook(
   store: ShoplazzaStoreConfig,
   address: string,
@@ -300,11 +370,26 @@ export async function registerWebhook(
     if (result.status === 409 || result.status === 422) {
       return { ok: false, error: 'Webhook 可能已存在（冲突）' };
     }
-    const errMsg = result.data?.error || result.data?.message || result.data?.errors || `HTTP ${result.status}`;
-    return { ok: false, error: typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg).slice(0, 300) };
+    return { ok: false, error: `注册 Webhook 失败: HTTP ${result.status}` };
   } catch (e: any) {
-    return { ok: false, error: e.message || 'Unknown error' };
+    return { ok: false, error: '注册 Webhook 失败' };
   }
+}
+
+/** 修改已有订阅的接收地址，保留 topic 和订阅 ID。 */
+export async function updateWebhookAddress(
+  store: ShoplazzaStoreConfig,
+  webhookId: string,
+  address: string,
+  topic: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const url = `https://${buildApiHost(store.subdomain)}/openapi/2025-06/webhooks/${encodeURIComponent(webhookId)}`;
+  const result = await shoplazzaFetchWithBody(url, store, 'PUT', {
+    id: webhookId,
+    webhook: { address, topic },
+  });
+  // 不把可能回显回调密钥的响应正文写入日志。
+  return result.ok ? { ok: true } : { ok: false, error: `更新 Webhook 地址失败: HTTP ${result.status}` };
 }
 
 export async function listWebhooks(

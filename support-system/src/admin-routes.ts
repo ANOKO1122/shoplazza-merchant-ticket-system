@@ -5,14 +5,83 @@ import { SESSION_COOKIE_NAME, getRequestAgent, parseSessionCookie, loginAgent, c
 import { listTickets, getTicketByPublicNo, getTicketMessages, getOrderSnapshot, addAgentMessage, updateTicketStatus, reopenTicket } from './ticket-service';
 import { listStores, createStore, updateStore, deleteStore, getStoreBySubdomain, decryptToken } from './store-service';
 import { query } from './pg';
-import { cancelEmailJob, ensureAgentReplyNoticeJob, getEmailJobDetail, listEmailJobs, processDueEmailJobs, resendEmailJob, getAutoSendEnabled, setAutoSendEnabled, listEmailTemplates, getEmailTemplate, updateEmailTemplate, renderTemplateString, renderEmailFromTemplate, listTemplatePresets, createTemplatePreset, deleteTemplatePreset, activateTemplatePreset, formatEasternTime, getMailTestMode, setMailTestMode, getPublicBaseUrl, setPublicBaseUrl, getEffectivePublicBaseUrl, createCustomerComplaintInviteJob, extractStoreCustomDomain, extractFirstProductImage, buildTemplateItems } from './email-service';
+import { cancelEmailJob, ensureAgentReplyNoticeJob, getEmailJobDetail, listEmailJobs, processDueEmailJobs, resendEmailJob, sendPendingEmailJobs, getAutoSendEnabled, setAutoSendEnabled, listEmailTemplates, getEmailTemplate, updateEmailTemplate, renderTemplateString, renderEmailFromTemplate, listTemplatePresets, createTemplatePreset, deleteTemplatePreset, activateTemplatePreset, formatEasternTime, getMailTestMode, setMailTestMode, getPublicBaseUrl, setPublicBaseUrl, getEffectivePublicBaseUrl, createCustomerComplaintInviteJob, extractStoreCustomDomain, extractFirstProductImage, buildTemplateItems } from './email-service';
 import { runBackfillForStore, getAllBackfillStates, getAutoBackfillEnabled, setAutoBackfillEnabled } from './backfill-jobs';
-import { logOperation, listSyncLogs, listOperationLogs } from './log-service';
+import { logOperation, listSyncLogs, listOperationLogs, getUnpaidSummaryOrders } from './log-service';
 import { buildCustomerPreviewResponse, extractTrackingNo } from './admin-preview';
-import { buildStoreDomain } from './config';
-import { registerWebhook, deleteWebhook, findWebhookByTopic, listWebhooks } from './shoplazza-client';
+import { buildStoreDomain, ShoplazzaStoreConfig } from './config';
+import { registerWebhook, updateWebhookAddress, deleteWebhook, listWebhooks, STORE_WEBHOOK_TOPICS, RETIRED_WEBHOOK_TOPICS, ShoplazzaWebhook } from './shoplazza-client';
+import { buildWebhookCallbackUrl, redactWebhookAddress } from './webhook-security';
 import { mapPaymentMethodDisplay } from './normalize-order';
 import { uploadAttachments, processAttachments, getStorageProvider } from './storage-service';
+
+function webhookTopicsFromList(webhooks: ShoplazzaWebhook[], expectedAddress: string) {
+  return STORE_WEBHOOK_TOPICS.map((topic) => {
+    const webhook = webhooks.find(item => item.topic === topic && item.address === expectedAddress);
+    return { topic, registered: !!webhook, webhook: webhook ? { ...webhook, address: redactWebhookAddress(webhook.address) } : null };
+  });
+}
+
+async function registerStoreWebhooks(
+  store: ShoplazzaStoreConfig,
+  address: string,
+): Promise<{ ok: boolean; alreadyRegistered: boolean; topics: Array<{ topic: string; registered: boolean; created: boolean; error?: string }>; error?: string }> {
+  const listed = await listWebhooks(store);
+  if (!listed.ok) {
+    return { ok: false, alreadyRegistered: false, topics: [], error: listed.error || '读取 Webhook 失败' };
+  }
+  const topics: Array<{ topic: string; registered: boolean; created: boolean; error?: string }> = [];
+  const ownAddress = redactWebhookAddress(address);
+  for (const retired of listed.webhooks.filter(item => (RETIRED_WEBHOOK_TOPICS as readonly string[]).includes(item.topic) && item.id && redactWebhookAddress(item.address) === ownAddress)) {
+    const removed = await deleteWebhook(store, retired.id);
+    if (!removed.ok) {
+      topics.push({ topic: retired.topic, registered: false, created: false, error: removed.error || '注销旧事件失败' });
+    }
+  }
+  for (const topic of STORE_WEBHOOK_TOPICS) {
+    const existing = listed.webhooks.find(item => item.topic === topic && redactWebhookAddress(item.address) === ownAddress);
+    if (existing?.id) {
+      const result = existing.address === address ? { ok: true } : await updateWebhookAddress(store, existing.id, address, existing.topic);
+      topics.push({ topic, registered: result.ok, created: false, error: result.error });
+      continue;
+    }
+    const result = await registerWebhook(store, address, topic);
+    topics.push({
+      topic,
+      registered: result.ok,
+      created: result.ok,
+      error: result.ok ? undefined : (result.error || '注册失败'),
+    });
+  }
+  const failed = topics.filter(item => !item.registered);
+  return {
+    ok: failed.length === 0,
+    alreadyRegistered: topics.every(item => item.registered && !item.created),
+    topics,
+    error: failed.length ? failed.map(item => `${item.topic}: ${item.error}`).join('; ') : undefined,
+  };
+}
+
+async function unregisterStoreWebhooks(
+  store: ShoplazzaStoreConfig,
+): Promise<{ ok: boolean; removed: string[]; error?: string }> {
+  const listed = await listWebhooks(store);
+  if (!listed.ok) {
+    return { ok: false, removed: [], error: listed.error || '读取 Webhook 失败' };
+  }
+  const managedTopics = [...STORE_WEBHOOK_TOPICS, ...RETIRED_WEBHOOK_TOPICS] as readonly string[];
+  const ownAddress = redactWebhookAddress(buildWebhookCallbackUrl(await getEffectivePublicBaseUrl(), store.subdomain));
+  const targets = listed.webhooks.filter(item => managedTopics.includes(item.topic) && item.id && redactWebhookAddress(item.address) === ownAddress);
+  if (targets.length === 0) return { ok: true, removed: [] };
+  const removed: string[] = [];
+  const errors: string[] = [];
+  for (const webhook of targets) {
+    const result = await deleteWebhook(store, webhook.id);
+    if (result.ok) removed.push(webhook.topic);
+    else errors.push(`${webhook.topic}: ${result.error || '注销失败'}`);
+  }
+  return { ok: errors.length === 0, removed, error: errors.join('; ') || undefined };
+}
 
 export function createAdminRouter(): express.Router {
   const router = express.Router();
@@ -143,6 +212,27 @@ export function createAdminRouter(): express.Router {
         `SELECT count(*)::int AS cnt FROM support_email_jobs WHERE email_type = 'agent_reply_notice' AND status = 'pending'`,
       );
       res.json({ ok: true, count: r.rows[0]?.cnt || 0 });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // POST /api/admin/email-jobs/send-pending — 一键发送全部待发送（必须在 /:id 之前）
+  router.post('/email-jobs/send-pending', async (req, res) => {
+    try {
+      const result = await sendPendingEmailJobs(100);
+      const status = result.failed === 0 ? 'success' : (result.sent > 0 ? 'partial' : 'failed');
+      await logOperation({
+        category: 'email',
+        action: 'jobs_send_pending',
+        actor: (req as any).agent?.name || 'unknown',
+        summary: result.picked === 0
+          ? '一键发送待发：没有待发送邮件'
+          : `一键发送待发：成功 ${result.sent}，失败 ${result.failed}，剩余 ${result.remaining}`,
+        status,
+        detailJson: result,
+      });
+      res.json({ ok: true, ...result });
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e.message });
     }
@@ -389,11 +479,31 @@ export function createAdminRouter(): express.Router {
       const pageSize = Math.min(100, Math.max(1, Number(req.query.page_size) || 30));
       const result = await listSyncLogs({
         source: (req.query.source as string) || 'all',
+        action: (req.query.action as string) || 'all',
         status: (req.query.status as string) || 'all',
         storeSubdomain: (req.query.store as string) || '',
         page,
         pageSize,
       });
+      res.json({ ok: true, ...result });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // GET /api/admin/sync-logs/:id/items  未支付兜底汇总里的订单明细
+  router.get('/sync-logs/:id/items', async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) {
+        res.status(400).json({ ok: false, error: '无效日志' });
+        return;
+      }
+      const result = await getUnpaidSummaryOrders(id);
+      if (!result) {
+        res.status(404).json({ ok: false, error: '不是未支付兜底汇总' });
+        return;
+      }
       res.json({ ok: true, ...result });
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e.message });
@@ -903,24 +1013,23 @@ export function createAdminRouter(): express.Router {
       const accessToken: string = decryptToken(row.access_token);
       const store = { subdomain, storeName, accessToken };
 
-      // 必须先注销 webhook 才能删除店铺
-      const existing = await findWebhookByTopic(store, 'orders/paid');
-      if (existing.registered && existing.webhook?.id) {
-        const unregResult = await deleteWebhook(store, existing.webhook.id);
-        if (!unregResult.ok) {
-          res.status(502).json({
-            ok: false,
-            error: `请先手动注销 Webhook 后再删除店铺: ${unregResult.error || '注销失败'}`,
-          });
-          return;
-        }
+      // 必须先注销支付和发货 webhook 才能删除店铺
+      const unregResult = await unregisterStoreWebhooks(store);
+      if (!unregResult.ok) {
+        res.status(502).json({
+          ok: false,
+          error: `请先手动注销 Webhook 后再删除店铺: ${unregResult.error || '注销失败'}`,
+        });
+        return;
+      }
+      if (unregResult.removed.length > 0) {
         await logOperation({
           category: 'webhook',
           action: 'webhook_unregistered',
           actor: (req as any).agent?.name || 'unknown',
           storeSubdomain: subdomain,
           target: subdomain,
-          summary: `删除店铺前自动注销 Webhook: ${subdomain}`,
+          summary: `删除店铺前自动注销 Webhook: ${subdomain} (${unregResult.removed.join(', ')})`,
           status: 'success',
         });
       }
@@ -1213,13 +1322,16 @@ export function createAdminRouter(): express.Router {
       const accessToken = decryptToken(row.access_token);
       const store = { subdomain: row.subdomain, storeName: row.store_name, accessToken };
 
-      const result = await findWebhookByTopic(store, 'orders/paid');
+      const listed = await listWebhooks(store);
+      const expectedAddress = buildWebhookCallbackUrl(await getEffectivePublicBaseUrl(), store.subdomain);
+      const topics = listed.ok ? webhookTopicsFromList(listed.webhooks, expectedAddress) : [];
       res.json({
-        ok: true,
-        registered: result.registered,
-        webhook: result.webhook || null,
-        error: result.error || null,
-        expectedAddress: `${await getEffectivePublicBaseUrl()}/api/shoplazza/webhook/${store.subdomain}`,
+        ok: listed.ok,
+        registered: listed.ok && topics.every(item => item.registered),
+        topics,
+        webhook: topics.find(item => item.topic === 'orders/paid')?.webhook || null,
+        error: listed.error || null,
+        expectedAddress: redactWebhookAddress(expectedAddress),
       });
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e.message });
@@ -1248,28 +1360,28 @@ export function createAdminRouter(): express.Router {
         return;
       }
 
-      const address = `${baseUrl}/api/shoplazza/webhook/${store.subdomain}`;
-
-      // 先检查是否已注册
-      const existing = await findWebhookByTopic(store, 'orders/paid');
-      if (existing.registered && existing.webhook?.id) {
-        res.json({ ok: true, message: 'Webhook 已注册', webhook: existing.webhook, alreadyRegistered: true });
-        return;
-      }
-
-      const result = await registerWebhook(store, address, 'orders/paid');
+      const address = buildWebhookCallbackUrl(baseUrl, store.subdomain);
+      const result = await registerStoreWebhooks(store, address);
       if (result.ok) {
+        const created = result.topics.filter(item => item.created).map(item => item.topic);
         await logOperation({
           category: 'webhook',
           action: 'webhook_registered',
           actor: (req as any).agent?.name || 'unknown',
           storeSubdomain: store.subdomain,
           target: store.subdomain,
-          summary: `注册 Webhook: ${store.subdomain} → orders/paid`,
+          summary: result.alreadyRegistered
+            ? `Webhook 已注册: ${store.subdomain}`
+            : `注册 Webhook: ${store.subdomain} → ${created.join(', ')}`,
           status: 'success',
-          detailJson: { address, topic: 'orders/paid', webhook_id: result.webhook?.id },
+          detailJson: { address: redactWebhookAddress(address), topics: result.topics },
         });
-        res.json({ ok: true, message: '注册成功', webhook: result.webhook });
+        res.json({
+          ok: true,
+          message: result.alreadyRegistered ? '支付和发货 Webhook 都已注册' : '注册成功',
+          alreadyRegistered: result.alreadyRegistered,
+          topics: result.topics,
+        });
       } else {
         await logOperation({
           category: 'webhook',
@@ -1279,9 +1391,9 @@ export function createAdminRouter(): express.Router {
           target: store.subdomain,
           summary: `Webhook 注册失败: ${store.subdomain}`,
           status: 'failed',
-          detailJson: { address, error: result.error },
+          detailJson: { address: redactWebhookAddress(address), error: result.error, topics: result.topics },
         });
-        res.status(502).json({ ok: false, error: result.error || '注册失败' });
+        res.status(502).json({ ok: false, error: result.error || '注册失败', topics: result.topics });
       }
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e.message });
@@ -1301,27 +1413,25 @@ export function createAdminRouter(): express.Router {
       const accessToken = decryptToken(row.access_token);
       const store = { subdomain: row.subdomain, storeName: row.store_name, accessToken };
 
-      const existing = await findWebhookByTopic(store, 'orders/paid');
-      if (!existing.registered || !existing.webhook?.id) {
+      const result = await unregisterStoreWebhooks(store);
+      if (!result.ok) {
+        res.status(502).json({ ok: false, error: result.error || '注销失败' });
+        return;
+      }
+      if (result.removed.length === 0) {
         res.json({ ok: true, message: 'Webhook 未注册，无需操作' });
         return;
       }
-
-      const result = await deleteWebhook(store, existing.webhook.id);
-      if (result.ok) {
-        await logOperation({
-          category: 'webhook',
-          action: 'webhook_unregistered',
-          actor: (req as any).agent?.name || 'unknown',
-          storeSubdomain: store.subdomain,
-          target: store.subdomain,
-          summary: `注销 Webhook: ${store.subdomain}`,
-          status: 'success',
-        });
-        res.json({ ok: true, message: '已注销' });
-      } else {
-        res.status(502).json({ ok: false, error: result.error || '注销失败' });
-      }
+      await logOperation({
+        category: 'webhook',
+        action: 'webhook_unregistered',
+        actor: (req as any).agent?.name || 'unknown',
+        storeSubdomain: store.subdomain,
+        target: store.subdomain,
+        summary: `注销 Webhook: ${store.subdomain} (${result.removed.join(', ')})`,
+        status: 'success',
+      });
+      res.json({ ok: true, message: '已注销', removed: result.removed });
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e.message });
     }

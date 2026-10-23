@@ -103,11 +103,27 @@ export function buildEmailJobNo(now = new Date(), originalNo?: string, seq?: num
   const pad = (n: number) => String(n).padStart(2, '0');
   const y = String(now.getFullYear()).slice(-2);
   const stamp = `${y}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
-  const base = `EJ${stamp}${crypto.randomBytes(2).toString('hex')}`;
+  const base = `EJ${stamp}${crypto.randomBytes(8).toString('hex')}`;
   if (originalNo && seq !== undefined) {
     return `${originalNo}-${seq}`;
   }
   return base;
+}
+
+/** $1 为邮件编号；撞号时只重试任务插入，复用已生成的令牌和邮件正文。 */
+async function insertEmailJobWithRetry(sql: string, values: unknown[]): ReturnType<typeof query> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await query(sql, [buildEmailJobNo(), ...values]);
+    } catch (error) {
+      const dbError = error as { code?: string; constraint?: string } | null;
+      if (dbError?.code !== '23505'
+        || dbError.constraint !== 'support_email_jobs_email_job_no_key'
+        || attempt >= 3) {
+        throw error;
+      }
+    }
+  }
 }
 
 export function buildPaidSupportInviteEventKey(params: {
@@ -253,7 +269,7 @@ export async function createPaidSupportInviteEmailJob(params: PaidSupportInviteS
   const tokenR = await query(`SELECT id FROM support_access_tokens WHERE token_hash = $1`, [hashToken(token)]);
   const tokenId = tokenR.rows[0] ? Number(tokenR.rows[0].id) : null;
 
-  const result = await query(
+  const result = await insertEmailJobWithRetry(
     `INSERT INTO support_email_jobs
       (email_job_no, event_key, store_subdomain, store_name, store_domain, mail_domain,
        order_id, order_number, ordered_at, email_type, customer_email, status, scheduled_at,
@@ -262,7 +278,6 @@ export async function createPaidSupportInviteEmailJob(params: PaidSupportInviteS
      ON CONFLICT (event_key) DO NOTHING
      RETURNING *`,
     [
-      buildEmailJobNo(),
       eventKey,
       params.storeSubdomain,
       params.storeName || null,
@@ -347,7 +362,7 @@ export async function createAgentReplyNoticeEmailJob(params: AgentReplyNoticeSna
   const maskedLink = maskClientLink(clientLink);
   const snapshotBody = rendered.html;
 
-  const result = await query(
+  const result = await insertEmailJobWithRetry(
     `INSERT INTO support_email_jobs
       (email_job_no, event_key, store_subdomain, store_name, store_domain, mail_domain,
        order_id, order_number, ordered_at, public_ticket_no, email_type, customer_email,
@@ -355,7 +370,6 @@ export async function createAgentReplyNoticeEmailJob(params: AgentReplyNoticeSna
      VALUES ($1,NULL,$2,$3,$4,$5,$6,$7,$8,$9,'agent_reply_notice',$10,'pending',now(),$11,$12,$13,$14,$15)
      RETURNING *`,
     [
-      buildEmailJobNo(),
       params.storeSubdomain,
       params.storeName || null,
       params.storeDomain || buildStoreDomain(params.storeSubdomain),
@@ -524,7 +538,7 @@ export async function createCustomerComplaintInviteJob(
   );
   const tokenId = tokenR.rows[0] ? Number(tokenR.rows[0].id) : null;
 
-  const result = await query(
+  const result = await insertEmailJobWithRetry(
     `INSERT INTO support_email_jobs
       (email_job_no, store_subdomain, store_name, store_domain, mail_domain,
        order_id, order_number, ordered_at, email_type, customer_email, status, scheduled_at,
@@ -532,7 +546,6 @@ export async function createCustomerComplaintInviteJob(
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'customer_complaint_invite',$9,'pending',now(),$10,$11,$12,$13,$14,'manual_invite')
      RETURNING *`,
     [
-      buildEmailJobNo(),
       params.storeSubdomain,
       params.storeName || null,
       params.storeDomain || buildStoreDomain(params.storeSubdomain),
@@ -669,6 +682,33 @@ export async function resendEmailJob(id: number) {
 }
 
 /** 重新生成客户链接（使旧 token 失效，生成新的） */
+
+/** 立刻发送当前全部待发送任务，不受自动发送开关和邮件类型限制。 */
+export async function sendPendingEmailJobs(limit = 100): Promise<{ picked: number; sent: number; failed: number; remaining: number }> {
+  const limitN = Math.max(1, Math.min(100, limit));
+  const jobs = await query(
+    `SELECT id FROM support_email_jobs
+     WHERE status = 'pending'
+     ORDER BY scheduled_at ASC NULLS FIRST, id ASC
+     LIMIT $1`,
+    [limitN],
+  );
+  let sent = 0;
+  let failed = 0;
+  for (const row of jobs.rows) {
+    const ok = await sendEmailJob(Number(row.id));
+    if (ok) {
+      sent += 1;
+      continue;
+    }
+    const check = await query(`SELECT status FROM support_email_jobs WHERE id = $1`, [row.id]);
+    const status = check.rows[0]?.status;
+    if (status === 'sent' || status === 'sending') sent += 1;
+    else failed += 1;
+  }
+  const remainR = await query(`SELECT count(*)::int AS cnt FROM support_email_jobs WHERE status = 'pending'`);
+  return { picked: jobs.rows.length, sent, failed, remaining: Number(remainR.rows[0]?.cnt || 0) };
+}
 
 export async function processDueEmailJobs(params: { limit?: number; onlyJobId?: number } = {}) {
   const values: (number | string)[] = [];
@@ -1213,4 +1253,19 @@ export async function activateTemplatePreset(emailType: string, presetName: stri
     [emailType, p.rows[0].subject_template, p.rows[0].body_template, presetName],
   );
   return true;
+}
+
+/** 删除已结束的旧邮件任务。待发送和发送中的保留。 */
+export async function cleanupEmailJobs(retentionDays: number = 120): Promise<number> {
+  const days = Math.floor(Number(retentionDays));
+  const safeDays = Number.isFinite(days) && days >= 1 && days <= 3650 ? days : 120;
+  const r = await query(
+    `DELETE FROM support_email_jobs
+     WHERE created_at < now() - ($1::int * interval '1 day')
+       AND status NOT IN ('pending', 'sending')`,
+    [safeDays],
+  );
+  const removed = r.rowCount || 0;
+  if (removed > 0) console.log(`[email-service] 清理了 ${removed} 条超过 ${safeDays} 天的邮件任务`);
+  return removed;
 }

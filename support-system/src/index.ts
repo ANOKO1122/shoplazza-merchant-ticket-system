@@ -12,9 +12,9 @@ import { ensureTables, getPool } from './pg';
 import { createShoplazzaWebhookRouter } from './shoplazza-webhook-routes';
 import { createSupportRouter } from './support-routes';
 import { createAdminRouter } from './admin-routes';
-import { processDueEmailJobs } from './email-service';
+import { processDueEmailJobs, cleanupEmailJobs } from './email-service';
 import { getAutoBackfillEnabled, runBackfillForAllStores } from './backfill-jobs';
-import { cleanupSyncLogs } from './log-service';
+import { cleanupSyncLogs, cleanupOperationLogs } from './log-service';
 import { getRequestAgent } from './auth';
 import { ADMIN_HOME, ADMIN_PAGES, ADMIN_PAGE_FILES, normalizeAdminPath, safeAdminRedirect } from './admin-pages';
 
@@ -134,7 +134,24 @@ app.use((req, res, next) => {
   res.redirect(302, alias + (q >= 0 ? req.originalUrl.slice(q) : ''));
 });
 
-app.use(express.static(publicDir, { index: false }));
+app.use(express.static(publicDir, {
+  index: false,
+  etag: true,
+  lastModified: true,
+  setHeaders(res, filePath) {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-store');
+      return;
+    }
+    if (/\.(png|jpe?g|gif|webp|svg|ico)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'public, max-age=604800');
+      return;
+    }
+    if (/\.(css|js)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+    }
+  },
+}));
 
 // 根路径：返回 404 页面（不允许直接访问）
 app.get('/', (_req, res) => {
@@ -352,12 +369,16 @@ async function startup() {
     console.log('[support-bridge] 自动兜底: 已关闭，可在邮件管理页手动开启');
   }
 
-  // 启动时清理过期同步日志 + 每 24h 重复
-  const retentionDays = Number(process.env.SUPPORT_SYNC_LOG_RETENTION_DAYS) || 30;
-  cleanupSyncLogs(retentionDays).catch((e: any) => console.error('[log-cleanup] failed:', e.message));
-  const cleanupTimer = setInterval(() => {
-    cleanupSyncLogs(retentionDays).catch((e: any) => console.error('[log-cleanup] failed:', e.message));
-  }, 24 * 60 * 60 * 1000);
+  // 启动时清理过期日志和邮件任务，之后每 24 小时重复
+  const logRetentionDays = Number(process.env.SUPPORT_SYNC_LOG_RETENTION_DAYS) || 60;
+  const emailRetentionDays = Number(process.env.SUPPORT_EMAIL_JOB_RETENTION_DAYS) || 120;
+  const runRetention = () => {
+    cleanupSyncLogs(logRetentionDays).catch((e: any) => console.error('[log-cleanup] sync failed:', e.message));
+    cleanupOperationLogs(logRetentionDays).catch((e: any) => console.error('[log-cleanup] operation failed:', e.message));
+    cleanupEmailJobs(emailRetentionDays).catch((e: any) => console.error('[email-cleanup] failed:', e.message));
+  };
+  runRetention();
+  const cleanupTimer = setInterval(runRetention, 24 * 60 * 60 * 1000);
   cleanupTimer.unref();
 }
 

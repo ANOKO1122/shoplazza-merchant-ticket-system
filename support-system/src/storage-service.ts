@@ -3,6 +3,7 @@ import sharp from 'sharp';
 import path from 'path';
 import fs from 'fs/promises';
 import crypto from 'crypto';
+import { Request, RequestHandler } from 'express';
 
 // ─── StorageProvider 接口 ───
 
@@ -106,6 +107,8 @@ export function getStorageProvider(): StorageProvider {
 // ─── Multer 中间件 ───
 
 const TEMP_DIR = path.resolve(__dirname, '..', 'tmp', 'support-uploads');
+const uploadDirectories = new WeakMap<Request, Promise<string>>();
+const finishedUploads = new WeakSet<Request>();
 
 // 确保临时目录存在
 fs.mkdir(TEMP_DIR, { recursive: true }).catch((e) => {
@@ -118,9 +121,37 @@ const ALLOWED_MIMETYPES = [
   'image/webp',
 ];
 
+async function cleanupUpload(req: Request): Promise<void> {
+  finishedUploads.add(req);
+  const directory = uploadDirectories.get(req);
+  if (!directory) return;
+  try {
+    // 每个请求独立目录；只删除原始临时图片，不触及 public/uploads 中的正式附件。
+    await fs.rm(await directory, { recursive: true, force: true });
+  } catch (e: any) {
+    console.error('[storage] 临时上传清理失败:', e.message);
+  }
+}
+
 export const imageUpload = multer({
   storage: multer.diskStorage({
-    destination: TEMP_DIR,
+    destination: (req, _file, cb) => {
+      if (finishedUploads.has(req)) return cb(new Error('Upload request ended'), '');
+      let directory = uploadDirectories.get(req);
+      if (!directory) {
+        directory = fs.mkdir(TEMP_DIR, { recursive: true })
+          .then(() => fs.mkdtemp(path.join(TEMP_DIR, 'upload-')));
+        uploadDirectories.set(req, directory);
+      }
+      directory.then(async dir => {
+        if (finishedUploads.has(req)) {
+          await cleanupUpload(req);
+          cb(new Error('Upload request ended'), '');
+        } else {
+          cb(null, dir);
+        }
+      }, error => cb(error, ''));
+    },
     filename: (_req, file, cb) => {
       // 随机文件名防冲突
       const ext = path.extname(file.originalname) || '.jpg';
@@ -140,14 +171,32 @@ export const imageUpload = multer({
   },
 });
 
+function withUploadCleanup(upload: RequestHandler): RequestHandler {
+  return (req, res, next) => {
+    const cleanup = () => { void cleanupUpload(req); };
+    res.once('finish', cleanup);
+    res.once('close', cleanup);
+    req.once('aborted', cleanup);
+    upload(req, res, error => {
+      if (error) {
+        void cleanupUpload(req).then(() => next(error));
+      } else if (req.aborted || res.destroyed) {
+        cleanup();
+      } else {
+        next();
+      }
+    });
+  };
+}
+
 /** 管理员发消息时使用的 multer 中间件（字段名 "images"，最多 3 张） */
-export const uploadAttachments = imageUpload.array('images', 3);
+export const uploadAttachments = withUploadCleanup(imageUpload.array('images', 3));
 
 /** 顾客发消息时使用的 multer 中间件（字段名 "images"，最多 1 张） */
-export const uploadSingleAttachment = imageUpload.array('images', 1);
+export const uploadSingleAttachment = withUploadCleanup(imageUpload.array('images', 1));
 
 /** 工单提交时使用的 multer 中间件（字段名 "images"，最多 2 张） */
-export const uploadTicketAttachments = imageUpload.array('images', 2);
+export const uploadTicketAttachments = withUploadCleanup(imageUpload.array('images', 2));
 
 /** 处理 multer 文件数组，返回相对 URL 数组。处理完自动清理临时文件 */
 export async function processAttachments(

@@ -125,7 +125,7 @@ export async function ensureTables(): Promise<void> {
   // 兼容已有表：添加 active_preset_name 列
   await p.query(`ALTER TABLE support_email_templates ADD COLUMN IF NOT EXISTS active_preset_name TEXT`);
 
-  // 插入默认模板（首次安装时写入，已存在则更新为最新版）
+  // 默认模板只在首次安装写入，重启不能覆盖管理员保存的正文和预设。
   await p.query(`
     INSERT INTO support_email_templates (email_type, subject_template, body_template)
     VALUES
@@ -159,10 +159,7 @@ export async function ensureTables(): Promise<void> {
 <tr><td style="color:#999;font-size:12px;border-top:1px solid #eee;padding-top:16px;line-height:1.6">This is a transactional notification regarding your recent purchase. Please do not reply directly to this email as this inbox is unmonitored. If you need further assistance or wish to manage your support tickets, please <a href="{{client_link}}" style="color:#1890ff;text-decoration:underline">click here to contact our support center</a>.</td></tr>
 </table></td></tr></table>
 </body></html>')
-    ON CONFLICT (email_type) DO UPDATE SET
-      subject_template = EXCLUDED.subject_template,
-      body_template = EXCLUDED.body_template,
-      updated_at = now()
+    ON CONFLICT (email_type) DO NOTHING
   `);
 
   await p.query(`
@@ -197,10 +194,7 @@ export async function ensureTables(): Promise<void> {
 <tr><td style="color:#999;font-size:12px;border-top:1px solid #eee;padding-top:16px;line-height:1.6">Please do not reply directly to this email. This inbox is unattended. If you need further assistance, please follow the link above to update your ticket.</td></tr>
 </table></td></tr></table>
 </body></html>')
-    ON CONFLICT (email_type) DO UPDATE SET
-      subject_template = EXCLUDED.subject_template,
-      body_template = EXCLUDED.body_template,
-      updated_at = now()
+    ON CONFLICT (email_type) DO NOTHING
   `);
 
   await p.query(`
@@ -222,10 +216,7 @@ export async function ensureTables(): Promise<void> {
            <p>This is an automated message from {{store_name}} support system.</p>
          </div>
        </div>')
-    ON CONFLICT (email_type) DO UPDATE SET
-      subject_template = EXCLUDED.subject_template,
-      body_template = EXCLUDED.body_template,
-      updated_at = now()
+    ON CONFLICT (email_type) DO NOTHING
   `);
 
   // 手动发起新工单邀请：顾客投诉工单模板（英文版，完整HTML邮件格式，含店铺蓝链+商品列表）
@@ -284,10 +275,7 @@ export async function ensureTables(): Promise<void> {
 <tr><td style="color:#999;font-size:12px;border-top:1px solid #eee;padding-top:16px;line-height:1.6">This is an automated message. Please do not reply directly to this email as this inbox is unmonitored. If you need further assistance or wish to manage your support tickets, please <a href="{{client_link}}" style="color:#1890ff;text-decoration:underline">click here to contact our support center</a>.</td></tr>
 </table></td></tr></table>
 </body></html>')
-    ON CONFLICT (email_type) DO UPDATE SET
-      subject_template = EXCLUDED.subject_template,
-      body_template = EXCLUDED.body_template,
-      updated_at = now()
+    ON CONFLICT (email_type) DO NOTHING
   `);
 
   // 邮件模板预设（可切换的多套模板）
@@ -507,6 +495,8 @@ export async function ensureTables(): Promise<void> {
     )
   `);
 
+  await p.query(`ALTER TABLE support_backfill_state ADD COLUMN IF NOT EXISTS last_unpaid_synced_at TIMESTAMPTZ`);
+
   // 自动兜底开关（复用 support_email_settings 表）
   await p.query(`ALTER TABLE support_email_settings ADD COLUMN IF NOT EXISTS auto_backfill_enabled BOOLEAN NOT NULL DEFAULT false`);
 
@@ -549,7 +539,9 @@ export async function ensureTables(): Promise<void> {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_sync_logs_status ON support_sync_logs(status, created_at DESC)`);
   await p.query(`ALTER TABLE support_sync_logs ADD COLUMN IF NOT EXISTS store_name TEXT`);
 
-  // 系统日志 — 操作日志（低频，永久保留）
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_sync_logs_created ON support_sync_logs(created_at)`);
+
+  // 系统日志 — 操作日志（默认保留 60 天）
   await p.query(`
     CREATE TABLE IF NOT EXISTS support_operation_logs (
       id BIGSERIAL PRIMARY KEY,
@@ -570,6 +562,8 @@ export async function ensureTables(): Promise<void> {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_op_logs_status ON support_operation_logs(status, created_at DESC)`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_op_logs_store ON support_operation_logs(store_subdomain, created_at DESC)`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_op_logs_target ON support_operation_logs(target)`);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_op_logs_created ON support_operation_logs(created_at)`);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_support_email_jobs_created ON support_email_jobs(created_at)`);
 
   // 统计实际表数和索引数
   const tableR = await p.query(

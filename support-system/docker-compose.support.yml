@@ -4,12 +4,21 @@ services:
     restart: always
     environment:
       POSTGRES_USER: support_user
-      POSTGRES_PASSWORD: support_password
+      POSTGRES_PASSWORD: ${SUPPORT_POSTGRES_PASSWORD:?Set SUPPORT_POSTGRES_PASSWORD in .env}
       POSTGRES_DB: support_portal
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./postgres-ssl:/var/lib/postgresql/certs:ro
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/var/lib/postgresql/certs/server.crt
+      - -c
+      - ssl_key_file=/var/lib/postgresql/certs/server.key
     networks:
       - support_net
 
@@ -18,9 +27,10 @@ services:
     restart: always
     environment:
       MP_WEBROOT: "/mailpit"
+      MP_MAX_MESSAGES: "500"
     ports:
-      - "1025:1025"
-      - "8025:8025"
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
     networks:
       - support_net
 
@@ -29,7 +39,7 @@ services:
     image: support-bridge:local
     restart: always
     ports:
-      - "4001:4001"
+      - "127.0.0.1:4001:4001"
     depends_on:
       - postgres
       - mailpit

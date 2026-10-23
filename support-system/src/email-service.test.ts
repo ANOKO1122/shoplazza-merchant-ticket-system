@@ -53,10 +53,18 @@ test('renderAgentReplyNoticeEmail stores masked snapshots and sends full ticket 
   assert.match(rendered.snapshotBody, /ta_abcd\.\.\.3456/);
 });
 
-test('buildEmailJobNo is prefixed and unique enough for operator-facing records', () => {
-  const first = buildEmailJobNo();
-  const second = buildEmailJobNo();
+test('buildEmailJobNo includes the local date and 64 bits of randomness', () => {
+  const now = new Date(2026, 9, 23, 12);
+  const first = buildEmailJobNo(now);
+  const second = buildEmailJobNo(now);
 
-  assert.match(first, /^EJ\d{14}[a-f0-9]{6}$/);
+  assert.match(first, /^EJ261023[a-f0-9]{16}$/);
+  assert.match(second, /^EJ261023[a-f0-9]{16}$/);
   assert.notEqual(first, second);
+});
+
+test('buildEmailJobNo preserves existing resend suffixes, including sequence zero', () => {
+  const now = new Date(2026, 9, 23, 12);
+  assert.equal(buildEmailJobNo(now, 'EJ260101abcd', 2), 'EJ260101abcd-2');
+  assert.equal(buildEmailJobNo(now, 'EJ260101abcd', 0), 'EJ260101abcd-0');
 });

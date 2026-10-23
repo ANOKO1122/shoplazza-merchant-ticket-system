@@ -115,10 +115,12 @@ tr.selected td .tag-red { background: rgba(255,255,255,0.2); color: #fff; }
 .btn-sm-danger { color: var(--danger); border-color: var(--danger); }
 .btn-sm-danger:hover { background: var(--danger); color: #fff; }
 .error-msg { background: #fff2f0; border: 1px solid #ffccc7; border-radius: 6px; padding: 10px 14px; color: var(--danger); font-size: 13px; margin-bottom: 12px; }
-.pagination { display: flex; justify-content: center; gap: 6px; padding: 10px; flex-shrink: 0; background: #fafafa; border-top: 1px solid var(--border); }
+.pagination { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 6px; padding: 10px; flex-shrink: 0; background: #fafafa; border-top: 1px solid var(--border); }
 .pagination button { padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 4px; background: #fff; cursor: pointer; font-size: 12px; }
 .pagination button.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 .pagination button:disabled { opacity: 0.4; cursor: default; }
+.pagination .pager-total { color: var(--text-muted); font-size: 12px; margin-right: 4px; }
+.pagination .pager-gap { color: var(--text-muted); padding: 0 2px; user-select: none; }
 .toggle { position: relative; display: inline-block; width: 44px; height: 22px; vertical-align: middle; }
 .toggle input { opacity: 0; width: 0; height: 0; }
 .toggle .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #ccc; border-radius: 22px; transition: .3s; }

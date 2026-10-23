@@ -42,8 +42,9 @@ function hashPassword(password: string): string {
 }
 
 function verifyPassword(password: string, stored: string): boolean {
+  if (typeof password !== 'string' || typeof stored !== 'string') return false;
   const [salt, hash] = stored.split(':');
-  if (!salt || !hash) return false;
+  if (!/^[a-f0-9]{32}:[a-f0-9]{128}$/.test(stored)) return false;
   const computed = crypto.scryptSync(password, salt, 64).toString('hex');
   return crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(hash));
 }
@@ -64,6 +65,7 @@ export async function seedAgent(params: {
 }
 
 export async function loginAgent(username: string, password: string): Promise<{ id: number; name: string; role: string } | null> {
+  if (typeof username !== 'string' || typeof password !== 'string') return null;
   const r = await query(
     `SELECT id, name, role, password_hash, enabled FROM support_agents WHERE username = $1`,
     [username],
@@ -100,7 +102,8 @@ export async function verifySession(token: string): Promise<{ agentId: number; n
      WHERE s.session_token_hash = $1 AND s.expires_at > now() AND a.enabled = true`,
     [tokenHash],
   );
-  return r.rows[0] || null;
+  const agent = r.rows[0];
+  return agent ? { agentId: Number(agent.id), name: agent.name, role: agent.role } : null;
 }
 
 /** 修改管理员密码（需验证旧密码）

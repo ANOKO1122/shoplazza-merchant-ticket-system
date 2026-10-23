@@ -13,7 +13,7 @@
  */
 import { getEnabledStores, StoreRecord } from './store-service';
 import { query } from './pg';
-import { listPaidOrdersCreatedSince, getOrderTransactions, ShoplazzaOrderDetail } from './shoplazza-client';
+import { listPaidOrdersCreatedSince, listWaitingOrdersUpdatedSince, getOrderTransactions, ShoplazzaOrderDetail } from './shoplazza-client';
 import { normalizeOrder } from './normalize-order';
 import { createPaidSupportInviteEmailJob, extractStoreCustomDomain } from './email-service';
 import { logSync, logOperation } from './log-service';
@@ -24,13 +24,14 @@ import { buildStoreDomain } from './config';
 export interface BackfillState {
   storeSubdomain: string;
   lastSyncedAt: string | null;
+  lastUnpaidSyncedAt: string | null;
   lastStatus: string;
   lastResultJson: Record<string, unknown> | null;
 }
 
 export async function getBackfillState(storeSubdomain: string): Promise<BackfillState | null> {
   const r = await query(
-    `SELECT store_subdomain, last_synced_at, last_status, last_result_json
+    `SELECT store_subdomain, last_synced_at, last_unpaid_synced_at, last_status, last_result_json
      FROM support_backfill_state WHERE store_subdomain = $1`,
     [storeSubdomain],
   );
@@ -39,6 +40,7 @@ export async function getBackfillState(storeSubdomain: string): Promise<Backfill
   return {
     storeSubdomain: row.store_subdomain,
     lastSyncedAt: row.last_synced_at ? new Date(row.last_synced_at).toISOString() : null,
+    lastUnpaidSyncedAt: row.last_unpaid_synced_at ? new Date(row.last_unpaid_synced_at).toISOString() : null,
     lastStatus: row.last_status,
     lastResultJson: row.last_result_json || null,
   };
@@ -46,12 +48,13 @@ export async function getBackfillState(storeSubdomain: string): Promise<Backfill
 
 export async function getAllBackfillStates(): Promise<BackfillState[]> {
   const r = await query(
-    `SELECT store_subdomain, last_synced_at, last_status, last_result_json
+    `SELECT store_subdomain, last_synced_at, last_unpaid_synced_at, last_status, last_result_json
      FROM support_backfill_state ORDER BY store_subdomain`,
   );
   return r.rows.map(row => ({
     storeSubdomain: row.store_subdomain,
     lastSyncedAt: row.last_synced_at ? new Date(row.last_synced_at).toISOString() : null,
+    lastUnpaidSyncedAt: row.last_unpaid_synced_at ? new Date(row.last_unpaid_synced_at).toISOString() : null,
     lastStatus: row.last_status,
     lastResultJson: row.last_result_json || null,
   }));
@@ -355,6 +358,184 @@ async function backfillOneStoreWithLogging(
   return result;
 }
 
+const UNPAID_OVERLAP_MS = 5 * 60 * 1000;
+const UNPAID_FIRST_WINDOW_MS = 60 * 60 * 1000;
+const UNPAID_MAX_WINDOW_MS = 60 * 60 * 1000;
+const UNPAID_MIN_WINDOW_MS = 1000;
+const unpaidRuns = new Map<string, Promise<void>>();
+
+async function saveUnpaidCursor(storeSubdomain: string, syncedAt: string): Promise<void> {
+  await query(
+    `INSERT INTO support_backfill_state (store_subdomain, last_status, last_unpaid_synced_at, updated_at)
+     VALUES ($1, 'idle', $2, now())
+     ON CONFLICT (store_subdomain) DO UPDATE SET
+       last_unpaid_synced_at = GREATEST(support_backfill_state.last_unpaid_synced_at, EXCLUDED.last_unpaid_synced_at),
+       updated_at = now()`,
+    [storeSubdomain, syncedAt],
+  );
+}
+
+/** 未支付订单按更新时间补进快照。没有邮箱的跳过，不打详情，不发邮件，也不改已支付进度。 */
+async function backfillUnpaidWindow(
+  store: StoreRecord,
+  updatedAtMin: string,
+  updatedAtMax: string,
+  onProgress?: (msg: string) => void,
+): Promise<void> {
+  const log = (msg: string) => {
+    console.log(`[backfill-unpaid:${store.subdomain}] ${msg}`);
+    if (onProgress) onProgress(`[${store.subdomain}] ${msg}`);
+  };
+  log(`未支付增量（按更新时间）: ${updatedAtMin} → ${updatedAtMax}`);
+
+  const storeConfig = {
+    subdomain: store.subdomain,
+    storeName: store.store_name || store.subdomain,
+    accessToken: store.access_token,
+  };
+  const started = Date.now();
+  const orders = await listWaitingOrdersUpdatedSince(storeConfig, updatedAtMin, updatedAtMax);
+  let saved = 0;
+  let updated = 0;
+  let skipped = 0;
+  let keptPaid = 0;
+  const orderLines: Array<{ orderNumber: string; kind: 'new' | 'updated' | 'kept' | 'skipped' }> = [];
+
+  for (const order of orders) {
+    const normalized = normalizeOrder(store.subdomain, store.store_name || store.subdomain, order, []);
+    if (!normalized.orderId || !normalized.customerEmail || normalized.paymentStatus !== 'waiting') {
+      skipped++;
+      const skippedNo = normalized.orderNumber || normalized.orderId;
+      if (skippedNo) orderLines.push({ orderNumber: skippedNo, kind: 'skipped' });
+      continue;
+    }
+    const snapshotResult = await query(
+      `INSERT INTO support_order_snapshots
+        (store_subdomain, store_name, order_id, order_number, customer_email, customer_name,
+         order_status, fulfillment_status, order_amount, order_currency,
+         payment_status, payment_method, paid_at, refund_status, refund_amount,
+         transaction_id_masked, card_last4,
+         items_json, shipping_address_json, billing_address_json, logistics_json,
+         payment_detail_json, raw_order_json,
+         snapshot_source, fetched_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+       ON CONFLICT (store_subdomain, order_id, customer_email)
+       DO UPDATE SET
+         order_number = EXCLUDED.order_number,
+         customer_name = CASE WHEN EXCLUDED.customer_name <> '' THEN EXCLUDED.customer_name ELSE support_order_snapshots.customer_name END,
+         order_status = EXCLUDED.order_status,
+         fulfillment_status = CASE WHEN EXCLUDED.fulfillment_status <> '' THEN EXCLUDED.fulfillment_status ELSE support_order_snapshots.fulfillment_status END,
+         order_amount = EXCLUDED.order_amount,
+         order_currency = EXCLUDED.order_currency,
+         payment_status = EXCLUDED.payment_status,
+         payment_method = EXCLUDED.payment_method,
+         items_json = EXCLUDED.items_json,
+         shipping_address_json = EXCLUDED.shipping_address_json,
+         billing_address_json = EXCLUDED.billing_address_json,
+         logistics_json = EXCLUDED.logistics_json,
+         raw_order_json = EXCLUDED.raw_order_json,
+         updated_at = now()
+       WHERE support_order_snapshots.payment_status IS DISTINCT FROM 'paid'
+       RETURNING (created_at = updated_at) AS is_new`,
+      [
+        normalized.storeSubdomain,
+        normalized.storeName,
+        normalized.orderId,
+        normalized.orderNumber,
+        normalized.customerEmail,
+        normalized.customerName,
+        normalized.orderStatus,
+        normalized.fulfillmentStatus,
+        normalized.orderAmount,
+        normalized.orderCurrency,
+        normalized.paymentStatus,
+        normalized.paymentMethod,
+        null,
+        normalized.refundStatus,
+        normalized.refundAmount,
+        '',
+        '',
+        JSON.stringify(normalized.itemsJson),
+        JSON.stringify(normalized.shippingAddressJson),
+        JSON.stringify(normalized.billingAddressJson),
+        JSON.stringify(normalized.logisticsJson),
+        '{}',
+        JSON.stringify(normalized.rawOrderJson),
+        'backfill_unpaid',
+        new Date().toISOString(),
+      ],
+    );
+    const isNew = Boolean(snapshotResult.rows[0]?.is_new);
+    const kept = (snapshotResult.rowCount ?? 0) === 0;
+    if (kept) keptPaid++;
+    else if (isNew) saved++;
+    else updated++;
+    orderLines.push({
+      orderNumber: normalized.orderNumber || normalized.orderId,
+      kind: kept ? 'kept' : isNew ? 'new' : 'updated',
+    });
+  }
+
+  await saveUnpaidCursor(store.subdomain, updatedAtMax);
+  await logSync({
+    source: 'backfill',
+    action: 'unpaid_summary',
+    storeSubdomain: store.subdomain,
+    storeName: store.store_name || store.subdomain,
+    itemsTotal: orders.length,
+    itemsNew: saved,
+    itemsUpdated: updated,
+    itemsSkipped: skipped,
+    status: 'success',
+    durationMs: Date.now() - started,
+    detailJson: { updatedAtMin, updatedAtMax, keptPaid, orders: orderLines },
+  });
+  log(`未支付完成: 列表 ${orders.length}, 新写入 ${saved}, 更新 ${updated}, 无邮箱跳过 ${skipped}, 已支付未覆盖 ${keptPaid}`);
+}
+
+/** 每个完整时间片单独保存进度；积压或失败不会让已完成的时间片重新从头拉取。 */
+async function backfillUnpaidForStore(
+  store: StoreRecord,
+  updatedAtMax: string,
+  onProgress?: (msg: string) => void,
+): Promise<void> {
+  const running = unpaidRuns.get(store.subdomain);
+  if (running) return running;
+
+  const run = (async () => {
+    // 在获得本店执行权后读取最新进度，避免手动查漏与定时查漏使用旧游标。
+    const existing = await getBackfillState(store.subdomain);
+    const maxMs = new Date(updatedAtMax).getTime();
+    let startMs = existing?.lastUnpaidSyncedAt
+      ? new Date(existing.lastUnpaidSyncedAt).getTime() - UNPAID_OVERLAP_MS
+      : maxMs - UNPAID_FIRST_WINDOW_MS;
+    let windowMs = UNPAID_MAX_WINDOW_MS;
+
+    while (startMs < maxMs) {
+      const endMs = Math.min(startMs + windowMs, maxMs);
+      try {
+        await backfillUnpaidWindow(store, new Date(startMs).toISOString(), new Date(endMs).toISOString(), onProgress);
+      } catch (error: any) {
+        if (error.code !== 'WAITING_WINDOW_TOO_LARGE' || endMs - startMs <= UNPAID_MIN_WINDOW_MS) throw error;
+        windowMs = Math.max(UNPAID_MIN_WINDOW_MS, Math.floor((endMs - startMs) / 2));
+        const message = `[${store.subdomain}] 未支付窗口超过分页上限，缩小至 ${windowMs / 1000} 秒重试`;
+        console.warn(message);
+        if (onProgress) onProgress(message);
+        continue;
+      }
+      startMs = endMs;
+      windowMs = UNPAID_MAX_WINDOW_MS;
+    }
+  })();
+
+  unpaidRuns.set(store.subdomain, run);
+  try {
+    await run;
+  } finally {
+    unpaidRuns.delete(store.subdomain);
+  }
+}
+
 /**
  * 对单个店铺执行兜底同步（供 API 调用）。
  * 自动计算时间范围：从上次同步时间到当前时间。
@@ -399,6 +580,20 @@ export async function runBackfillForStore(
       errors: result.errors.length,
       lastError: result.errors.slice(0, 3).join('; '),
     });
+    try {
+      await backfillUnpaidForStore(store, createdAtMax, onProgress);
+    } catch (unpaidError: any) {
+      console.error(`[backfill-unpaid:${storeSubdomain}] 未支付同步失败，已支付进度不变: ${unpaidError.message}`);
+      if (onProgress) onProgress(`[${storeSubdomain}] 未支付同步失败: ${unpaidError.message}`);
+      await logSync({
+        source: 'backfill',
+        action: 'unpaid_summary',
+        storeSubdomain,
+        storeName: store.store_name || store.subdomain,
+        status: 'failed',
+        errorMessage: unpaidError.message,
+      });
+    }
     return result;
   } catch (e: any) {
     await setBackfillStatus(storeSubdomain, 'failed');
@@ -426,4 +621,12 @@ export async function runBackfillForAllStores(
   }
 
   return results;
+}
+
+/** 只跑未支付增量，不动已支付进度。 */
+export async function runUnpaidBackfillOnly(storeSubdomain: string): Promise<void> {
+  const stores = await getEnabledStores();
+  const store = stores.find(s => s.subdomain === storeSubdomain);
+  if (!store) throw new Error(`店铺 ${storeSubdomain} 未找到或已禁用`);
+  await backfillUnpaidForStore(store, new Date().toISOString());
 }

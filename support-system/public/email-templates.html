@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>邮件模板编辑 - 客服后台</title>
+<link rel="stylesheet" href="/admin-base.css">
+<script src="/admin-shell.js"></script>
 <style>
   :root {
   --primary: #1890ff; --primary-hover: #40a9ff; --success: #52c41a; --warning: #fa8c16;
@@ -101,6 +103,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
   .editor-grid { grid-template-columns: 1fr; }
 }
 </style>
+<script src="/safe-render.js"></script>
 </head>
 <body>
 <div id="loadingOverlay" class="login-page"><div class="login-card" style="text-align:center;color:var(--text-muted);padding:60px 36px">加载中...</div></div>
@@ -116,7 +119,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
       <a class="nav-item" href="/thinkpro-admin"><span class="nav-icon">📋</span>工单处理</a>
       <a class="nav-item" href="/thinkpro-admin/stores"><span class="nav-icon">🏪</span>店铺管理</a>
       <a class="nav-item" href="/thinkpro-admin/emails"><span class="nav-icon">📧</span>订单邮件管理</a>
-      <a class="nav-item active"><span class="nav-icon">📨</span>邮件模板</a>
+      <a class="nav-item active" href="/thinkpro-admin/email-templates"><span class="nav-icon">📨</span>邮件模板</a>
       <a class="nav-item" href="/thinkpro-admin/settings"><span class="nav-icon">⚙️</span>系统设置</a>
       <a class="nav-item" href="/thinkpro-admin/logs"><span class="nav-icon">📋</span>系统日志</a>
       <a class="nav-item" href="/mailpit/" target="_blank"><span class="nav-icon">📬</span>邮件调试</a>
@@ -251,7 +254,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
             </details>
             <!-- 预览 iframe -->
             <div style="font-weight:600;font-size:12px;margin-bottom:4px;color:var(--text-secondary)">邮件主题预览：<span id="previewSubject" style="font-weight:400;color:var(--text-main)"></span></div>
-            <iframe id="previewFrame" class="preview-frame" sandbox="allow-same-origin"></iframe>
+            <iframe id="previewFrame" class="preview-frame" sandbox=""></iframe>
           </div>
         </div>
       </div>
@@ -267,18 +270,29 @@ var currentTemplate = null;
 
 // 页面加载
 (async function init() {
-  // 验证登录
+  var bootEpoch = adminEpoch();
   try {
-    var r = await fetch(API + '/me', { credentials: 'same-origin' });
-    var d = await r.json();
-    if (!d.ok) { location.replace('/login?redirect=' + encodeURIComponent('/thinkpro-admin/email-templates')); return; }
-    document.getElementById('agentName').textContent = d.agent.name;
-    document.getElementById('loadingOverlay').style.display = 'none';
-    document.getElementById('mainContent').style.display = '';
+    var agent = window.__adminAgent;
+    if (!agent) {
+      var r = await fetch(API + '/me', { credentials: 'same-origin' });
+      var d = await r.json();
+      if (bootEpoch !== adminEpoch()) return;
+      if (!d.ok) { location.replace('/login?redirect=' + encodeURIComponent('/thinkpro-admin/email-templates')); return; }
+      agent = d.agent;
+      window.__adminAgent = agent;
+    }
+    if (bootEpoch !== adminEpoch()) return;
+    var nameEl = document.getElementById('adminUserName') || document.getElementById('agentName');
+    if (nameEl) nameEl.textContent = agent.name;
+    var overlay = document.getElementById('loadingOverlay');
+    if (overlay) overlay.style.display = 'none';
+    var content = document.getElementById('mainContent');
+    if (content) content.style.display = '';
   } catch(e) { location.replace('/login?redirect=' + encodeURIComponent('/thinkpro-admin/email-templates')); return; }
 
-  // 加载第一个模板
+  if (bootEpoch !== adminEpoch()) return;
   await loadTemplate('paid_support_invite');
+  if (bootEpoch !== adminEpoch()) return;
   livePreview();
 })();
 

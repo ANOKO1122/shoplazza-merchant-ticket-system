@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+node_modules
+dist
+uploads
+thumbnails
+tmp
+public/uploads
+public/thumbnails
+postgres-ssl
+nginx/ssl
+nginx/letsencrypt
+nginx/acme-challenge
+*.log
+*.out.log
+*.err.log

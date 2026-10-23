@@ -278,6 +278,7 @@
     .reply-box { font-size: 16px; }
   }
 </style>
+<script src="/safe-render.js"></script>
 </head>
 <body>
 
@@ -295,7 +296,7 @@
 var API = '/api/admin';
 
 function $(sel) { return document.querySelector(sel); }
-function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function esc(v) { return SupportSafe.escape(v); }
 
 function formatDate(iso) {
   if (!iso) return '';
@@ -338,7 +339,7 @@ function renderNewTicket(order) {
     '<p class="greeting">Dear ' + esc(order.customer_name || 'Customer') + '</p>' +
     '<p class="order-summary">' +
     'You made a <span class="highlight-money">' + esc(amountDisplay) + '</span> purchase on ' +
-    '<a href="https://' + esc(storeUrl) + '" target="_blank" rel="noopener" class="highlight-link">' + esc(storeUrl) + '</a> from ' +
+    '<a href="' + esc(SupportSafe.url('https://' + storeUrl)) + '" target="_blank" rel="noopener" class="highlight-link">' + esc(storeUrl) + '</a> from ' +
     '<span class="highlight-time">' + esc(dateDisplay) + '</span>' +
     '</p>' +
     '<p class="order-summary">' +
@@ -375,9 +376,9 @@ function renderTicketDetail(data) {
     var role = roleLabels[m.sender_type] || m.sender_type;
     var imgHtml = renderAttachments(m.attachments);
     timelineHtml +=
-      '<div class="timeline-item ' + esc(m.sender_type) + '">' +
+      '<div class="timeline-item ' + SupportSafe.role(m.sender_type) + '">' +
       '<div class="timeline-meta">' +
-      '<span class="timeline-role ' + esc(m.sender_type) + '">' + esc(role) + '</span>' +
+      '<span class="timeline-role ' + SupportSafe.role(m.sender_type) + '">' + esc(role) + '</span>' +
       '<span class="timeline-time">' + esc(formatDate(m.created_at)) + '</span>' +
       '</div>' +
       '<div class="timeline-content">' + esc(m.content) + '</div>' +
@@ -467,21 +468,11 @@ async function loadPreview() {
 }
 
 function renderAttachments(attachments) {
-  if (!attachments || !attachments.length) return '';
-  var html = '<div class="msg-images">';
-  attachments.forEach(function(url) {
-    html += '<img src="' + esc(url) + '" class="chat-img" onclick="viewImage(\'' + esc(url) + '\')" loading="lazy">';
-  });
-  html += '</div>';
-  return html;
+  return SupportSafe.images(attachments);
 }
 
 function viewImage(url) {
-  var lb = document.createElement('div');
-  lb.className = 'image-lightbox';
-  lb.innerHTML = '<img src="' + url + '">';
-  lb.onclick = function() { lb.remove(); };
-  document.body.appendChild(lb);
+  SupportSafe.showImage(url);
 }
 
 (async function init() {

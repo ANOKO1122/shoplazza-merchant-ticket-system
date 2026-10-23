@@ -5,6 +5,7 @@ import { getOrderByNumber, getOrderDetail, getOrderTransactions, ShoplazzaOrderD
 import { normalizeOrder } from './normalize-order';
 import { createPaidSupportInviteEmailJob, extractStoreCustomDomain } from './email-service';
 import { logSync } from './log-service';
+import { requireWebhookAuth } from './webhook-security';
 
 /** 需要查卡号后四位的支付渠道（店匠自有支付），第三方支付（PayPal等）跳过交易查询 */
 const CARD_LOOKUP_CHANNELS = ['shoplazzapayment'];
@@ -27,6 +28,84 @@ function isCompletePaidOrder(order: any): boolean {
   const financial = String(order.financial_status || '').trim().toLowerCase();
   const hasItems = Array.isArray(order.line_items) && order.line_items.length > 0;
   return Boolean(id && email && financial === 'paid' && extractPaymentChannel(order) && hasItems);
+}
+
+const FULFILLMENT_TOPICS = ['orders/fulfilled', 'orders/partially_fulfilled'];
+
+function collectTrackingNumbers(order: any): string[] {
+  const fulfillments = Array.isArray(order?.fulfillments) ? order.fulfillments : [];
+  const numbers: string[] = [];
+  for (const item of fulfillments) {
+    const raw = item?.tracking_number || item?.tracking_no || '';
+    const text = String(raw || '').trim();
+    if (text && !numbers.includes(text)) numbers.push(text);
+  }
+  return numbers;
+}
+
+/** 发货事件只补已有订单的运单和履约状态，不打详情接口，也不新建快照。 */
+async function applyFulfillmentWebhook(params: {
+  storeSubdomain: string;
+  storeName: string;
+  topic: string;
+  order: any;
+  orderId: string;
+  orderNumber: string;
+}): Promise<void> {
+  const trackingNumbers = collectTrackingNumbers(params.order);
+  const fulfillmentStatus = String(params.order?.fulfillment_status || '').trim();
+  if (!params.orderId && !params.orderNumber) {
+    console.warn(`[webhook] 发货事件缺少订单标识: ${params.topic}`);
+    return;
+  }
+
+  const hasTracking = trackingNumbers.length > 0;
+  const fulfillmentsJson = JSON.stringify(Array.isArray(params.order?.fulfillments) ? params.order.fulfillments : []);
+  const whereSql = params.orderId
+    ? 'store_subdomain = $1 AND order_id = $2'
+    : 'store_subdomain = $1 AND order_number = $2';
+  const whereValue = params.orderId || params.orderNumber;
+  const result = await query(
+    `UPDATE support_order_snapshots
+     SET fulfillment_status = CASE WHEN $3 <> '' THEN $3 ELSE fulfillment_status END,
+         raw_order_json = CASE
+           WHEN $4::boolean THEN jsonb_set(
+             CASE WHEN jsonb_typeof(raw_order_json) = 'object' THEN raw_order_json ELSE '{}'::jsonb END,
+             '{fulfillments}',
+             $5::jsonb,
+             true
+           )
+           ELSE raw_order_json
+         END,
+         last_webhook_topic = $6,
+         last_webhook_received_at = now(),
+         updated_at = now()
+     WHERE ${whereSql}`,
+    [params.storeSubdomain, whereValue, fulfillmentStatus, hasTracking, fulfillmentsJson, params.topic],
+  );
+  const updated = result.rowCount ?? 0;
+  if (updated === 0) {
+    console.warn(`[webhook] 发货事件未匹配到订单快照: ${params.orderId || params.orderNumber}`);
+  } else {
+    console.log(`[webhook] 运单已更新: ${params.orderNumber || params.orderId} tracking:${trackingNumbers.join(',') || '无'} rows:${updated}`);
+  }
+  await logSync({
+    source: 'webhook',
+    action: 'fulfillment_update',
+    storeSubdomain: params.storeSubdomain,
+    storeName: params.storeName,
+    targetId: params.orderNumber || params.orderId,
+    itemsTotal: 1,
+    itemsUpdated: updated,
+    status: updated > 0 ? 'success' : 'failed',
+    detailJson: {
+      topic: params.topic,
+      trackingCount: trackingNumbers.length,
+      tracking: trackingNumbers.join(',').slice(0, 240) || null,
+      fulfillmentStatus: fulfillmentStatus || null,
+      skippedApi: true,
+    },
+  });
 }
 
 function buildEventKey(params: {
@@ -88,7 +167,7 @@ export function createShoplazzaWebhookRouter(): express.Router {
     return config;
   }
 
-  router.post('/webhook/:storeSubdomain', async (req, res) => {
+  router.post('/webhook/:storeSubdomain', requireWebhookAuth, async (req, res) => {
     const { storeSubdomain } = req.params;
     const payload = req.body;
     const topic = String(req.headers['x-shoplazza-topic'] || payload?.topic || '').trim();
@@ -126,10 +205,27 @@ export function createShoplazzaWebhookRouter(): express.Router {
         headers: req.headers as Record<string, string>,
       });
 
+      if (FULFILLMENT_TOPICS.includes(topic)) {
+        if (inserted) console.log(`[webhook] 收到事件: ${eventKey}`);
+        await applyFulfillmentWebhook({
+          storeSubdomain,
+          storeName: store.storeName,
+          topic,
+          order,
+          orderId,
+          orderNumber,
+        });
+        return;
+      }
+
+      if (topic === 'orders/create') {
+        return;
+      }
+
       if (inserted) {
         console.log(`[webhook] 收到事件: ${eventKey}`);
 
-        const orderTopics = ['orders/paid', 'orders/fulfilled', 'orders/updated'];
+        const orderTopics = ['orders/paid', 'orders/updated'];
         if (orderTopics.includes(topic) && (orderId || orderNumber)) {
           try {
             // 正文齐全则直接当订单详情；缺字段再打详情接口
@@ -165,18 +261,27 @@ export function createShoplazzaWebhookRouter(): express.Router {
                 durationMs: Date.now() - detailApiStart,
                 detailJson: { orderId, orderNumber, found: !!detail },
               });
+              if (!detail && order?.id) {
+                detail = order as ShoplazzaOrderDetail;
+                detailSource = 'webhook_payload';
+                if (topic === 'orders/paid' && !String(detail.financial_status || '').trim()) {
+                  detail.financial_status = 'paid';
+                }
+                console.warn(`[webhook] 订单详情查询失败，改用推送正文: ${orderId || orderNumber}`);
+              }
             }
             if (!detail) {
-              console.warn(`[webhook] 订单详情查询失败: id=${orderId} number=${orderNumber}`);
+              console.warn(`[webhook] 订单详情查询失败且推送无订单体: id=${orderId} number=${orderNumber}`);
               return;
             }
             const actualOrderId = detail.id || orderId;
+            const savedFromWebhookAfterApiFailure = detailSource === 'webhook_payload' && !isCompletePaidOrder(order);
 
-            // 只对店匠官方支付查 transactions（拿卡号后四位），第三方支付跳过以节省 API 配额
+            // 详情接口失败时不再查交易，卡号留给兜底同步。只对店匠官方支付查 transactions。
             const paymentChannel = extractPaymentChannel(detail).toLowerCase();
             let transactions: ShoplazzaTransaction[] = [];
             const txApiStart = Date.now();
-            if (CARD_LOOKUP_CHANNELS.some(ch => paymentChannel.includes(ch))) {
+            if (!savedFromWebhookAfterApiFailure && CARD_LOOKUP_CHANNELS.some(ch => paymentChannel.includes(ch))) {
               transactions = await getOrderTransactions(store, actualOrderId);
               await logSync({
                 source: 'api',
@@ -230,7 +335,8 @@ export function createShoplazzaWebhookRouter(): express.Router {
                  raw_order_json = EXCLUDED.raw_order_json,
                  last_webhook_topic = EXCLUDED.last_webhook_topic,
                  last_webhook_received_at = EXCLUDED.last_webhook_received_at,
-                 updated_at = now()`,
+                 updated_at = now()
+               RETURNING (created_at = updated_at) AS is_new`,
               [
                 normalized.storeSubdomain,
                 normalized.storeName,
@@ -282,21 +388,22 @@ export function createShoplazzaWebhookRouter(): express.Router {
             }
             console.log(`[webhook] 订单快照已更新: ${normalized.orderNumber} ${normalized.customerEmail} fulfillment:${normalized.fulfillmentStatus} card:${normalized.cardLast4 || '无'}`);
 
-            // 同步日志
-            const upserted = (snapshotResult.rowCount ?? 0) > 0;
+            const isNew = Boolean(snapshotResult.rows[0]?.is_new);
             await logSync({
               source: 'webhook',
-              action: 'order_upsert',
+              action: 'order_paid',
               storeSubdomain,
               storeName: store.storeName,
               targetId: normalized.orderNumber || normalized.orderId,
               itemsTotal: 1,
-              itemsNew: upserted ? 1 : 0,
-              itemsUpdated: upserted ? 0 : 1,
+              itemsNew: isNew ? 1 : 0,
+              itemsUpdated: isNew ? 0 : 1,
               status: 'success',
               detailJson: {
                 topic,
+                paymentStatus: normalized.paymentStatus,
                 detailSource,
+                savedWebhookAfterApiFailure: savedFromWebhookAfterApiFailure,
                 card_last4: normalized.cardLast4 || null,
               },
             });
@@ -304,7 +411,7 @@ export function createShoplazzaWebhookRouter(): express.Router {
             console.error(`[webhook] 订单处理失败: ${orderId}`, err.message);
             await logSync({
               source: 'webhook',
-              action: 'order_upsert',
+              action: 'order_paid',
               storeSubdomain,
               targetId: orderId || orderNumber || '',
               itemsTotal: 1,

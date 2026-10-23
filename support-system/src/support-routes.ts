@@ -1,6 +1,6 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
-import { verifyAccessToken, hashToken, createTicketAccessToken } from './token';
+import { verifyAccessToken, hashToken, createTicketAccessToken, AccessTokenPurpose } from './token';
 import { createTicket, getTicketByPublicNo, getTicketMessages, addCustomerMessage, closeTicket, getOrderSnapshot, findExistingTicket, listExistingTickets, requestArbitration, countConsecutiveCustomerMessages, reopenTicket, findTicketByBootstrapTokenHash } from './ticket-service';
 import { extractTrackingNo } from './admin-preview';
 import { mapPaymentMethodDisplay } from './normalize-order';
@@ -21,6 +21,23 @@ function enrichItemsWithThumbnails(items: any[]): any[] {
   });
 }
 import { uploadSingleAttachment, processAttachments, uploadTicketAttachments } from './storage-service';
+
+/** 新客户端在上传前提供 Bearer token；旧客户端仍支持 multipart 中的 token。 */
+function authorizeUpload(purpose: AccessTokenPurpose): express.RequestHandler {
+  return async (req, res, next) => {
+    const authorization = req.get('Authorization');
+    if (!authorization) return next();
+    const match = /^Bearer ([^\s]+)$/i.exec(authorization);
+    const token = match?.[1];
+    const payload = token ? await verifyAccessToken(token) : null;
+    if (!payload || payload.purpose !== purpose ||
+        (purpose === 'ticket_access' && payload.public_ticket_no !== req.params.publicTicketNo)) {
+      res.status(401).json({ ok: false, error: 'Invalid or expired token' });
+      return;
+    }
+    next();
+  };
+}
 
 export function createSupportRouter(): express.Router {
   const router = express.Router();
@@ -178,7 +195,7 @@ export function createSupportRouter(): express.Router {
   });
 
   // POST /api/support/tickets
-  router.post('/tickets', uploadTicketAttachments, async (req, res) => {
+  router.post('/tickets', authorizeUpload('support_bootstrap'), uploadTicketAttachments, async (req, res) => {
     try {
       const { token, issue_type, description } = req.body || {};
       const contentStr = (description || '').trim();
@@ -359,7 +376,7 @@ export function createSupportRouter(): express.Router {
   });
 
   // POST /api/support/tickets/:publicTicketNo/messages
-  router.post('/tickets/:publicTicketNo/messages', uploadSingleAttachment, async (req, res) => {
+  router.post('/tickets/:publicTicketNo/messages', authorizeUpload('ticket_access'), uploadSingleAttachment, async (req, res) => {
     try {
       const { publicTicketNo } = req.params;
       const { token, content } = req.body || {};
