@@ -8,7 +8,7 @@ import { query } from './pg';
 import { cancelEmailJob, ensureAgentReplyNoticeJob, getEmailJobDetail, listEmailJobs, processDueEmailJobs, resendEmailJob, sendPendingEmailJobs, getAutoSendEnabled, setAutoSendEnabled, listEmailTemplates, getEmailTemplate, updateEmailTemplate, renderTemplateString, renderEmailFromTemplate, listTemplatePresets, createTemplatePreset, deleteTemplatePreset, activateTemplatePreset, formatEasternTime, getMailTestMode, setMailTestMode, getPublicBaseUrl, setPublicBaseUrl, getEffectivePublicBaseUrl, createCustomerComplaintInviteJob, extractStoreCustomDomain, extractFirstProductImage, buildTemplateItems } from './email-service';
 import { runBackfillForStore, getAllBackfillStates, getAutoBackfillEnabled, setAutoBackfillEnabled } from './backfill-jobs';
 import { logOperation, listSyncLogs, listOperationLogs, getUnpaidSummaryOrders } from './log-service';
-import { buildCustomerPreviewResponse, extractTrackingNo } from './admin-preview';
+import { buildCustomerPreviewResponse, buildTrackingDetails } from './admin-preview';
 import { buildStoreDomain, ShoplazzaStoreConfig } from './config';
 import { registerWebhook, updateWebhookAddress, deleteWebhook, listWebhooks, STORE_WEBHOOK_TOPICS, RETIRED_WEBHOOK_TOPICS, ShoplazzaWebhook } from './shoplazza-client';
 import { buildWebhookCallbackUrl, redactWebhookAddress } from './webhook-security';
@@ -574,7 +574,7 @@ export function createAdminRouter(): express.Router {
         paid_at: snapshot.paid_at || null,
         payment_method: mapPaymentMethodDisplay(snapshot.payment_method),
         card_last4: snapshot.card_last4 || '',
-        tracking_no: extractTrackingNo(snapshot),
+        ...buildTrackingDetails(snapshot),
         customer_name: snapshot.customer_name || '',
         items: snapshot.items_json || [],
       } : null;

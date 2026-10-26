@@ -210,7 +210,13 @@ async function backfillOneStore(
          DO UPDATE SET
            order_number = EXCLUDED.order_number,
            order_status = EXCLUDED.order_status,
-           fulfillment_status = EXCLUDED.fulfillment_status,
+           fulfillment_status = CASE
+             WHEN support_order_snapshots.fulfillment_status IN ('partially_shipped', 'shipped')
+               AND COALESCE(EXCLUDED.fulfillment_status, '') IN ('', 'initialled', 'waiting')
+             THEN support_order_snapshots.fulfillment_status
+             WHEN support_order_snapshots.fulfillment_status = 'shipped' AND EXCLUDED.fulfillment_status = 'partially_shipped'
+             THEN support_order_snapshots.fulfillment_status
+             ELSE EXCLUDED.fulfillment_status END,
            order_amount = EXCLUDED.order_amount,
            order_currency = EXCLUDED.order_currency,
            payment_status = EXCLUDED.payment_status,
@@ -225,7 +231,11 @@ async function backfillOneStore(
            billing_address_json = EXCLUDED.billing_address_json,
            logistics_json = EXCLUDED.logistics_json,
            payment_detail_json = CASE WHEN EXCLUDED.payment_detail_json::text <> '{}'::text THEN EXCLUDED.payment_detail_json ELSE support_order_snapshots.payment_detail_json END,
-           raw_order_json = EXCLUDED.raw_order_json,
+           raw_order_json = CASE
+             WHEN jsonb_typeof(support_order_snapshots.raw_order_json->'fulfillments') = 'array'
+               AND support_order_snapshots.raw_order_json->'fulfillments' <> '[]'::jsonb
+             THEN jsonb_set(EXCLUDED.raw_order_json, '{fulfillments}', support_order_snapshots.raw_order_json->'fulfillments', true)
+             ELSE EXCLUDED.raw_order_json END,
            snapshot_source = 'backfill_sync',
            updated_at = now()
          RETURNING (xmax = 0) AS is_insert`,
@@ -433,7 +443,11 @@ async function backfillUnpaidWindow(
          shipping_address_json = EXCLUDED.shipping_address_json,
          billing_address_json = EXCLUDED.billing_address_json,
          logistics_json = EXCLUDED.logistics_json,
-         raw_order_json = EXCLUDED.raw_order_json,
+         raw_order_json = CASE
+           WHEN jsonb_typeof(support_order_snapshots.raw_order_json->'fulfillments') = 'array'
+             AND support_order_snapshots.raw_order_json->'fulfillments' <> '[]'::jsonb
+           THEN jsonb_set(EXCLUDED.raw_order_json, '{fulfillments}', support_order_snapshots.raw_order_json->'fulfillments', true)
+           ELSE EXCLUDED.raw_order_json END,
          updated_at = now()
        WHERE support_order_snapshots.payment_status IS DISTINCT FROM 'paid'
        RETURNING (created_at = updated_at) AS is_new`,

@@ -348,6 +348,7 @@ function renderNewTicket(order) {
     '</div>' +
     '<div class="card">' +
     '<div class="section-title">Initiate Disputes</div>' +
+    '<div class="form-group"><label class="form-label">Shipping</label><div class="shipment-list">' + SupportSafe.shipments(order) + '</div></div>' +
     paymentRow +
     '<div class="form-group">' +
     '<label class="form-label">Dispute Type</label>' +
@@ -427,6 +428,7 @@ function renderTicketDetail(data) {
     '<div class="info-row"><span class="info-label">Refundable Amount:</span><span class="info-value">' + esc(order.order_currency || 'USD') + ' ' + esc(order.order_amount || '') + '</span></div>' +
     '<div class="info-row"><span class="info-label">Order Date:</span><span class="info-value">' + esc(formatDate(order.paid_at)) + '</span></div>' +
     '<div class="info-row"><span class="info-label">Products:</span><span class="info-value">' + items + '</span></div>' +
+    '<div class="info-row"><span class="info-label">Shipping:</span><span class="info-value shipment-list">' + SupportSafe.shipments(order) + '</span></div>' +
     '</div>' +
     (actionButtons ? '<div class="btn-group" style="margin-top:24px">' + actionButtons + '</div>' : '') +
     '</div></aside>' +

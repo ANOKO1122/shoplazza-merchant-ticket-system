@@ -55,5 +55,40 @@
     document.body.appendChild(lightbox);
   }
 
-  window.SupportSafe = { escape: escape, url: url, role: role, images: images, showImage: showImage };
+  function shipments(order, labels) {
+    order = order || {};
+    labels = labels || {};
+    var packageLabel = labels.packageLabel || 'Package';
+    var currentLabel = labels.currentLabel || 'Current';
+    var emptyLabel = labels.emptyLabel || 'Tracking not available';
+    function numbers(values) {
+      if (!Array.isArray(values)) return [];
+      return values.map(function (value) {
+        return typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
+      }).filter(function (value, index, all) { return value && all.indexOf(value) === index; });
+    }
+    function numberLines(values, current) {
+      return values.length ? values.map(function (value) {
+        var marker = current && current.indexOf(value) !== -1
+          ? '<span class="shipment-current" style="font-size:11px;color:#8c8c8c;margin-left:6px">' + escape(currentLabel) + '</span>' : '';
+        return '<div class="shipment-number" style="overflow-wrap:anywhere">' + escape(value) + marker + '</div>';
+      }).join('') : '<span style="color:#8c8c8c">' + escape(emptyLabel) + '</span>';
+    }
+    var packages = Array.isArray(order.shipments) ? order.shipments.filter(function (item) {
+      return item && typeof item === 'object' && !Array.isArray(item);
+    }) : [];
+    if (!packages.length) {
+      var legacy = Array.isArray(order.tracking_numbers) ? order.tracking_numbers : [order.tracking_no];
+      return numberLines(numbers(legacy));
+    }
+    return packages.map(function (shipment, index) {
+      var label = packageLabel + ' ' + (index + 1);
+      if (shipment.tracking_company) label += ' · ' + shipment.tracking_company;
+      return '<div class="shipment-block" data-shipment-id="' + escape(shipment.id || '') + '" style="margin-bottom:6px">' +
+        '<div style="font-size:12px;color:#8c8c8c">' + escape(label) + '</div>' +
+        numberLines(numbers(shipment.tracking_numbers), numbers(shipment.current_tracking_numbers)) + '</div>';
+    }).join('');
+  }
+
+  window.SupportSafe = { escape: escape, url: url, role: role, images: images, showImage: showImage, shipments: shipments };
 })();

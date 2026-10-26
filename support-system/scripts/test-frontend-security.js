@@ -70,7 +70,7 @@ function assertSafe(html) {
   for (const { attrs } of tags(html)) {
     for (const [name, value] of Object.entries(attrs)) {
       if (/^on/i.test(name)) {
-        assert.ok(!value.includes('__xss'), 'business data entered an event handler');
+        assert.ok(!/__xss|globalThis/.test(value), 'business data entered an event handler');
         new vm.Script('(function(event){' + value + '})');
       }
       if (name === 'src' || name === 'href') {
@@ -84,9 +84,28 @@ function maliciousData() {
   const order = Object.fromEntries(['customer_name', 'store_name', 'order_number', 'order_currency', 'order_amount', 'payment_method', 'card_last4', 'tracking_no'].map(key => [key, payload]));
   order.store_subdomain = 'store.example.test';
   order.items = [{ title: payload, quantity: payload, image: quoteUrl }];
+  order.tracking_numbers = ['HISTORY123', 'FIRST123', payload, 'SECOND123'];
+  order.shipments = [
+    { id: payload, tracking_numbers: ['HISTORY123', 'FIRST123', payload, 'FIRST123'], current_tracking_numbers: ['FIRST123', payload], tracking_company: payload, updated_at: '2026-10-21T12:00:00Z' },
+    { id: 'package-b', tracking_numbers: ['SECOND123'], current_tracking_numbers: ['SECOND123'], tracking_company: 'Carrier B', updated_at: '2026-10-22T12:00:00Z' },
+  ];
   const ticket = { ...order, public_ticket_no: payload, order_id: payload, customer_email: payload, issue_type: payload, status: 'open' };
   const messages = [{ id: 7, sender_type: 'customer', content: payload + '\nsecond line', attachments: [quoteUrl, 'javascript:globalThis.__xss=1', 'data:image/svg+xml,<svg onload="globalThis.__xss=1">'] }];
   return { ticket, order, messages, remainingMessages: 5 };
+}
+
+function assertPackages(html, currentLabel = 'Current') {
+  assertSafe(html);
+  const packages = tags(html).filter(t => t.attrs.class === 'shipment-block');
+  assert.equal(packages.length, 2, 'both packages must render separately');
+  assert.equal(packages[0].attrs['data-shipment-id'], payload);
+  assert.equal(packages[1].attrs['data-shipment-id'], 'package-b');
+  assert.ok(html.includes('FIRST123'));
+  assert.ok(html.includes('SECOND123'));
+  assert.equal((html.match(/>FIRST123<span/g) || []).length, 1, 'duplicate current numbers in one package should render once');
+  assert.equal((html.match(/>HISTORY123<\/div>/g) || []).length, 1, 'retained number remains visible without being labeled current');
+  assert.equal(tags(html).filter(t => t.attrs.class === 'shipment-current').length, 3);
+  assert.ok(html.includes('>' + currentLabel + '</span>'));
 }
 
 async function main() {
@@ -109,7 +128,7 @@ async function main() {
   admin.context.renderTable([data.ticket], 1);
   admin.context.renderDetail(data);
   assertSafe(admin.get('#ticketTbody').innerHTML);
-  assertSafe(admin.get('#detailPanel').innerHTML);
+  assertPackages(admin.get('#detailPanel').innerHTML, '当前');
   assert.ok(admin.get('#detailPanel').innerHTML.includes(safe.escape(payload) + '\nsecond line'));
   const row = tags(admin.get('#ticketTbody').innerHTML).find(t => t.tag === 'tr');
   let selected;
@@ -129,23 +148,36 @@ async function main() {
 
   const customer = page('ticket.html');
   customer.context.renderNewTicket(data.order);
-  assertSafe(customer.get('#app').innerHTML);
+  assertPackages(customer.get('#app').innerHTML);
   assert.ok(customer.get('#app').innerHTML.includes(safe.escape(payload)));
   customer.context.renderTicketDetail(data);
-  assertSafe(customer.get('#app').innerHTML);
+  assertPackages(customer.get('#app').innerHTML);
+  const refreshedShipments = element();
+  customer.document.querySelectorAll = selector => selector === '.shipment-list' ? [refreshedShipments] : [];
   customer.context.fetch = async () => ({ json: async () => ({ ok: true, ...data }) });
   await customer.context.refreshMessages();
   assertSafe(customer.get('.timeline').innerHTML);
   assert.ok(customer.get('.timeline').innerHTML.includes(safe.escape(payload)));
+  assertPackages(refreshedShipments.innerHTML);
   assert.ok(customer.html.includes("headers: { 'Authorization': 'Bearer ' + token }"));
   assert.ok(customer.html.includes("headers: { 'Authorization': 'Bearer ' + accessToken }"));
 
   const preview = page('admin-ticket-preview.html');
   preview.context.renderNewTicket(data.order);
-  assertSafe(preview.get('#app').innerHTML);
+  assertPackages(preview.get('#app').innerHTML);
   preview.context.renderTicketDetail(data);
-  assertSafe(preview.get('#app').innerHTML);
+  assertPackages(preview.get('#app').innerHTML);
   assertSafe(preview.context.renderAttachments(data.messages[0].attachments));
+  assert.ok(safe.shipments({ tracking_no: 'LEGACY123' }).includes('LEGACY123'));
+  assert.ok(safe.shipments({ tracking_numbers: ['ONE123', 'TWO123'], tracking_no: 'STALE123' }).includes('TWO123'));
+  assert.ok(!safe.shipments({ tracking_numbers: [], tracking_no: 'STALE123' }).includes('STALE123'));
+  assert.ok(!safe.shipments({ shipments: [{ id: 'a', tracking_numbers: ['CURRENT123'] }], tracking_no: 'OLD123' }).includes('OLD123'));
+  const retainedOnly = safe.shipments({ shipments: [{ id: 'a', tracking_numbers: ['HISTORY123'], current_tracking_numbers: [] }] });
+  assert.ok(retainedOnly.includes('HISTORY123'));
+  assert.ok(!retainedOnly.includes('shipment-current'));
+  assert.ok(!safe.shipments({ shipments: [{ id: 'a', tracking_numbers: ['LEGACY123'] }] }).includes('shipment-current'));
+  assertSafe(safe.shipments({ shipments: [{ id: payload, tracking_company: payload, tracking_numbers: [payload] }] }));
+  assertSafe(safe.shipments({ shipments: [{ id: 'a', tracking_numbers: [payload], current_tracking_numbers: [payload] }] }, { currentLabel: payload }));
 
   const logs = page('admin-logs.html');
   const detail = { text: "');globalThis.__xss=1;//", steps: [{ step: payload, detail: payload, status: 'failed' }] };
@@ -161,6 +193,76 @@ async function main() {
   assert.equal(shown.json, JSON.stringify(detail));
   assert.equal(shown.failed, payload);
   assert.equal(logs.context.__xss, undefined);
+
+  const shipmentLog = {
+    id: 10, action: 'fulfillment_update', source: 'webhook', status: 'success', store_name: payload, target_id: 'ORDER123',
+    items_new: 1, items_updated: 2, items_skipped: 2,
+    detail_json: {
+      topic: 'fulfillments/update', trackingNumbers: ['OLD123', 'NEW123', 'OLDER123', 'SECOND123'], trackingCount: 4, fulfillmentCount: 2, stale: 1, unchanged: 1,
+      changes: [
+        { fulfillmentId: payload, kind: 'added', beforeTrackingNumbers: [], afterTrackingNumbers: ['SECOND123'], retainedTrackingNumbers: ['SECOND123'], addedTrackingNumbers: ['SECOND123'] },
+        { fulfillmentId: 'a', kind: 'updated', beforeTrackingNumbers: ['OLD123', payload], afterTrackingNumbers: ['NEW123'], retainedTrackingNumbers: ['OLD123', payload, 'NEW123'], addedTrackingNumbers: ['NEW123', payload] },
+        { fulfillmentId: 'a', kind: 'history_added', beforeTrackingNumbers: ['NEW123'], afterTrackingNumbers: ['OLDER123'], retainedTrackingNumbers: ['OLD123', 'NEW123', 'OLDER123'], addedTrackingNumbers: ['OLDER123'] },
+        { fulfillmentId: 'a', kind: 'stale', beforeTrackingNumbers: ['NEW123'], afterTrackingNumbers: ['OLD123'], retainedTrackingNumbers: ['OLD123', 'NEW123', 'OLDER123'], addedTrackingNumbers: [] },
+        { fulfillmentId: 'b', kind: 'unchanged', beforeTrackingNumbers: ['SECOND123'], afterTrackingNumbers: ['SECOND123'], retainedTrackingNumbers: ['SECOND123'], addedTrackingNumbers: [] },
+      ],
+    },
+  };
+  logs.context.renderSyncLogs([shipmentLog], 1);
+  assertSafe(logs.get('#logTbody').innerHTML);
+  for (const text of ['新增包裹 1', '更新 2', '补充号码 1', '过期未改当前 1', '重复/无变化跳过 1', '物流明细']) assert.ok(logs.get('#logTbody').innerHTML.includes(text), text);
+  const shippingDetail = logs.context.fulfillmentDetailHtml(shipmentLog);
+  assertSafe(shippingDetail);
+  const visibleShippingDetail = shippingDetail.split('<details')[0];
+  for (const text of ['新增包裹', '更新当前号，旧号保留', '补充累计号码，当前号未覆盖', '过期事件，当前号未覆盖', '重复或无变化，已跳过', 'OLD123', 'NEW123', 'SECOND123', 'OLDER123', '累计运单：', '<th>累计号码</th>', '<th>本次新增号码</th>', '晚到消息可补充号码', 'OLD123<br>NEW123<br>OLDER123']) assert.ok(visibleShippingDetail.includes(text), text);
+  assert.ok(visibleShippingDetail.includes(safe.escape(payload)), 'retained and added tracking values are escaped');
+  logs.context.openFulfillmentDetail(10);
+  assertSafe(logs.document.body.children.at(-1).innerHTML);
+  assert.ok(logs.document.body.children.at(-1).innerHTML.includes('Webhook'));
+
+  const legacyShipmentLog = { id: 11, action: 'fulfillment_update', source: 'webhook', detail_json: { topic: 'orders/partially_fulfilled', tracking: 'OLD-FIRST,OLD-SECOND', trackingCount: 2 } };
+  assert.match(logs.context.syncActCN(legacyShipmentLog.action, legacyShipmentLog), /部分发货/);
+  assert.match(logs.context.syncLogSummary(legacyShipmentLog), /OLD-FIRST,OLD-SECOND/);
+  assert.match(logs.context.fulfillmentDetailHtml(legacyShipmentLog), /旧日志未保存/);
+  const legacyChangedLog = { action: 'fulfillment_update', detail_json: { changes: [{ fulfillmentId: 'a', kind: 'updated', beforeTrackingNumbers: ['OLD'], afterTrackingNumbers: ['NEW'] }], trackingNumbers: ['NEW'] } };
+  const legacyChangedDetail = logs.context.fulfillmentDetailHtml(legacyChangedLog).split('<details')[0];
+  assert.match(legacyChangedDetail, /更新单号（旧日志）/);
+  assert.match(legacyChangedDetail, /未记录/);
+  assert.doesNotMatch(legacyChangedDetail, /旧号保留|晚到消息可补充/);
+
+  const reconcile = { id: 12, action: 'fulfillment_reconcile_summary', source: 'backfill', detail_json: {
+    checked: 10, changed: 2, failed: 1, remainingDue: 8,
+    items: [
+      { orderNumber: 'ORDER-CHANGED', status: 'changed', added: 2, updated: 1, trackingNumbers: ['OLD123', 'NEW123', 'SECOND123'] },
+      { orderId: 'fallback-order-id', status: 'unchanged', added: 0, updated: 0, trackingNumbers: ['KEPT123'] },
+      { orderNumber: payload, status: 'failed', added: payload, updated: payload, trackingNumbers: [payload], error: payload },
+      null,
+    ],
+  } };
+  logs.context.renderSyncLogs([reconcile], 1);
+  for (const text of ['物流兜底汇总', '兜底同步', '检查 10', '有变化 2', '失败 1']) assert.ok(logs.get('#logTbody').innerHTML.includes(text), text);
+  const reconcileDetail = logs.context.fulfillmentDetailHtml(reconcile);
+  assertSafe(reconcileDetail);
+  const reconcileTable = reconcileDetail.split('<details')[0];
+  for (const text of ['待检查订单：8', '<th>订单号</th>', '<th>新增包裹</th>', '<th>更新包裹</th>', '<th>累计运单</th>', '<th>错误</th>', 'ORDER-CHANGED', 'fallback-order-id', 'OLD123<br>NEW123<br>SECOND123', 'KEPT123', '<td>有变化</td><td>2</td><td>1</td>', '<td>无变化</td>', '<td>失败</td><td>0</td><td>0</td>']) assert.ok(reconcileTable.includes(text), text);
+  assert.equal(reconcileTable.split(safe.escape(payload)).length - 1, 3, 'order number, tracking and error remain escaped in the visible table');
+  logs.context.openFulfillmentDetail(12);
+  assertSafe(logs.document.body.children.at(-1).innerHTML);
+  assert.ok(logs.document.body.children.at(-1).innerHTML.includes(reconcileTable));
+  assert.match(logs.context.fulfillmentDetailHtml({ ...reconcile, detail_json: { remainingDue: 0, items: [] } }), /待检查订单：0.*没有逐条订单/);
+  assert.match(logs.context.fulfillmentDetailHtml({ ...reconcile, detail_json: {} }), /未保存逐条订单明细/);
+  const filters = logs.context.buildSyncFilters();
+  for (const action of ['order_unpaid', 'unpaid_summary', 'fulfillment_update', 'fulfillment_reconcile_summary']) assert.ok(filters.includes('data-value="' + action + '"'));
+
+  // Existing unpaid rows still open their dedicated order detail, including legacy notes.
+  const unpaid = { id: 13, action: 'unpaid_summary', items_total: 2, items_skipped: 1, detail_json: { orders: [{ orderNumber: payload, kind: 'updated' }] } };
+  logs.context.renderSyncLogs([unpaid], 1);
+  assert.ok(logs.get('#logTbody').innerHTML.includes('openUnpaidDetail(13)'));
+  logs.context.openUnpaidDetail(13);
+  assertSafe(logs.document.body.children.at(-1).innerHTML);
+  assert.ok(logs.document.body.children.at(-1).innerHTML.includes(safe.escape(payload)));
+  logs.context.showUnpaidModal(unpaid, [], true);
+  assert.ok(logs.document.body.children.at(-1).innerHTML.includes('没有逐条留下'));
 
   const stores = page('admin-stores.html');
   const storeRow = stores.context.buildStoreRowHTML({ id: 1, subdomain: payload, store_name: payload, enabled: true });

@@ -14,6 +14,8 @@ import { createSupportRouter } from './support-routes';
 import { createAdminRouter } from './admin-routes';
 import { processDueEmailJobs, cleanupEmailJobs } from './email-service';
 import { getAutoBackfillEnabled, runBackfillForAllStores } from './backfill-jobs';
+import { processPendingFulfillmentWebhooks } from './fulfillment-webhook';
+import { runFulfillmentReconciliation } from './fulfillment-reconcile';
 import { cleanupSyncLogs, cleanupOperationLogs } from './log-service';
 import { getRequestAgent } from './auth';
 import { ADMIN_HOME, ADMIN_PAGES, ADMIN_PAGE_FILES, normalizeAdminPath, safeAdminRedirect } from './admin-pages';
@@ -286,12 +288,16 @@ async function startup() {
   // 定时器引用（用于优雅关闭）
   let emailTimer: ReturnType<typeof setInterval> | null = null;
   let backfillTimer: ReturnType<typeof setInterval> | null = null;
+  let fulfillmentTimer: ReturnType<typeof setInterval> | null = null;
+  let fulfillmentReconcileTimer: ReturnType<typeof setInterval> | null = null;
 
   // 优雅退出：关闭定时器、释放数据库连接池
   const shutdown = async () => {
     console.log('\n[support-bridge] 正在关闭...');
     if (emailTimer) clearInterval(emailTimer);
     if (backfillTimer) clearInterval(backfillTimer);
+    if (fulfillmentTimer) clearInterval(fulfillmentTimer);
+    if (fulfillmentReconcileTimer) clearInterval(fulfillmentReconcileTimer);
     try {
       const pool = getPool();
       await pool.end();
@@ -309,6 +315,25 @@ async function startup() {
   const backgroundJobsDisabled = process.env.SUPPORT_DISABLE_BACKGROUND_JOBS === 'true';
   if (backgroundJobsDisabled) {
     console.log('[support-bridge] 后台定时任务已禁用（SUPPORT_DISABLE_BACKGROUND_JOBS=true）');
+  }
+
+  if (!backgroundJobsDisabled) {
+    const processFulfillments = () => {
+      processPendingFulfillmentWebhooks().catch(() => console.error('[fulfillment-worker] failed; will retry'));
+    };
+    processFulfillments();
+    fulfillmentTimer = setInterval(processFulfillments, 15000);
+    fulfillmentTimer.unref();
+    const reconcileFulfillments = async () => {
+      try {
+        if (await getAutoBackfillEnabled()) await runFulfillmentReconciliation({ limit: 200 });
+      } catch (error: any) {
+        console.error('[fulfillment-reconcile] failed:', error.message);
+      }
+    };
+    // Scan independently from order-created cursors, one bounded batch every five minutes.
+    fulfillmentReconcileTimer = setInterval(reconcileFulfillments, 5 * 60 * 1000);
+    fulfillmentReconcileTimer.unref();
   }
 
   const emailWorkerIntervalMs = Number(process.env.SUPPORT_EMAIL_WORKER_INTERVAL_MS) || 30000;

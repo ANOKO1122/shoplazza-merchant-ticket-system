@@ -332,6 +332,23 @@ export async function ensureTables(): Promise<void> {
 
   // 创建索引
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_order_snapshots_order ON support_order_snapshots(store_subdomain, order_id)`);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_support_paid_logistics ON support_order_snapshots(store_subdomain, order_id) WHERE payment_status = 'paid'`);
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS support_fulfillment_sync_state (
+      store_subdomain TEXT NOT NULL,
+      order_id TEXT NOT NULL,
+      last_attempt_at TIMESTAMPTZ,
+      last_checked_at TIMESTAMPTZ,
+      next_check_at TIMESTAMPTZ,
+      last_error TEXT,
+      PRIMARY KEY (store_subdomain, order_id)
+    )
+  `);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_support_fulfillment_sync_due ON support_fulfillment_sync_state(next_check_at, store_subdomain, order_id)`);
+  await p.query(`ALTER TABLE shoplazza_webhook_events ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0`);
+  await p.query(`ALTER TABLE shoplazza_webhook_events ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ`);
+  await p.query(`ALTER TABLE shoplazza_webhook_events ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ`);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_fulfillment_webhook_pending ON shoplazza_webhook_events(next_attempt_at, received_at) WHERE event_key LIKE 'fulfillment:%' AND status IN ('received', 'failed', 'processing')`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_order_snapshots_email ON support_order_snapshots(customer_email)`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_order_snapshots_paid_at ON support_order_snapshots(paid_at)`);
 

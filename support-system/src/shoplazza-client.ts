@@ -13,7 +13,7 @@ async function waitForRateLimit(): Promise<void> {
   lastFetchAt = Date.now();
 }
 
-function shoplazzaFetch(url: string, store: ShoplazzaStoreConfig): Promise<import('node-fetch').Response> {
+function shoplazzaFetch(url: string, store: ShoplazzaStoreConfig, bodyTimeoutMs?: number): Promise<import('node-fetch').Response> {
   const ms = 18000;
   return new Promise(async (resolve, reject) => {
     await waitForRateLimit();
@@ -27,6 +27,7 @@ function shoplazzaFetch(url: string, store: ShoplazzaStoreConfig): Promise<impor
           'Access-Token': store.accessToken,
         },
         signal: controller.signal as any,
+        ...(bodyTimeoutMs === undefined ? {} : { timeout: bodyTimeoutMs }),
       });
       clearTimeout(timeoutId);
       resolve(res);
@@ -342,11 +343,13 @@ export interface ShoplazzaWebhook {
   created_at?: string;
 }
 
-/** 店铺管理里一次注册的事件：支付，以及发货后的运单更新。未支付改由兜底按更新时间拉取。 */
+/** 支付、订单发货及独立的物流创建/修改事件。 */
 export const STORE_WEBHOOK_TOPICS = [
   'orders/paid',
   'orders/fulfilled',
   'orders/partially_fulfilled',
+  'fulfillments/create',
+  'fulfillments/update',
 ] as const;
 
 /** 以前注册过、现在要删掉的事件。 */
@@ -452,4 +455,54 @@ export async function findWebhookByTopic(
   }
   const found = result.webhooks.find(w => w.topic === topic);
   return { registered: !!found, webhook: found };
+}
+
+/** 物流兜底专用：接口失败或列表不完整时抛错，不把失败当作没有运单。 */
+export async function listOrderFulfillments(
+  store: ShoplazzaStoreConfig,
+  orderId: string,
+): Promise<Record<string, unknown>[]> {
+  const id = orderId.trim();
+  if (!id) throw new Error('Fulfillment list requires an order ID');
+  const baseUrl = `https://${buildApiHost(store.subdomain)}/openapi/2025-06/orders/${encodeURIComponent(id)}/fulfillments`;
+  const fulfillments: Record<string, unknown>[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | null = null;
+
+  for (let page = 0; page < 200; page++) {
+    const url = cursor ? `${baseUrl}?${new URLSearchParams({ cursor })}` : baseUrl;
+    const response = await shoplazzaFetch(url, store, 18000);
+    if (!response.ok) throw new Error(`Fulfillment list HTTP ${response.status}`);
+    const body = JSON.parse(await response.text());
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      throw new Error('Fulfillment list response is not an object');
+    }
+    if (body.code !== undefined && body.code !== 'Success') {
+      throw new Error('Fulfillment list API returned an unsuccessful code');
+    }
+    let items: unknown = body.data?.fulfillments ?? body.fulfillments;
+    // 已实测未发货订单使用 Success + 空 data 对象，其他缺少列表的响应仍视为异常。
+    if (items === undefined && body.code === 'Success'
+      && body.data && typeof body.data === 'object' && !Array.isArray(body.data)
+      && Object.keys(body.data).length === 0) {
+      items = [];
+    }
+    if (!Array.isArray(items) || items.some(item => !item || typeof item !== 'object' || Array.isArray(item))) {
+      throw new Error('Fulfillment list response has no valid fulfillments array');
+    }
+    if (items.some(item => item.order_id !== undefined && String(item.order_id) !== id)) {
+      throw new Error('Fulfillment list contains a different order');
+    }
+    const hasMore: unknown = body.data?.has_more ?? body.has_more ?? false;
+    if (typeof hasMore !== 'boolean') throw new Error('Fulfillment list has an invalid pagination flag');
+    fulfillments.push(...items);
+    if (!hasMore) return fulfillments;
+    const nextCursor: unknown = body.data?.cursor ?? body.cursor;
+    if (items.length === 0 || typeof nextCursor !== 'string' || !nextCursor || seenCursors.has(nextCursor)) {
+      throw new Error('Fulfillment list pagination is incomplete or repeated');
+    }
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+  throw new Error('Fulfillment list exceeded 200 pages');
 }

@@ -25,7 +25,7 @@ export function buildCustomerPreviewResponse(params: {
       paid_at: snapshot.paid_at || null,
       payment_method: mapPaymentMethodDisplay(snapshot.payment_method),
       card_last4: snapshot.card_last4 || '',
-      tracking_no: extractTrackingNo(snapshot),
+      ...buildTrackingDetails(snapshot),
       items: snapshot.items_json || [],
     },
     ticket: ticket ? {
@@ -48,61 +48,102 @@ export function buildCustomerPreviewResponse(params: {
 }
 
 export function extractTrackingNo(snapshot: any): string {
-  const roots: any[] = [
-    snapshot?.logistics_json,
-    snapshot?.raw_order_json,
-    snapshot?.shipping_address_json,
-  ];
-  if (snapshot?.raw_order_json?.fulfillments) {
-    roots.unshift(snapshot.raw_order_json.fulfillments);
-  }
-  for (const root of roots) {
-    const found = findTrackingNo(root, 0);
-    if (found) return found;
-  }
-  return '';
+  return buildTrackingDetails(snapshot).tracking_no;
 }
 
-function findTrackingNo(value: any, depth: number): string {
-  if (!value || depth > 5) return '';
-  if (typeof value === 'string' || typeof value === 'number') return '';
+export interface ShipmentView {
+  id: string;
+  tracking_numbers: string[];
+  current_tracking_numbers: string[];
+  tracking_company: string;
+  updated_at: string;
+}
+
+const TRACKING_KEYS = [
+  'tracking_numbers', 'trackingNumbers', 'tracking_number', 'tracking_no', 'trackingNumber',
+  'waybill_no', 'waybillNo', 'waybill_number', 'waybillNumber', 'logistics_no', 'logisticsNo',
+  'tracking_code', 'trackingCode', 'shipping_tracking_number', 'shippingTrackingNumber',
+];
+
+function text(value: unknown): string {
+  return typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function trackingNumbers(value: any, depth = 0): string[] {
+  if (!value || typeof value !== 'object' || depth > 5) return [];
   if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = findTrackingNo(item, depth + 1);
-      if (found) return found;
-    }
-    return '';
+    return unique(value.flatMap(item => trackingNumbers(item, depth + 1)));
   }
-  const keys = [
-    'tracking_no',
-    'tracking_number',
-    'trackingNumber',
-    'tracking_numbers',
-    'trackingNumbers',
-    'waybill_no',
-    'waybillNo',
-    'waybill_number',
-    'waybillNumber',
-    'logistics_no',
-    'logisticsNo',
-    'tracking_code',
-    'trackingCode',
-    'shipping_tracking_number',
-    'shippingTrackingNumber',
-  ];
-  for (const key of keys) {
+  // Current tracking follows the canonical field priority. Cumulative numbers
+  // are read separately from tracking_number_history.
+  if (Array.isArray(value.tracking_items)) return trackingNumbers(value.tracking_items, depth + 1);
+  for (const key of TRACKING_KEYS) {
     const raw = value[key];
-    if (Array.isArray(raw)) {
-      const first = raw.map(v => String(v || '').trim()).find(Boolean);
-      if (first && first.length >= 6) return first;
-    } else if (raw != null && raw !== '') {
-      const text = String(raw).trim();
-      if (text && text.length >= 6) return text;
+    const numbers = unique(Array.isArray(raw) ? raw.map(text) : [text(raw)]);
+    if (numbers.length) return numbers;
+  }
+  const numbers: string[] = [];
+  // Legacy snapshots can keep tracking fields nested under logistics/address.
+  for (const key of Object.keys(value)) {
+    if (key === 'tracking_number_history') continue;
+    numbers.push(...trackingNumbers(value[key], depth + 1));
+  }
+  return unique(numbers);
+}
+
+export function buildTrackingDetails(snapshot: any): {
+  tracking_no: string;
+  tracking_numbers: string[];
+  shipments: ShipmentView[];
+} {
+  const fulfillments = snapshot?.raw_order_json?.fulfillments;
+  const shipments: ShipmentView[] = [];
+  if (Array.isArray(fulfillments)) {
+    const byId = new Map<string, number>();
+    for (const fulfillment of fulfillments) {
+      if (!fulfillment || typeof fulfillment !== 'object' || Array.isArray(fulfillment)) continue;
+      const companies = Array.isArray(fulfillment.tracking_items)
+        ? unique(fulfillment.tracking_items.map((item: any) => text(item?.tracking_company)))
+        : [];
+      const current = trackingNumbers(fulfillment);
+      const history = Array.isArray(fulfillment.tracking_number_history)
+        ? fulfillment.tracking_number_history.filter((value: unknown) => typeof value === 'string').map(text) : [];
+      const shipment: ShipmentView = {
+        id: text(fulfillment.id),
+        tracking_numbers: unique([...history, ...current]),
+        current_tracking_numbers: current,
+        tracking_company: companies.length ? companies.join(', ') : text(fulfillment.tracking_company),
+        updated_at: text(fulfillment.updated_at),
+      };
+      const index = shipment.id ? byId.get(shipment.id) : undefined;
+      if (index === undefined) {
+        if (shipment.id) byId.set(shipment.id, shipments.length);
+        shipments.push(shipment);
+      } else {
+        const retained = unique([...shipments[index].tracking_numbers, ...shipment.tracking_numbers]);
+        const previousAt = Date.parse(shipments[index].updated_at);
+        const incomingAt = Date.parse(shipment.updated_at);
+        if (!Number.isFinite(previousAt) || (Number.isFinite(incomingAt) && incomingAt >= previousAt)) {
+          shipments[index] = shipment;
+        }
+        shipments[index].tracking_numbers = retained;
+      }
     }
   }
-  for (const key of Object.keys(value)) {
-    const found = findTrackingNo(value[key], depth + 1);
-    if (found) return found;
+  let numbers = unique(shipments.flatMap(shipment => shipment.tracking_numbers));
+  let current = unique(shipments.flatMap(shipment => shipment.current_tracking_numbers));
+  // Once a structured fulfillment array exists, it is authoritative, including
+  // an empty array. Do not attach unassigned legacy numbers to these packages.
+  if (!Array.isArray(fulfillments)) {
+    for (const root of [snapshot?.logistics_json, snapshot?.raw_order_json, snapshot?.shipping_address_json]) {
+      numbers = trackingNumbers(root);
+      if (numbers.length) break;
+    }
+    current = numbers;
   }
-  return '';
+  return { tracking_no: current[0] || '', tracking_numbers: numbers, shipments };
 }

@@ -1,9 +1,9 @@
-// Run after building, before deploying callback authentication. Never prints callback keys.
+// Run after deploying handlers for any new topics. Never prints callback keys.
 require('dotenv').config({ quiet: true });
 const { getEnabledStores } = require('../dist/store-service');
 const { getPool } = require('../dist/pg');
 const { getEffectivePublicBaseUrl } = require('../dist/email-service');
-const { listWebhooks, updateWebhookAddress, STORE_WEBHOOK_TOPICS } = require('../dist/shoplazza-client');
+const { listWebhooks, registerWebhook, updateWebhookAddress, STORE_WEBHOOK_TOPICS } = require('../dist/shoplazza-client');
 const { buildWebhookCallbackUrl, redactWebhookAddress } = require('../dist/webhook-security');
 
 async function main() {
@@ -19,7 +19,11 @@ async function main() {
     if (!listed.ok) throw new Error(`${row.subdomain}: could not list subscriptions`);
     for (const topic of STORE_WEBHOOK_TOPICS) {
       const subscriptions = listed.webhooks.filter(w => w.topic === topic && redactWebhookAddress(w.address) === ownAddress);
-      if (!subscriptions.length) throw new Error(`${row.subdomain}: missing owned subscription ${topic}`);
+      if (!subscriptions.length) {
+        if (mode !== '--apply') throw new Error(`${row.subdomain}: missing owned subscription ${topic}`);
+        const result = await registerWebhook(store, expected, topic);
+        if (!result.ok) throw new Error(`${row.subdomain}: ${result.error}`);
+      }
       for (const webhook of subscriptions) {
         if (webhook.address !== expected) {
           if (mode !== '--apply') throw new Error(`${row.subdomain}: callback credentials need updating`);

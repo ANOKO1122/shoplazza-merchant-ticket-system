@@ -6,6 +6,7 @@ import { normalizeOrder } from './normalize-order';
 import { createPaidSupportInviteEmailJob, extractStoreCustomDomain } from './email-service';
 import { logSync } from './log-service';
 import { requireWebhookAuth } from './webhook-security';
+import { FULFILLMENT_WEBHOOK_TOPICS, parseFulfillmentWebhook, enqueueFulfillmentWebhook, processPendingFulfillmentWebhooks } from './fulfillment-webhook';
 
 /** 需要查卡号后四位的支付渠道（店匠自有支付），第三方支付（PayPal等）跳过交易查询 */
 const CARD_LOOKUP_CHANNELS = ['shoplazzapayment'];
@@ -28,84 +29,6 @@ function isCompletePaidOrder(order: any): boolean {
   const financial = String(order.financial_status || '').trim().toLowerCase();
   const hasItems = Array.isArray(order.line_items) && order.line_items.length > 0;
   return Boolean(id && email && financial === 'paid' && extractPaymentChannel(order) && hasItems);
-}
-
-const FULFILLMENT_TOPICS = ['orders/fulfilled', 'orders/partially_fulfilled'];
-
-function collectTrackingNumbers(order: any): string[] {
-  const fulfillments = Array.isArray(order?.fulfillments) ? order.fulfillments : [];
-  const numbers: string[] = [];
-  for (const item of fulfillments) {
-    const raw = item?.tracking_number || item?.tracking_no || '';
-    const text = String(raw || '').trim();
-    if (text && !numbers.includes(text)) numbers.push(text);
-  }
-  return numbers;
-}
-
-/** 发货事件只补已有订单的运单和履约状态，不打详情接口，也不新建快照。 */
-async function applyFulfillmentWebhook(params: {
-  storeSubdomain: string;
-  storeName: string;
-  topic: string;
-  order: any;
-  orderId: string;
-  orderNumber: string;
-}): Promise<void> {
-  const trackingNumbers = collectTrackingNumbers(params.order);
-  const fulfillmentStatus = String(params.order?.fulfillment_status || '').trim();
-  if (!params.orderId && !params.orderNumber) {
-    console.warn(`[webhook] 发货事件缺少订单标识: ${params.topic}`);
-    return;
-  }
-
-  const hasTracking = trackingNumbers.length > 0;
-  const fulfillmentsJson = JSON.stringify(Array.isArray(params.order?.fulfillments) ? params.order.fulfillments : []);
-  const whereSql = params.orderId
-    ? 'store_subdomain = $1 AND order_id = $2'
-    : 'store_subdomain = $1 AND order_number = $2';
-  const whereValue = params.orderId || params.orderNumber;
-  const result = await query(
-    `UPDATE support_order_snapshots
-     SET fulfillment_status = CASE WHEN $3 <> '' THEN $3 ELSE fulfillment_status END,
-         raw_order_json = CASE
-           WHEN $4::boolean THEN jsonb_set(
-             CASE WHEN jsonb_typeof(raw_order_json) = 'object' THEN raw_order_json ELSE '{}'::jsonb END,
-             '{fulfillments}',
-             $5::jsonb,
-             true
-           )
-           ELSE raw_order_json
-         END,
-         last_webhook_topic = $6,
-         last_webhook_received_at = now(),
-         updated_at = now()
-     WHERE ${whereSql}`,
-    [params.storeSubdomain, whereValue, fulfillmentStatus, hasTracking, fulfillmentsJson, params.topic],
-  );
-  const updated = result.rowCount ?? 0;
-  if (updated === 0) {
-    console.warn(`[webhook] 发货事件未匹配到订单快照: ${params.orderId || params.orderNumber}`);
-  } else {
-    console.log(`[webhook] 运单已更新: ${params.orderNumber || params.orderId} tracking:${trackingNumbers.join(',') || '无'} rows:${updated}`);
-  }
-  await logSync({
-    source: 'webhook',
-    action: 'fulfillment_update',
-    storeSubdomain: params.storeSubdomain,
-    storeName: params.storeName,
-    targetId: params.orderNumber || params.orderId,
-    itemsTotal: 1,
-    itemsUpdated: updated,
-    status: updated > 0 ? 'success' : 'failed',
-    detailJson: {
-      topic: params.topic,
-      trackingCount: trackingNumbers.length,
-      tracking: trackingNumbers.join(',').slice(0, 240) || null,
-      fulfillmentStatus: fulfillmentStatus || null,
-      skippedApi: true,
-    },
-  });
 }
 
 function buildEventKey(params: {
@@ -172,6 +95,30 @@ export function createShoplazzaWebhookRouter(): express.Router {
     const payload = req.body;
     const topic = String(req.headers['x-shoplazza-topic'] || payload?.topic || '').trim();
 
+    if (FULFILLMENT_WEBHOOK_TOPICS.includes(topic)) {
+      try {
+        parseFulfillmentWebhook(topic, payload);
+      } catch {
+        res.status(400).json({ ok: false, error: 'Invalid fulfillment payload' });
+        return;
+      }
+      try {
+        const stores = await ensureStores();
+        if (!stores.some(store => store.subdomain === storeSubdomain)) {
+          res.status(404).json({ ok: false, error: 'Store is not enabled' });
+          return;
+        }
+        await enqueueFulfillmentWebhook({ storeSubdomain, topic, payload, headers: req.headers });
+      } catch {
+        // A non-2xx response lets Shoplazza retry if durable receipt failed.
+        res.status(503).json({ ok: false, error: 'Could not save fulfillment event' });
+        return;
+      }
+      res.status(200).json({ ok: true });
+      processPendingFulfillmentWebhooks().catch(() => console.error('[fulfillment-worker] processing failed; scheduled retry remains enabled'));
+      return;
+    }
+
     res.status(200).json({ ok: true });
 
     const stores = await ensureStores();
@@ -204,19 +151,6 @@ export function createShoplazzaWebhookRouter(): express.Router {
         payload,
         headers: req.headers as Record<string, string>,
       });
-
-      if (FULFILLMENT_TOPICS.includes(topic)) {
-        if (inserted) console.log(`[webhook] 收到事件: ${eventKey}`);
-        await applyFulfillmentWebhook({
-          storeSubdomain,
-          storeName: store.storeName,
-          topic,
-          order,
-          orderId,
-          orderNumber,
-        });
-        return;
-      }
 
       if (topic === 'orders/create') {
         return;
@@ -317,7 +251,13 @@ export function createShoplazzaWebhookRouter(): express.Router {
                DO UPDATE SET
                  order_number = EXCLUDED.order_number,
                  order_status = EXCLUDED.order_status,
-                 fulfillment_status = EXCLUDED.fulfillment_status,
+                 fulfillment_status = CASE
+                   WHEN support_order_snapshots.fulfillment_status IN ('partially_shipped', 'shipped')
+                     AND COALESCE(EXCLUDED.fulfillment_status, '') IN ('', 'initialled', 'waiting')
+                   THEN support_order_snapshots.fulfillment_status
+                   WHEN support_order_snapshots.fulfillment_status = 'shipped' AND EXCLUDED.fulfillment_status = 'partially_shipped'
+                   THEN support_order_snapshots.fulfillment_status
+                   ELSE EXCLUDED.fulfillment_status END,
                  order_amount = EXCLUDED.order_amount,
                  order_currency = EXCLUDED.order_currency,
                  payment_status = EXCLUDED.payment_status,
@@ -332,7 +272,11 @@ export function createShoplazzaWebhookRouter(): express.Router {
                  billing_address_json = EXCLUDED.billing_address_json,
                  logistics_json = EXCLUDED.logistics_json,
                  payment_detail_json = CASE WHEN EXCLUDED.payment_detail_json::text <> '{}'::text THEN EXCLUDED.payment_detail_json ELSE support_order_snapshots.payment_detail_json END,
-                 raw_order_json = EXCLUDED.raw_order_json,
+                 raw_order_json = CASE
+                   WHEN jsonb_typeof(support_order_snapshots.raw_order_json->'fulfillments') = 'array'
+                     AND support_order_snapshots.raw_order_json->'fulfillments' <> '[]'::jsonb
+                   THEN jsonb_set(EXCLUDED.raw_order_json, '{fulfillments}', support_order_snapshots.raw_order_json->'fulfillments', true)
+                   ELSE EXCLUDED.raw_order_json END,
                  last_webhook_topic = EXCLUDED.last_webhook_topic,
                  last_webhook_received_at = EXCLUDED.last_webhook_received_at,
                  updated_at = now()

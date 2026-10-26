@@ -34,7 +34,7 @@ function showToast(m,t){var d=document.createElement('div');d.className='toast '
 
 function logStatusDot(s){if(s==='success')return'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#52c41a;margin-right:4px;vertical-align:middle"></span>成功';if(s==='partial')return'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#faad14;margin-right:4px;vertical-align:middle"></span>部分成功';return'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ff4d4f;margin-right:4px;vertical-align:middle"></span>失败'}
 function syncSrcCN(s){var m={webhook:'Webhook',backfill:'兜底同步',api:'API补全'};return m[s]||s}
-function syncActCN(a,l){var topic=l&&l.detail_json&&l.detail_json.topic;var pay=l&&l.detail_json&&l.detail_json.paymentStatus;if(a==='order_upsert'){if(topic==='orders/create'||pay==='waiting')a='order_unpaid';else if(topic==='orders/paid'||pay==='paid')a='order_paid'}if(a==='fulfillment_update'&&topic==='orders/partially_fulfilled')a='order_partial';var m={order_unpaid:'订单进入未支付',order_paid:'已支付',fulfillment_update:'已发货',order_partial:'部分发货',order_upsert:'订单更新',unpaid_summary:'未支付兜底',backfill_summary:'兜底汇总',order_list_page:'列表拉取',transaction_lookup:'交易查询',transaction_fetch:'交易查询',order_detail_fetch:'订单详情',order_detail_from_payload:'正文替代详情'};return(m[a]||a)+' ('+a+')'}
+function syncActCN(a,l){var detail=l&&l.detail_json||{};var topic=detail.topic;var pay=detail.paymentStatus;if(a==='order_upsert'){if(topic==='orders/create'||pay==='waiting')a='order_unpaid';else if(topic==='orders/paid'||pay==='paid')a='order_paid'}if(a==='fulfillment_update'&&!Array.isArray(detail.changes)){if(topic==='orders/partially_fulfilled')a='order_partial';else if(topic==='orders/fulfilled')a='order_shipped'}var m={order_unpaid:'订单进入未支付',order_paid:'已支付',fulfillment_update:'物流更新',fulfillment_reconcile_summary:'物流兜底汇总',order_shipped:'已发货',order_partial:'部分发货',order_upsert:'订单更新',unpaid_summary:'未支付兜底',backfill_summary:'兜底汇总',order_list_page:'列表拉取',transaction_lookup:'交易查询',transaction_fetch:'交易查询',order_detail_fetch:'订单详情',order_detail_from_payload:'正文替代详情'};return(m[a]||a)+' ('+a+')'}
 function opActionCN(a){var m={job_resent:'手动补发',jobs_send_pending:'一键发送待发',job_failed:'发送失败',job_cancelled:'取消待发',job_sent:'发送成功',store_create:'新增店铺',store_delete:'删除店铺',store_update:'修改店铺',store_toggle:'启停店铺',auto_send_toggled:'切换自动发送',auto_backfill_toggled:'切换自动查漏',backfill_store_complete:'兜底完成',backfill_auto_run:'自动兜底',ticket_status_changed:'变更工单状态',agent_reply:'客服回复',customer_reply:'顾客回复',ticket_created:'工单创建',ticket_closed:'工单关闭',email_template_updated:'更新邮件模板'};return(m[a]||a)+' ('+a+')'}
 function opCategoryCN(c){var m={email:'邮件',ticket:'工单',store:'店铺',config:'配置',backfill:'兜底',webhook:'Webhook'};return m[c]||c}
 
@@ -46,15 +46,114 @@ function buildLayout(){$('#mainArea').innerHTML='<header class="topbar"><div cla
 
 function switchLogTab(el,tab){logSubTab=tab;$$('.filter-btn[data-log-tab]').forEach(function(n){n.classList.remove('active')});el.classList.add('active');if(tab==='sync'){syncLogPage=1;loadSyncLogs()}else{opLogPage=1;loadOperationLogs()}}
 
-function buildSyncFilters(){return'<div class="filter-bar" style="border-bottom:none;padding:4px 20px"><button class="filter-btn '+(syncLogSource==='all'?'active':'')+'" onclick="setSyncSource(\'all\')">全部来源</button><button class="filter-btn '+(syncLogSource==='webhook'?'active':'')+'" onclick="setSyncSource(\'webhook\')">Webhook</button><button class="filter-btn '+(syncLogSource==='backfill'?'active':'')+'" onclick="setSyncSource(\'backfill\')">兜底</button><button class="filter-btn '+(syncLogSource==='api'?'active':'')+'" onclick="setSyncSource(\'api\')">API</button> | <button class="filter-btn '+(syncLogAction==='all'?'active':'')+'" onclick="setSyncAction(\'all\')">全部动作</button><button class="filter-btn '+(syncLogAction==='order_unpaid'?'active':'')+'" onclick="setSyncAction(\'order_unpaid\')">订单进入未支付</button><button class="filter-btn '+(syncLogAction==='order_paid'?'active':'')+'" onclick="setSyncAction(\'order_paid\')">已支付</button><button class="filter-btn '+(syncLogAction==='fulfillment_update'?'active':'')+'" onclick="setSyncAction(\'fulfillment_update\')">已发货</button> | <button class="filter-btn '+(syncLogStatus==='all'?'active':'')+'" onclick="setSyncStatus(\'all\')">全部</button><button class="filter-btn '+(syncLogStatus==='success'?'active':'')+'" onclick="setSyncStatus(\'success\')"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#52c41a;margin-right:3px"></span>成功</button><button class="filter-btn '+(syncLogStatus==='failed'?'active':'')+'" onclick="setSyncStatus(\'failed\')"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ff4d4f;margin-right:3px"></span>失败</button></div>'}
+function buildSyncFilters(){
+  var sources=[['all','全部来源'],['webhook','Webhook'],['backfill','兜底'],['api','API']];
+  var actions=[['all','全部动作'],['order_unpaid','订单进入未支付'],['order_paid','已支付'],['unpaid_summary','未支付兜底'],['fulfillment_update','物流更新'],['fulfillment_reconcile_summary','物流兜底汇总']];
+  var statuses=[['all','全部状态'],['success','成功'],['partial','部分成功'],['failed','失败']];
+  var h='<div class="filter-bar" style="border-bottom:none;padding:4px 20px;flex-wrap:wrap">';
+  sources.forEach(function(item){h+='<button class="filter-btn '+(syncLogSource===item[0]?'active':'')+'" data-value="'+esc(item[0])+'" onclick="setSyncSource(this.dataset.value)">'+esc(item[1])+'</button>'});
+  h+=' | ';
+  actions.forEach(function(item){h+='<button class="filter-btn '+(syncLogAction===item[0]?'active':'')+'" data-value="'+esc(item[0])+'" onclick="setSyncAction(this.dataset.value)">'+esc(item[1])+'</button>'});
+  h+=' | ';
+  statuses.forEach(function(item){h+='<button class="filter-btn '+(syncLogStatus===item[0]?'active':'')+'" data-value="'+esc(item[0])+'" onclick="setSyncStatus(this.dataset.value)">'+esc(item[1])+'</button>'});
+  return h+'</div>';
+}
 function buildOpFilters(){return'<div class="filter-bar" style="border-bottom:none;padding:4px 20px"><button class="filter-btn '+(opLogCategory==='all'?'active':'')+'" onclick="setOpCategory(\'all\')">全部</button><button class="filter-btn '+(opLogCategory==='email'?'active':'')+'" onclick="setOpCategory(\'email\')">邮件</button><button class="filter-btn '+(opLogCategory==='ticket'?'active':'')+'" onclick="setOpCategory(\'ticket\')">工单</button><button class="filter-btn '+(opLogCategory==='store'?'active':'')+'" onclick="setOpCategory(\'store\')">店铺</button><button class="filter-btn '+(opLogCategory==='config'?'active':'')+'" onclick="setOpCategory(\'config\')">配置</button><button class="filter-btn '+(opLogCategory==='backfill'?'active':'')+'" onclick="setOpCategory(\'backfill\')">兜底</button> | <button class="filter-btn '+(opLogStatus==='all'?'active':'')+'" onclick="setOpStatus(\'all\')">全部</button><button class="filter-btn '+(opLogStatus==='success'?'active':'')+'" onclick="setOpStatus(\'success\')"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#52c41a;margin-right:3px"></span>成功</button><button class="filter-btn '+(opLogStatus==='partial'?'active':'')+'" onclick="setOpStatus(\'partial\')"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#faad14;margin-right:3px"></span>部分</button><button class="filter-btn '+(opLogStatus==='failed'?'active':'')+'" onclick="setOpStatus(\'failed\')"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ff4d4f;margin-right:3px"></span>失败</button><div class="search-box" style="margin-left:auto"><span class="sicon">🔍</span><input id="opLogSearch" placeholder="搜索..." onkeydown="if(event.key===\'Enter\'){opLogPage=1;loadOperationLogs()}" style="width:160px"></div></div>'}
 
 function setSyncSource(v){syncLogSource=v;syncLogPage=1;loadSyncLogs()}function setSyncAction(v){syncLogAction=v;syncLogPage=1;loadSyncLogs()}function setSyncStatus(v){syncLogStatus=v;syncLogPage=1;loadSyncLogs()}function setOpCategory(v){opLogCategory=v;opLogPage=1;loadOperationLogs()}function setOpStatus(v){opLogStatus=v;opLogPage=1;loadOperationLogs()}
 
-async function loadSyncLogs(){$('#logSubFilters').innerHTML=buildSyncFilters();$('#logThead').innerHTML='<th>时间</th><th>来源</th><th>动作</th><th>店铺域名</th><th>店铺名称</th><th>对象</th><th>新增</th><th>更新</th><th>耗时</th><th>状态</th><th>快照</th>';var p=new URLSearchParams();if(syncLogSource!=='all')p.set('source',syncLogSource);if(syncLogAction!=='all')p.set('action',syncLogAction);if(syncLogStatus!=='all')p.set('status',syncLogStatus);p.set('page',String(syncLogPage));p.set('page_size','30');try{var r=await fetch(API+'/sync-logs?'+p.toString(),{credentials:'same-origin'});var d=await r.json();if(!d.ok)return;renderSyncLogs(d.logs,d.total)}catch(e){}}
+async function loadSyncLogs(){$('#logSubFilters').innerHTML=buildSyncFilters();$('#logThead').innerHTML='<th>时间</th><th>来源</th><th>动作</th><th>店铺域名</th><th>店铺名称</th><th>对象</th><th>新增</th><th>更新</th><th>跳过</th><th>摘要</th><th>耗时</th><th>状态</th><th>快照</th>';var p=new URLSearchParams();if(syncLogSource!=='all')p.set('source',syncLogSource);if(syncLogAction!=='all')p.set('action',syncLogAction);if(syncLogStatus!=='all')p.set('status',syncLogStatus);p.set('page',String(syncLogPage));p.set('page_size','30');try{var r=await fetch(API+'/sync-logs?'+p.toString(),{credentials:'same-origin'});var d=await r.json();if(!d.ok)return;renderSyncLogs(d.logs,d.total)}catch(e){}}
 
 var syncLogById={};
-function renderSyncLogs(logs,total){syncLogById={};var h='';logs.forEach(function(l){syncLogById[l.id]=l;var snap;if(l.action==='unpaid_summary'){snap='<a href="javascript:void(0)" style="color:var(--primary);font-size:12px;text-decoration:none" onclick="event.stopPropagation();openUnpaidDetail('+Number(l.id)+')">明细</a>'}else{var dj=l.detail_json?JSON.stringify(l.detail_json):'{}';snap='<a href="javascript:void(0)" style="color:var(--primary);font-size:12px;text-decoration:none" data-detail="'+esc(dj)+'" onclick="event.stopPropagation();showLogBubble(this,this.getAttribute(\'data-detail\'))">查看</a>'}h+='<tr><td style="text-align:center;white-space:nowrap">'+formatTime(l.created_at)+'</td><td style="text-align:center">'+esc(syncSrcCN(l.source))+'</td><td style="text-align:center">'+esc(syncActCN(l.action,l))+'</td><td style="text-align:center">'+esc(sd(l.store_subdomain))+'</td><td style="text-align:center">'+esc(l.store_name||'-')+'</td><td style="text-align:center">'+esc(l.target_id||'-')+'</td><td style="text-align:center">'+esc((l.items_new||0))+'</td><td style="text-align:center">'+esc((l.items_updated||0))+'</td><td style="text-align:center">'+esc((l.duration_ms!=null?l.duration_ms+'ms':''))+'</td><td style="text-align:center;white-space:nowrap">'+logStatusDot(l.status)+'</td><td style="text-align:center">'+snap+'</td></tr>'});$('#logTbody').innerHTML=h||'<tr><td colspan="11" style="text-align:center;color:var(--text-muted);padding:40px">暂无同步日志</td></tr>';renderLogPagination(total,30,syncLogPage,function(p){syncLogPage=p;loadSyncLogs()})}
+function renderSyncLogs(logs,total){
+  syncLogById={};
+  var h='';
+  logs.forEach(function(l){
+    syncLogById[l.id]=l;
+    var snap;
+    if(l.action==='unpaid_summary'){
+      snap='<a href="javascript:void(0)" style="color:var(--primary);font-size:12px;text-decoration:none" onclick="event.stopPropagation();openUnpaidDetail('+Number(l.id)+')">明细</a>';
+    }else if(isFulfillmentLog(l)){
+      snap='<a href="javascript:void(0)" style="color:var(--primary);font-size:12px;text-decoration:none" onclick="event.stopPropagation();openFulfillmentDetail('+Number(l.id)+')">物流明细</a>';
+    }else{
+      var dj=l.detail_json?JSON.stringify(l.detail_json):'{}';
+      snap='<a href="javascript:void(0)" style="color:var(--primary);font-size:12px;text-decoration:none" data-detail="'+esc(dj)+'" onclick="event.stopPropagation();showLogBubble(this,this.getAttribute(\'data-detail\'))">查看</a>';
+    }
+    h+='<tr><td style="text-align:center;white-space:nowrap">'+formatTime(l.created_at)+'</td><td style="text-align:center">'+esc(syncSrcCN(l.source))+'</td><td style="text-align:center">'+esc(syncActCN(l.action,l))+'</td><td style="text-align:center">'+esc(sd(l.store_subdomain))+'</td><td style="text-align:center">'+esc(l.store_name||'-')+'</td><td style="text-align:center">'+esc(l.target_id||'-')+'</td><td style="text-align:center">'+esc(l.items_new||0)+'</td><td style="text-align:center">'+esc(l.items_updated||0)+'</td><td style="text-align:center">'+esc(l.items_skipped||0)+'</td><td style="max-width:320px;overflow-wrap:anywhere">'+esc(syncLogSummary(l))+'</td><td style="text-align:center">'+esc(l.duration_ms!=null?l.duration_ms+'ms':'')+'</td><td style="text-align:center;white-space:nowrap">'+logStatusDot(l.status)+'</td><td style="text-align:center">'+snap+'</td></tr>';
+  });
+  $('#logTbody').innerHTML=h||'<tr><td colspan="13" style="text-align:center;color:var(--text-muted);padding:40px">暂无同步日志</td></tr>';
+  renderLogPagination(total,30,syncLogPage,function(p){syncLogPage=p;loadSyncLogs()});
+}
+function isFulfillmentLog(l){return l.action==='fulfillment_update'||l.action==='fulfillment_reconcile_summary'}
+function logCount(value){var n=Number(value);return Number.isFinite(n)&&n>=0?n:0}
+function logNumbers(values){return Array.isArray(values)?values.filter(function(value){return typeof value==='string'||typeof value==='number'}).map(function(value){return String(value).trim()}).filter(Boolean):[]}
+function fulfillmentKindLabel(change){
+  if(change.kind==='updated')return JSON.stringify(logNumbers(change.beforeTrackingNumbers))===JSON.stringify(logNumbers(change.afterTrackingNumbers))?'更新物流信息':(Array.isArray(change.retainedTrackingNumbers)?'更新当前号，旧号保留':'更新单号（旧日志）');
+  return {added:'新增包裹',history_added:'补充累计号码，当前号未覆盖',stale:'过期事件，当前号未覆盖',unchanged:'重复或无变化，已跳过'}[change.kind]||change.kind||'-';
+}
+function syncLogSummary(l){
+  var d=l.detail_json||{};
+  if(l.action==='fulfillment_reconcile_summary')return '检查 '+logCount(d.checked)+' · 有变化 '+logCount(d.changed)+' · 失败 '+logCount(d.failed);
+  if(l.action==='fulfillment_update'){
+    if(Array.isArray(d.changes)){
+      var counts={added:0,updated:0,history_added:0,stale:0,unchanged:0};
+      d.changes.forEach(function(change){if(change&&Object.prototype.hasOwnProperty.call(counts,change.kind))counts[change.kind]++});
+      return '新增包裹 '+counts.added+' · 更新 '+(counts.updated+counts.history_added)+' · 补充号码 '+counts.history_added+' · 过期未改当前 '+Math.max(counts.stale,logCount(d.stale))+' · 重复/无变化跳过 '+Math.max(counts.unchanged,logCount(d.unchanged));
+    }
+    var numbers=logNumbers(d.trackingNumbers);
+    return '运单：'+(numbers.length?numbers.join(', '):(d.tracking||'无'))+'（旧日志，未记录变更明细）';
+  }
+  if(l.action==='unpaid_summary')return '列表 '+logCount(l.items_total)+' · 跳过 '+logCount(l.items_skipped);
+  return l.error_message||'';
+}
+function fulfillmentDetailHtml(l){
+  var d=l.detail_json||{};
+  var hasHistoryDetails=Array.isArray(d.changes)&&d.changes.some(function(change){return change&&(Array.isArray(change.retainedTrackingNumbers)||Array.isArray(change.addedTrackingNumbers)||change.kind==='history_added')});
+  var summary='<div class="unpaid-stats">'+esc(syncLogSummary(l))+'</div>';
+  var numbers=logNumbers(d.trackingNumbers);
+  if(numbers.length||d.tracking)summary+='<div class="unpaid-note">'+(hasHistoryDetails?'累计运单：':'已记录运单：')+esc(numbers.length?numbers.join(', '):d.tracking)+'</div>';
+  if(d.fulfillmentCount!=null)summary+='<div class="unpaid-note">包裹 '+esc(d.fulfillmentCount)+' · 运单 '+esc(d.trackingCount==null?numbers.length:d.trackingCount)+'</div>';
+  if(l.action==='fulfillment_reconcile_summary'&&d.remainingDue!=null)summary+='<div class="unpaid-note">待检查订单：'+logCount(d.remainingDue)+'</div>';
+  if(l.error_message)summary+='<div class="unpaid-note" style="color:var(--danger)">'+esc(l.error_message)+'</div>';
+  var orderTable='';
+  if(l.action==='fulfillment_reconcile_summary'){
+    if(Array.isArray(d.items)){
+      var orderRows='';
+      d.items.forEach(function(item){
+        if(!item||typeof item!=='object')return;
+        var status={changed:'有变化',unchanged:'无变化',failed:'失败'}[item.status]||item.status||'-';
+        var current=logNumbers(item.trackingNumbers);
+        orderRows+='<tr><td style="overflow-wrap:anywhere">'+esc(item.orderNumber||item.orderId||'-')+'</td><td>'+esc(status)+'</td><td>'+logCount(item.added)+'</td><td>'+logCount(item.updated)+'</td><td style="overflow-wrap:anywhere">'+(current.length?current.map(esc).join('<br>'):'—')+'</td><td style="overflow-wrap:anywhere">'+esc(item.error||'—')+'</td></tr>';
+      });
+      orderTable='<div class="unpaid-table-wrap"><table><thead><tr><th>订单号</th><th>结果</th><th>新增包裹</th><th>更新包裹</th><th>累计运单</th><th>错误</th></tr></thead><tbody>'+(orderRows||'<tr><td colspan="6" style="text-align:center;color:#8c8c8c">没有逐条订单</td></tr>')+'</tbody></table></div>';
+    }else summary+='<div class="unpaid-note">这条汇总未保存逐条订单明细。</div>';
+  }
+  var rows='';
+  if(Array.isArray(d.changes)){
+    d.changes.forEach(function(change){
+      if(!change||typeof change!=='object')return;
+      var before=logNumbers(change.beforeTrackingNumbers),after=logNumbers(change.afterTrackingNumbers);
+      var retained=logNumbers(change.retainedTrackingNumbers),added=logNumbers(change.addedTrackingNumbers);
+      var retainedText=Array.isArray(change.retainedTrackingNumbers)?(retained.length?retained.map(esc).join('<br>'):'—'):'未记录';
+      var addedText=Array.isArray(change.addedTrackingNumbers)?(added.length?added.map(esc).join('<br>'):'—'):'未记录';
+      rows+='<tr><td style="overflow-wrap:anywhere">'+esc(change.fulfillmentId||'-')+'</td><td>'+esc(fulfillmentKindLabel(change))+'</td><td style="overflow-wrap:anywhere">'+(before.length?before.map(esc).join('<br>'):'—')+'</td><td style="overflow-wrap:anywhere">'+(after.length?after.map(esc).join('<br>'):'—')+'</td><td style="overflow-wrap:anywhere">'+retainedText+'</td><td style="overflow-wrap:anywhere">'+addedText+'</td></tr>';
+    });
+    summary+='<div class="unpaid-note">'+(hasHistoryDetails?'同一包裹累计保留收到的号码；晚到消息可补充号码，但不会覆盖当前号。“本次号码”表示消息携带的号码，累计和新增号码以对应列为准。':'这条旧日志只记录了变更前后号码；累计号码和新增号码未记录时显示“未记录”。')+'</div>';
+  }else if(l.action==='fulfillment_update'){
+    summary+='<div class="unpaid-note">这条旧日志未保存包裹 ID 和变更前后的运单号。</div>';
+  }
+  var table=rows?'<div class="unpaid-table-wrap"><table><thead><tr><th>包裹 ID</th><th>处理结果</th><th>原当前号</th><th>本次号码</th><th>累计号码</th><th>本次新增号码</th></tr></thead><tbody>'+rows+'</tbody></table></div>':'';
+  return summary+orderTable+table+'<details style="padding:12px 18px;overflow:auto"><summary style="cursor:pointer">原始快照</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px">'+esc(JSON.stringify(d,null,2))+'</pre></details>';
+}
+function openFulfillmentDetail(id){
+  var l=syncLogById[id];if(!l)return;
+  var old=document.getElementById('logBubble');if(old)old.remove();
+  var box=document.createElement('div');box.id='logBubble';box.className='unpaid-modal';
+  box.innerHTML='<div class="unpaid-card" style="width:min(900px,100%);overflow:auto" role="dialog"><div class="unpaid-head"><div><div class="unpaid-title">'+(l.action==='fulfillment_reconcile_summary'?'物流兜底汇总':'物流变更明细')+'</div><div class="unpaid-sub">'+esc(l.store_name||'-')+' · '+esc(syncSrcCN(l.source))+' · '+esc(l.target_id||'-')+' · '+formatTime(l.created_at)+'</div></div><button type="button" class="unpaid-close" onclick="closeFulfillmentDetail()">×</button></div>'+fulfillmentDetailHtml(l)+'</div>';
+  box.addEventListener('click',function(e){if(e.target===box)closeFulfillmentDetail()});document.body.appendChild(box);
+}
+function closeFulfillmentDetail(){var box=document.getElementById('logBubble');if(box)box.remove()}
+
 function unpaidKindCN(k){var m={new:'新写入',updated:'更新',kept:'已支付未覆盖',skipped:'无邮箱跳过'};return m[k]||k||'-'}
 function openUnpaidDetail(id){var l=syncLogById[id];if(!l)return;var embedded=l.detail_json&&Array.isArray(l.detail_json.orders)?l.detail_json.orders:null;if(embedded){showUnpaidModal(l,embedded,false);return}showUnpaidModal(l,null,true);fetch(API+'/sync-logs/'+id+'/items',{credentials:'same-origin'}).then(function(r){return r.json()}).then(function(d){if(!d.ok){showUnpaidModal(l,[],true,d.error||'加载失败');return}showUnpaidModal(l,d.orders||[],!!d.legacy)}).catch(function(){showUnpaidModal(l,[],true,'网络错误')})}
 function showUnpaidModal(l,orders,legacy,errorText){var old=document.getElementById('unpaidModal');if(old)old.remove();var rows='';if(errorText){rows='<tr><td colspan="2" style="text-align:center;color:#ff4d4f;padding:24px">'+esc(errorText)+'</td></tr>'}else if(!orders){rows='<tr><td colspan="2" style="text-align:center;color:#8c8c8c;padding:24px">加载中...</td></tr>'}else if(!orders.length){rows='<tr><td colspan="2" style="text-align:center;color:#8c8c8c;padding:24px">没有逐条订单</td></tr>'}else{orders.forEach(function(o){rows+='<tr><td>'+esc(o.orderNumber)+'</td><td>'+esc(unpaidKindCN(o.kind))+'</td></tr>'})}var note=legacy&&Number(l.items_skipped)>0?'<div class="unpaid-note">更早的记录里，无邮箱跳过的订单没有逐条留下，只计在跳过数中。</div>':'';var box=document.createElement('div');box.id='unpaidModal';box.className='unpaid-modal';box.innerHTML='<div class="unpaid-card" role="dialog"><div class="unpaid-head"><div><div class="unpaid-title">未支付兜底明细</div><div class="unpaid-sub">'+esc(l.store_name||'-')+' · '+esc(sd(l.store_subdomain||''))+' · '+formatTime(l.created_at)+'</div></div><button type="button" class="unpaid-close" onclick="closeUnpaidModal()">×</button></div><div class="unpaid-stats">列表 '+esc((l.items_total||0))+' · 新写入 '+esc((l.items_new||0))+' · 更新 '+esc((l.items_updated||0))+' · 跳过 '+esc((l.items_skipped||0))+'</div>'+note+'<div class="unpaid-table-wrap"><table><thead><tr><th>订单号</th><th>结果</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';box.addEventListener('click',function(e){if(e.target===box)closeUnpaidModal()});document.body.appendChild(box)}

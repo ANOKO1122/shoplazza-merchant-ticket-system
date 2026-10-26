@@ -76,6 +76,22 @@ npm start
 4. **订单邮件管理** → 开启自动发送
 5. 测试完整流程：下单 → 收邮件 → 创建工单 → 客服回复
 
+## 物流同步
+
+- 同一个发货记录 ID 更新当前运单，并在该包裹内累计保留旧、新号码；不同 ID 追加包裹。适用于 ERP 在同一记录上依次写入国内、国外两段运单的情况，后台与顾客页展示全部已记录号码并标出当前号码。
+- 每个包裹的 `tracking_number_history` 保存去重后的累计号码。晚到的旧消息不会覆盖当前物流信息，但其中尚未保存的号码仍会补入历史；号码所属运输段由发货系统决定，本系统不自动判断国内或国外。
+- 订阅 `orders/fulfilled`、`orders/partially_fulfilled`、`fulfillments/create` 和 `fulfillments/update`。物流事件先入库再确认接收，重复投递不重复入队，失败自动重试；未入库订单的事件会等待快照建立。
+- 物流兜底不依赖下单时间或订单更新时间游标。自动查漏开启时，每 5 分钟最多核对 200 个已启用店铺的已支付订单；成功后 24 小时再查，失败 1 小时重试。首次待查与到期复查交错轮转，历史订单分批覆盖。
+- 物流处理不创建邮件任务。同步日志中的“物流更新”记录新增包裹、当前号变化、补充历史号、累计保留号码和无变化跳过；“物流兜底汇总”展示批次与逐单结果。
+- `SUPPORT_DISABLE_BACKGROUND_JOBS=true` 同时禁用后台物流重试与兜底定时器。
+
+升级时先部署支持新事件的应用，再为已有店铺补齐订阅（保留其他应用的订阅）：
+
+```bash
+docker compose -f docker-compose.support.yml run --rm --no-deps -T support-bridge node scripts/secure-webhooks.js --apply
+docker compose -f docker-compose.support.yml run --rm --no-deps -T support-bridge node scripts/secure-webhooks.js --check
+```
+
 ## 环境变量
 
 见 `.env.example`，关键配置：

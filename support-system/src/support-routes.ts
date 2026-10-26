@@ -2,7 +2,7 @@ import express from 'express';
 import rateLimit from 'express-rate-limit';
 import { verifyAccessToken, hashToken, createTicketAccessToken, AccessTokenPurpose } from './token';
 import { createTicket, getTicketByPublicNo, getTicketMessages, addCustomerMessage, closeTicket, getOrderSnapshot, findExistingTicket, listExistingTickets, requestArbitration, countConsecutiveCustomerMessages, reopenTicket, findTicketByBootstrapTokenHash } from './ticket-service';
-import { extractTrackingNo } from './admin-preview';
+import { buildTrackingDetails } from './admin-preview';
 import { mapPaymentMethodDisplay } from './normalize-order';
 import { extractStoreCustomDomain } from './email-service';
 import { buildStoreDomain } from './config';
@@ -87,7 +87,7 @@ export function createSupportRouter(): express.Router {
           paid_at: snapshot.paid_at || null,
           payment_method: mapPaymentMethodDisplay(snapshot.payment_method),
           card_last4: snapshot.card_last4 || '',
-          tracking_no: extractTrackingNo(snapshot),
+          ...buildTrackingDetails(snapshot),
           customer_name: snapshot.customer_name || '',
           items: enrichItemsWithThumbnails(snapshot.items_json || []),
         } : null;
@@ -131,7 +131,7 @@ export function createSupportRouter(): express.Router {
         paid_at: snapshot.paid_at || null,
         payment_method: mapPaymentMethodDisplay(snapshot.payment_method),
         card_last4: snapshot.card_last4 || '',
-        tracking_no: extractTrackingNo(snapshot),
+        ...buildTrackingDetails(snapshot),
         customer_name: snapshot.customer_name || '',
         items: enrichItemsWithThumbnails(snapshot.items_json || []),
       } : null;
@@ -340,7 +340,7 @@ export function createSupportRouter(): express.Router {
         paid_at: snapshot.paid_at || null,
         payment_method: mapPaymentMethodDisplay(snapshot.payment_method),
         card_last4: snapshot.card_last4 || '',
-        tracking_no: extractTrackingNo(snapshot),
+        ...buildTrackingDetails(snapshot),
         customer_name: snapshot.customer_name || '',
         items: enrichItemsWithThumbnails(snapshot.items_json || []),
       } : null;

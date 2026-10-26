@@ -432,8 +432,9 @@ function renderNewTicket(order) {
       '<div><span>Order: </span><strong>' + esc((order.order_number || '-')) + '</strong></div>' +
       '<div><span>Amount: </span><strong style="color:#ff4d4f">' + esc(amountDisplay) + '</strong></div>' +
       '<div><span>Date: </span>' + esc(dateDisplay) + '</div>' +
-      (card || paymentMethod ? '<div><span>Payment: </span>' + (paymentMethod || 'Credit Card') + (card ? ' (ending in ' + esc(card) + ')' : '') + '</div>' : '') +
+      (card || paymentMethod ? '<div><span>Payment: </span>' + esc(paymentMethod || 'Credit Card') + (card ? ' (ending in ' + esc(card) + ')' : '') + '</div>' : '') +
       '</div>' +
+      '<div class="order-detail-row"><div><span>Shipping: </span><div class="shipment-list">' + SupportSafe.shipments(order) + '</div></div></div>' +
       (productRows ? '<div class="product-list-compact">' + productRows + '</div>' : '') +
       '</div>' +
       '</div>';
@@ -570,6 +571,7 @@ function renderTicketDetail(data) {
     '<div class="info-row"><span class="info-label">Refundable Amount:</span><span class="info-value">' + esc((order.order_currency || 'USD')) + ' ' + esc((order.order_amount || '')) + '</span></div>' +
     '<div class="info-row"><span class="info-label">Order Date:</span><span class="info-value">' + formatDate(order.paid_at) + '</span></div>' +
     '<div class="info-row"><span class="info-label">Products:</span><span class="info-value">' + items + '</span></div>' +
+    '<div class="info-row"><span class="info-label">Shipping:</span><span class="info-value shipment-list">' + SupportSafe.shipments(order) + '</span></div>' +
     '</div>' +
     (actionButtons ? '<div class="btn-group" style="margin-top:24px">' + actionButtons + '</div>' : '') +
     '</div></aside>' +
@@ -640,6 +642,11 @@ async function refreshMessages() {
       });
       timeline.innerHTML = html;
       timeline.scrollTop = timeline.scrollHeight;
+    }
+    if (data.order) {
+      document.querySelectorAll('.shipment-list').forEach(function(container) {
+        container.innerHTML = SupportSafe.shipments(data.order);
+      });
     }
     updateRemainingDisplay();
   }
