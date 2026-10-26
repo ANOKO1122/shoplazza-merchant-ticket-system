@@ -210,7 +210,7 @@ async function main() {
   };
   logs.context.renderSyncLogs([shipmentLog], 1);
   assertSafe(logs.get('#logTbody').innerHTML);
-  for (const text of ['新增包裹 1', '更新 2', '补充号码 1', '过期未改当前 1', '重复/无变化跳过 1', '物流明细']) assert.ok(logs.get('#logTbody').innerHTML.includes(text), text);
+  for (const text of ['新增包裹 1', '更新 2', '仅补历史的包裹 1', '过期未改当前 1', '重复/无变化跳过 1', '物流明细']) assert.ok(logs.get('#logTbody').innerHTML.includes(text), text);
   const shippingDetail = logs.context.fulfillmentDetailHtml(shipmentLog);
   assertSafe(shippingDetail);
   const visibleShippingDetail = shippingDetail.split('<details')[0];
@@ -230,8 +230,8 @@ async function main() {
   assert.match(legacyChangedDetail, /未记录/);
   assert.doesNotMatch(legacyChangedDetail, /旧号保留|晚到消息可补充/);
 
-  const reconcile = { id: 12, action: 'fulfillment_reconcile_summary', source: 'backfill', detail_json: {
-    checked: 10, changed: 2, failed: 1, remainingDue: 8,
+  const reconcile = { id: 12, action: 'fulfillment_reconcile_summary', source: 'backfill', duration_ms: 1250, detail_json: {
+    checked: 10, changed: 2, failed: 1, remainingDue: 8, batchDurationMs: 61200,
     items: [
       { orderNumber: 'ORDER-CHANGED', status: 'changed', added: 2, updated: 1, trackingNumbers: ['OLD123', 'NEW123', 'SECOND123'] },
       { orderId: 'fallback-order-id', status: 'unchanged', added: 0, updated: 0, trackingNumbers: ['KEPT123'] },
@@ -241,9 +241,12 @@ async function main() {
   } };
   logs.context.renderSyncLogs([reconcile], 1);
   for (const text of ['物流兜底汇总', '兜底同步', '检查 10', '有变化 2', '失败 1']) assert.ok(logs.get('#logTbody').innerHTML.includes(text), text);
+  assert.ok(logs.get('#logTbody').innerHTML.includes('1250ms'), 'table duration keeps its existing format');
   const reconcileDetail = logs.context.fulfillmentDetailHtml(reconcile);
   assertSafe(reconcileDetail);
   const reconcileTable = reconcileDetail.split('<details')[0];
+  for (const text of ['新增/更新按订单计数；更新也包括同号信息变化，具体号码见逐单明细', '本店耗时：1.3 秒', '整批耗时：61.2 秒']) assert.ok(reconcileTable.includes(text), text);
+  assert.ok(!reconcileTable.includes('旧版耗时为整批'));
   for (const text of ['待检查订单：8', '<th>订单号</th>', '<th>新增包裹</th>', '<th>更新包裹</th>', '<th>累计运单</th>', '<th>错误</th>', 'ORDER-CHANGED', 'fallback-order-id', 'OLD123<br>NEW123<br>SECOND123', 'KEPT123', '<td>有变化</td><td>2</td><td>1</td>', '<td>无变化</td>', '<td>失败</td><td>0</td><td>0</td>']) assert.ok(reconcileTable.includes(text), text);
   assert.equal(reconcileTable.split(safe.escape(payload)).length - 1, 3, 'order number, tracking and error remain escaped in the visible table');
   logs.context.openFulfillmentDetail(12);
@@ -251,6 +254,14 @@ async function main() {
   assert.ok(logs.document.body.children.at(-1).innerHTML.includes(reconcileTable));
   assert.match(logs.context.fulfillmentDetailHtml({ ...reconcile, detail_json: { remainingDue: 0, items: [] } }), /待检查订单：0.*没有逐条订单/);
   assert.match(logs.context.fulfillmentDetailHtml({ ...reconcile, detail_json: {} }), /未保存逐条订单明细/);
+  const oldDurationDetail = logs.context.fulfillmentDetailHtml({ ...reconcile, duration_ms: 61200, detail_json: {} }).split('<details')[0];
+  assert.ok(oldDurationDetail.includes('旧版耗时为整批：61.2 秒'));
+  assert.ok(!oldDurationDetail.includes('本店耗时'));
+  const invalidDurationDetail = logs.context.fulfillmentDetailHtml({ ...reconcile, duration_ms: payload, detail_json: { batchDurationMs: payload } });
+  assertSafe(invalidDurationDetail);
+  assert.ok(invalidDurationDetail.includes('本店耗时：未记录 · 整批耗时：未记录'));
+  assert.equal(logs.context.fulfillmentDuration(0), '0 毫秒');
+  assert.equal(logs.context.fulfillmentDuration(null), '未记录');
   const filters = logs.context.buildSyncFilters();
   for (const action of ['order_unpaid', 'unpaid_summary', 'fulfillment_update', 'fulfillment_reconcile_summary']) assert.ok(filters.includes('data-value="' + action + '"'));
 

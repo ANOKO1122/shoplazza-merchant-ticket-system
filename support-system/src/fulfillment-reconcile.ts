@@ -31,6 +31,7 @@ export interface FulfillmentReconcileStoreSummary {
   added: number;
   updated: number;
   remainingDue: number;
+  durationMs: number;
   items: FulfillmentReconcileItem[];
 }
 
@@ -122,12 +123,13 @@ export async function runFulfillmentReconciliation(options: {
       const summaries = new Map<string, FulfillmentReconcileStoreSummary>(stores.map(store => [store.subdomain, {
         storeSubdomain: store.subdomain,
         storeName: store.store_name || store.subdomain,
-        checked: 0, failed: 0, changed: 0, added: 0, updated: 0, remainingDue: 0, items: [],
+        checked: 0, failed: 0, changed: 0, added: 0, updated: 0, remainingDue: 0, durationMs: 0, items: [],
       }]));
 
       for (const candidate of candidates.rows) {
         const store = storeMap.get(candidate.store_subdomain)!;
         const result = summaries.get(store.subdomain)!;
+        const checkStartedAt = Date.now();
         const attemptedAt = new Date().toISOString();
         result.checked++;
         try {
@@ -191,6 +193,8 @@ export async function runFulfillmentReconciliation(options: {
             status: 'failed', added: 0, updated: 0, unchanged: 0, stale: 0,
             changes: [], trackingNumbers: [], error: message,
           });
+        } finally {
+          result.durationMs += Date.now() - checkStartedAt;
         }
       }
 
@@ -209,6 +213,7 @@ export async function runFulfillmentReconciliation(options: {
       );
       for (const row of due.rows) summaries.get(row.store_subdomain)!.remainingDue = Number(row.remaining_due);
       summary.stores = [...summaries.values()];
+      const batchDurationMs = Date.now() - startedAt;
       for (const result of summary.stores) {
         summary.checked += result.checked;
         summary.failed += result.failed;
@@ -216,6 +221,7 @@ export async function runFulfillmentReconciliation(options: {
         summary.added += result.added;
         summary.updated += result.updated;
         summary.remainingDue += result.remainingDue;
+        if (result.checked === 0) continue;
         await logSync({
           source: 'backfill',
           action: 'fulfillment_reconcile_summary',
@@ -227,8 +233,8 @@ export async function runFulfillmentReconciliation(options: {
           itemsSkipped: result.checked - result.failed - result.changed,
           status: result.failed === 0 ? 'success' : result.failed === result.checked ? 'failed' : 'partial',
           errorMessage: result.items.filter(item => item.error).slice(0, 3).map(item => item.error).join('; ') || undefined,
-          durationMs: Date.now() - startedAt,
-          detailJson: { ...result },
+          durationMs: result.durationMs,
+          detailJson: { ...result, batchDurationMs },
         });
       }
       return summary;

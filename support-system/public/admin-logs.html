@@ -86,6 +86,7 @@ function renderSyncLogs(logs,total){
 }
 function isFulfillmentLog(l){return l.action==='fulfillment_update'||l.action==='fulfillment_reconcile_summary'}
 function logCount(value){var n=Number(value);return Number.isFinite(n)&&n>=0?n:0}
+function fulfillmentDuration(value){if(value==null||value==='')return '未记录';var n=Number(value);if(!Number.isFinite(n)||n<0)return '未记录';return n<1000?n+' 毫秒':(n/1000).toFixed(1).replace(/\.0$/,'')+' 秒'}
 function logNumbers(values){return Array.isArray(values)?values.filter(function(value){return typeof value==='string'||typeof value==='number'}).map(function(value){return String(value).trim()}).filter(Boolean):[]}
 function fulfillmentKindLabel(change){
   if(change.kind==='updated')return JSON.stringify(logNumbers(change.beforeTrackingNumbers))===JSON.stringify(logNumbers(change.afterTrackingNumbers))?'更新物流信息':(Array.isArray(change.retainedTrackingNumbers)?'更新当前号，旧号保留':'更新单号（旧日志）');
@@ -98,7 +99,7 @@ function syncLogSummary(l){
     if(Array.isArray(d.changes)){
       var counts={added:0,updated:0,history_added:0,stale:0,unchanged:0};
       d.changes.forEach(function(change){if(change&&Object.prototype.hasOwnProperty.call(counts,change.kind))counts[change.kind]++});
-      return '新增包裹 '+counts.added+' · 更新 '+(counts.updated+counts.history_added)+' · 补充号码 '+counts.history_added+' · 过期未改当前 '+Math.max(counts.stale,logCount(d.stale))+' · 重复/无变化跳过 '+Math.max(counts.unchanged,logCount(d.unchanged));
+      return '新增包裹 '+counts.added+' · 更新 '+(counts.updated+counts.history_added)+' · 仅补历史的包裹 '+counts.history_added+' · 过期未改当前 '+Math.max(counts.stale,logCount(d.stale))+' · 重复/无变化跳过 '+Math.max(counts.unchanged,logCount(d.unchanged));
     }
     var numbers=logNumbers(d.trackingNumbers);
     return '运单：'+(numbers.length?numbers.join(', '):(d.tracking||'无'))+'（旧日志，未记录变更明细）';
@@ -110,6 +111,10 @@ function fulfillmentDetailHtml(l){
   var d=l.detail_json||{};
   var hasHistoryDetails=Array.isArray(d.changes)&&d.changes.some(function(change){return change&&(Array.isArray(change.retainedTrackingNumbers)||Array.isArray(change.addedTrackingNumbers)||change.kind==='history_added')});
   var summary='<div class="unpaid-stats">'+esc(syncLogSummary(l))+'</div>';
+  if(l.action==='fulfillment_reconcile_summary'){
+    summary+='<div class="unpaid-note">新增/更新按订单计数；更新也包括同号信息变化，具体号码见逐单明细。</div>';
+    summary+='<div class="unpaid-note">'+(d.batchDurationMs!=null?'本店耗时：'+fulfillmentDuration(l.duration_ms)+' · 整批耗时：'+fulfillmentDuration(d.batchDurationMs):'旧版耗时为整批：'+fulfillmentDuration(l.duration_ms))+'</div>';
+  }
   var numbers=logNumbers(d.trackingNumbers);
   if(numbers.length||d.tracking)summary+='<div class="unpaid-note">'+(hasHistoryDetails?'累计运单：':'已记录运单：')+esc(numbers.length?numbers.join(', '):d.tracking)+'</div>';
   if(d.fulfillmentCount!=null)summary+='<div class="unpaid-note">包裹 '+esc(d.fulfillmentCount)+' · 运单 '+esc(d.trackingCount==null?numbers.length:d.trackingCount)+'</div>';

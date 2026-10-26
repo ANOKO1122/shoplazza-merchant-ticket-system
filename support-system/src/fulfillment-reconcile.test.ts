@@ -11,11 +11,11 @@ const NOW = '2026-10-26T12:00:00.000Z';
 const STORE = { subdomain: 'store-a', storeName: 'Store A', accessToken: 'fixture-only' };
 
 // Never import real application dependencies: unexpected imports, queries and calls fail closed.
-function isolatedModule<T>(filename: string, dependencies: Record<string, unknown>): T {
+function isolatedModule<T>(filename: string, dependencies: Record<string, unknown>, now?: () => number): T {
   let clock = Date.parse(NOW);
   class FixedDate extends Date {
     constructor(value?: string | number) { super(value ?? NOW); }
-    static now() { clock += 1000; return clock; }
+    static now() { if (now) return now(); clock += 1000; return clock; }
   }
   const source = ts.transpileModule(fs.readFileSync(path.resolve(__dirname, '../src', filename), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, esModuleInterop: true },
@@ -142,11 +142,15 @@ function harness(options: {
   apply?: (params: any) => Promise<any>;
   selectionError?: boolean;
   unlockError?: boolean;
+  now?: () => number;
+  onQuery?: (sql: string, params: any[]) => void;
+  onLog?: () => void;
 } = {}) {
   const calls = { connections: 0, unlocks: 0, released: [] as unknown[], selections: [] as Array<{ sql: string; params: any[] }>, state: [] as Array<{ sql: string; params: any[] }>, api: [] as string[], applied: [] as any[], logs: [] as any[] };
   const stores = ['store-a', 'store-b'].map(subdomain => ({ subdomain, store_name: subdomain, access_token: 'fixture-only', enabled: true }));
   const client = {
     async query(sql: string, params: any[] = []) {
+      options.onQuery?.(sql, params);
       if (sql.includes('pg_try_advisory_lock')) return { rows: [{ locked: options.locked !== false }] };
       if (sql.includes('pg_advisory_unlock')) {
         calls.unlocks++;
@@ -175,8 +179,8 @@ function harness(options: {
       calls.applied.push(params);
       return options.apply ? options.apply(params) : { matched: true, added: 1, updated: 0, unchanged: 0, stale: 0, changes: [{ id: 'f1', kind: 'added' }], trackingNumbers: ['TRACK'] };
     } },
-    './log-service': { logSync: async (entry: unknown) => { calls.logs.push(entry); } },
-  });
+    './log-service': { logSync: async (entry: unknown) => { calls.logs.push(entry); options.onLog?.(); } },
+  }, options.now);
   return { run: reconciler.runFulfillmentReconciliation, calls };
 }
 
@@ -225,6 +229,63 @@ test('API failure and unmatched updates retry in one hour without recording a su
   assert.equal(calls.logs[0].status, 'partial');
   assert.equal(calls.logs[0].detailJson.items.filter((item: any) => item.status === 'failed').length, 2);
   assert.equal(calls.applied.length, 2);
+});
+
+test('store durations accumulate only their own checks while batch duration includes shared work', async () => {
+  let clock = Date.parse(NOW);
+  const apiDurations: Record<string, number> = { 'a-first': 100, 'b-first': 300, 'a-second': 200 };
+  const { run, calls } = harness({
+    candidates: [candidate('a-first'), candidate('b-first', 'store-b'), candidate('a-second')],
+    now: () => clock,
+    list: async id => { clock += apiDurations[id]; return []; },
+    apply: async () => {
+      clock += 20;
+      return { matched: true, added: 0, updated: 0, unchanged: 1, stale: 0, changes: [], trackingNumbers: [] };
+    },
+    onQuery: sql => {
+      if (sql.includes('WITH paid_orders')) clock += 40;
+      if (sql.includes('INSERT INTO support_fulfillment_sync_state')) clock += 7;
+      if (sql.includes('AS remaining_due')) clock += 60;
+    },
+    onLog: () => { clock += 50; },
+  });
+  const summary = await run();
+  assert.equal(summary.stores[0].durationMs, 354);
+  assert.equal(summary.stores[1].durationMs, 327);
+  assert.deepEqual(calls.logs.map(log => log.durationMs), [354, 327]);
+  // Both logs describe the same batch; writing the first log must not inflate the second.
+  assert.deepEqual(calls.logs.map(log => log.detailJson.batchDurationMs), [781, 781]);
+});
+
+test('failed checks include retry state writes in store duration and unchecked stores retain backlog without logs', async () => {
+  let clock = Date.parse(NOW);
+  const { run, calls } = harness({
+    candidates: [candidate('failed-order', 'store-b')],
+    now: () => clock,
+    list: async () => { clock += 75; throw new Error('simulated API failure'); },
+    onQuery: sql => { if (sql.includes('INSERT INTO support_fulfillment_sync_state')) clock += 25; },
+  });
+  const summary = await run();
+  assert.equal(summary.stores.length, 2);
+  assert.equal(summary.stores[0].checked, 0);
+  assert.equal(summary.stores[0].durationMs, 0);
+  assert.equal(summary.stores[0].remainingDue, 7);
+  assert.equal(summary.remainingDue, 7);
+  assert.equal(summary.stores[1].durationMs, 100);
+  assert.equal(calls.logs.length, 1);
+  assert.equal(calls.logs[0].storeSubdomain, 'store-b');
+  assert.equal(calls.logs[0].durationMs, 100);
+  assert.equal(calls.logs[0].detailJson.batchDurationMs, 100);
+  assert.equal(calls.logs[0].status, 'failed');
+});
+
+test('a batch with no checked orders returns all stores and backlog without summary logs', async () => {
+  const { run, calls } = harness();
+  const summary = await run();
+  assert.equal(summary.checked, 0);
+  assert.equal(summary.stores.length, 2);
+  assert.equal(summary.remainingDue, 7);
+  assert.equal(calls.logs.length, 0);
 });
 
 test('forced reconciliation filters a single order and bypasses its next due time', async () => {

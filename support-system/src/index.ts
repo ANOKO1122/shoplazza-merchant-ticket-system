@@ -331,8 +331,8 @@ async function startup() {
         console.error('[fulfillment-reconcile] failed:', error.message);
       }
     };
-    // Scan independently from order-created cursors, one bounded batch every five minutes.
-    fulfillmentReconcileTimer = setInterval(reconcileFulfillments, 5 * 60 * 1000);
+    // Webhooks handle live updates; reconcile one bounded batch each hour.
+    fulfillmentReconcileTimer = setInterval(reconcileFulfillments, 60 * 60 * 1000);
     fulfillmentReconcileTimer.unref();
   }
 
