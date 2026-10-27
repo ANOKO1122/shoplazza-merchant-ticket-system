@@ -38,7 +38,8 @@ function loadModule(filename, dependencies) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, esModuleInterop: true },
   }).outputText;
   const module = { exports: {} };
-  vm.runInNewContext(code, { module, exports: module.exports, console, require(name) {
+  vm.runInNewContext(code, { module, exports: module.exports, console, URL,
+    process: { env: { SUPPORT_MAIL_FROM: 'fixture@example.invalid' } }, require(name) {
     if (!Object.prototype.hasOwnProperty.call(dependencies, name)) throw new Error(`Unapproved test dependency: ${name}`);
     return dependencies[name];
   } }, { filename });
@@ -175,7 +176,7 @@ function snapshotUpserts(filename) {
 async function normalSnapshotProtection() {
   const kept = [{ ...parcel('PROTECTED', 'CURRENT', times[2]), tracking_number_history: ['DOMESTIC', 'CURRENT'] }];
   await addOrder('PROTECTED', kept, 'one@example.invalid', 'shipped');
-  const statements = [...snapshotUpserts('shoplazza-webhook-routes.ts'), ...snapshotUpserts('backfill-jobs.ts')];
+  const statements = [...snapshotUpserts('paid-webhook.ts'), ...snapshotUpserts('backfill-jobs.ts')];
   assert.equal(statements.length, 3, 'exercise every current ordinary snapshot upsert');
   for (const sql of statements) {
     const columns = sql.match(/INSERT INTO support_order_snapshots\s*\(([^)]+)\)/)[1].split(',').map(value => value.trim());
@@ -236,18 +237,114 @@ async function reconcileStateAndCandidates() {
   console.log('PASS real candidate SQL/EXPLAIN, unique-order selection, durable check deadlines and retry recovery');
 }
 
+async function independentReceiptPool() {
+  const held = [];
+  try {
+    for (let i = 0; i < 10; i++) held.push(await pool.connect());
+    assert.equal(pool.idleCount, 0);
+    assert.equal((await pg.queryWebhook('SELECT 1 AS ok')).rows[0].ok, 1);
+    const started = Date.now();
+    await assert.rejects(pg.queryWebhook('SELECT pg_sleep(10)'), error => error.code === '57014');
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed >= 1000 && elapsed < 4000, `receipt statement deadline took ${elapsed}ms`);
+    assert.equal((await pg.queryWebhook('SELECT 2 AS ok')).rows[0].ok, 2);
+  } finally {
+    held.forEach(client => client.release());
+  }
+  console.log('PASS independent receipt pool under saturated business pool, bounded statement timeout and recovery');
+}
+
+async function paidDurableQueueRetry() {
+  const forbidden = async () => { throw new Error('External API or SMTP is forbidden in integration tests'); };
+  const config = {
+    loadConfig: () => ({ publicBaseUrl: 'https://fixture.invalid' }),
+    buildStoreDomain: () => 'fixture.invalid',
+    loadStoresConfig: async () => [{ subdomain: store.subdomain, storeName: store.store_name, accessToken: 'unused' }],
+  };
+  // Use the real mail-job INSERT/event_key and PostgreSQL uniqueness constraints;
+  // the token generator and all transport/API dependencies are isolated fixtures.
+  const mailJobs = loadModule('email-service.ts', {
+    crypto, './pg': pg, './config': config, './log-service': logService,
+    './mailer': { sendSupportEmail: forbidden },
+    './token': { createBootstrapToken: async () => 'offline-fixture-token', createTicketAccessToken: forbidden,
+      hashToken: token => crypto.createHash('sha256').update(token).digest('hex') },
+  });
+  const dependencies = {
+    crypto, './pg': pg, './config': config, './log-service': logService, './email-service': mailJobs,
+    './normalize-order': loadModule('normalize-order.ts', {}),
+    './shoplazza-client': { getOrderDetail: forbidden, getOrderByNumber: forbidden, getOrderTransactions: forbidden },
+  };
+  const paidWorker = () => loadModule('paid-webhook.ts', dependencies);
+  const payload = { order: { id: 'PAID-RETRY', number: '#PAID-RETRY', financial_status: 'paid',
+    customer: { email: 'one@example.invalid' }, payment_line: { payment_channel: 'paypal' },
+    line_items: [{ title: 'Offline fixture', quantity: 1 }], fulfillment_status: 'waiting' } };
+  const params = { storeSubdomain: store.subdomain, payload,
+    headers: { 'x-shoplazza-deduplication-id': 'provider-reuses-this-header', authorization: 'do-not-save' } };
+  const event = async () => (await pool.query("SELECT status, attempts, delivery_count, next_attempt_at::text, headers_json FROM shoplazza_webhook_events WHERE event_key LIKE 'paid:%' AND order_id='PAID-RETRY'")).rows[0];
+  const jobs = async () => (await pool.query("SELECT id, status FROM support_email_jobs WHERE order_id='PAID-RETRY'")).rows;
+  // An old receipt does not block a newly delivered event and is never automatically replayed.
+  await pool.query("INSERT INTO shoplazza_webhook_events(event_key,store_subdomain,topic,order_id,payload_json) VALUES('orders/paid:legacy',$1,'orders/paid','PAID-RETRY','{}')", [store.subdomain]);
+  await paidWorker().enqueuePaidWebhook(params);
+  await paidWorker().enqueuePaidWebhook(params);
+  assert.equal((await event()).delivery_count, 2);
+  assert.deepEqual((await event()).headers_json, { 'x-shoplazza-deduplication-id': 'provider-reuses-this-header' });
+  await pool.query("ALTER TABLE support_email_jobs ADD CONSTRAINT integration_reject_paid_mail CHECK(order_id <> 'PAID-RETRY')");
+  try {
+    assert.deepEqual(plain(await paidWorker().processPendingPaidWebhooks({ limit: 1 })), { processed: 0, failed: 1 });
+    assert.equal((await snapshots('PAID-RETRY')).length, 1);
+    assert.equal((await jobs()).length, 0);
+    const failed = await event();
+    assert.equal(failed.status, 'failed'); assert.equal(failed.attempts, 1);
+    await paidWorker().enqueuePaidWebhook(params);
+    const duplicate = await event();
+    assert.equal(duplicate.status, 'failed'); assert.equal(duplicate.attempts, 1);
+    assert.equal(duplicate.delivery_count, 3);
+    assert.equal(duplicate.next_attempt_at, failed.next_attempt_at, 'duplicate receipt must preserve retry deadline');
+  } finally {
+    await pool.query('ALTER TABLE support_email_jobs DROP CONSTRAINT integration_reject_paid_mail');
+  }
+  // Fail after the invitation is committed, then retry using a fresh worker module.
+  await pool.query("ALTER TABLE shoplazza_webhook_events ADD CONSTRAINT integration_reject_paid_finish CHECK(order_id <> 'PAID-RETRY' OR status <> 'processed') NOT VALID");
+  try {
+    await pool.query("UPDATE shoplazza_webhook_events SET next_attempt_at=now() WHERE event_key LIKE 'paid:%'");
+    assert.deepEqual(plain(await paidWorker().processPendingPaidWebhooks({ limit: 1 })), { processed: 0, failed: 1 });
+    assert.equal((await event()).attempts, 2);
+    assert.equal((await jobs()).length, 1);
+    assert.equal((await jobs())[0].status, 'pending');
+  } finally {
+    await pool.query('ALTER TABLE shoplazza_webhook_events DROP CONSTRAINT integration_reject_paid_finish');
+  }
+  const originalJobId = (await jobs())[0].id;
+  await pool.query("UPDATE shoplazza_webhook_events SET next_attempt_at=now() WHERE event_key LIKE 'paid:%'");
+  assert.deepEqual(plain(await paidWorker().processPendingPaidWebhooks({ limit: 1 })), { processed: 1, failed: 0 });
+  assert.equal((await event()).status, 'processed'); assert.equal((await event()).attempts, 3);
+  assert.deepEqual(await jobs(), [{ id: originalJobId, status: 'pending' }]);
+  await paidWorker().enqueuePaidWebhook(params);
+  assert.equal((await event()).status, 'processed'); assert.equal((await event()).delivery_count, 4);
+  assert.deepEqual(plain(await paidWorker().processPendingPaidWebhooks({ limit: 1 })), { processed: 0, failed: 0 });
+  // The same provider header on a different order must create an independent event.
+  await paidWorker().enqueuePaidWebhook({ ...params, payload: { order: { ...payload.order, id: 'PAID-SECOND', number: '#PAID-SECOND' } } });
+  assert.deepEqual(plain(await paidWorker().processPendingPaidWebhooks({ limit: 1 })), { processed: 1, failed: 0 });
+  assert.equal(Number((await pool.query("SELECT count(*) FROM shoplazza_webhook_events WHERE event_key LIKE 'paid:%'")).rows[0].count), 2);
+  const old = (await pool.query("SELECT status, attempts FROM shoplazza_webhook_events WHERE event_key='orders/paid:legacy'")).rows[0];
+  assert.deepEqual(old, { status: 'received', attempts: 0 });
+  console.log('PASS paid durable receipt, delivery counting, retry across reloads, real invitation idempotency and historical isolation (SMTP blocked)');
+}
+
 async function main() {
   const identity = await pool.query('SELECT current_database() AS name');
   assert.equal(identity.rows[0].name, database);
   const tables = await pool.query("SELECT count(*) FROM pg_tables WHERE schemaname='public'");
   assert.equal(Number(tables.rows[0].count), 0, 'integration database must be empty; no existing tables may be touched');
   await pg.ensureTables();
+  await independentReceiptPool();
   await realConcurrency();
   await atomicLogRollback();
   await durableQueueRetry();
   await normalSnapshotProtection();
   await reconcileStateAndCandidates();
-  console.log('PASS all fulfillment PostgreSQL integration scenarios (no external API or email calls)');
+  await paidDurableQueueRetry();
+  console.log('PASS all webhook and fulfillment PostgreSQL integration scenarios (no external API or SMTP calls)');
 }
 
-main().catch(error => { console.error(error.message); process.exitCode = 1; }).finally(() => pool.end());
+main().catch(error => { console.error(error.stack || error.message); process.exitCode = 1; }).finally(() => pg.closeDatabasePools());

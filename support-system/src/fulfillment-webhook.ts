@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { query } from './pg';
+import { query, queryWebhook } from './pg';
 import { getStoreBySubdomain } from './store-service';
 import { applyFulfillmentUpdate, validateFulfillments } from './fulfillment-service';
 
@@ -43,9 +43,10 @@ function stableJson(value: any): string {
   return JSON.stringify(value);
 }
 
-export function fulfillmentEventKey(store: string, topic: string, payload: unknown, deduplicationId?: string): string {
-  const identity = deduplicationId?.trim() ? `delivery:${deduplicationId.trim()}` : `payload:${stableJson(payload)}`;
-  return `fulfillment:${store}:${topic}:${crypto.createHash('sha256').update(identity).digest('hex')}`;
+export function fulfillmentEventKey(store: string, topic: string, payload: unknown, _deduplicationId?: string): string {
+  // Shoplazza can reuse its deduplication header across different orders and
+  // updates. Only the stable body identifies an identical delivery here.
+  return `fulfillment:v2:${store}:${topic}:${crypto.createHash('sha256').update(stableJson(payload)).digest('hex')}`;
 }
 
 /** Persist before acknowledging receipt. Processing and retries never enter the paid/mail path. */
@@ -56,17 +57,35 @@ export async function enqueueFulfillmentWebhook(params: {
   headers: Record<string, unknown>;
 }): Promise<void> {
   const parsed = parseFulfillmentWebhook(params.topic, params.payload);
-  const dedup = params.headers['x-shoplazza-deduplication-id'];
-  const key = fulfillmentEventKey(params.storeSubdomain, params.topic, params.payload, typeof dedup === 'string' ? dedup : undefined);
+  const key = fulfillmentEventKey(params.storeSubdomain, params.topic, params.payload);
   const headers = Object.fromEntries([
     'x-shoplazza-topic', 'x-shoplazza-shop-domain', 'x-shoplazza-api-version',
     'x-shoplazza-deduplication-id', 'content-type', 'user-agent',
   ].filter(name => typeof params.headers[name] === 'string').map(name => [name, params.headers[name]]));
-  await query(
-    `INSERT INTO shoplazza_webhook_events
-       (event_key, store_subdomain, topic, order_id, order_number, payload_json, headers_json, status, next_attempt_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, 'received', now())
-     ON CONFLICT (event_key) DO NOTHING`,
+  // A legacy key is reusable only when its stored body is identical. Repeated
+  // receipts update telemetry without reopening completed or deferred work.
+  await queryWebhook(
+    `WITH duplicate AS (
+       UPDATE shoplazza_webhook_events
+       SET delivery_count = delivery_count + 1,
+           last_received_at = GREATEST(COALESCE(last_received_at, received_at), now())
+       WHERE id = (
+         SELECT id FROM shoplazza_webhook_events
+         WHERE event_key = $1
+            OR (store_subdomain = $2 AND topic = $3
+                AND event_key LIKE 'fulfillment:%' AND event_key NOT LIKE 'fulfillment:v2:%'
+                AND payload_json = $6::jsonb)
+         ORDER BY (event_key = $1) DESC, id LIMIT 1
+       ) RETURNING id
+     )
+     INSERT INTO shoplazza_webhook_events
+       (event_key, store_subdomain, topic, order_id, order_number, payload_json, headers_json,
+        status, next_attempt_at, delivery_count, last_received_at)
+     SELECT $1, $2, $3, $4, $5, $6, $7, 'received', now(), 1, now()
+     WHERE NOT EXISTS (SELECT 1 FROM duplicate)
+     ON CONFLICT (event_key) DO UPDATE
+       SET delivery_count = shoplazza_webhook_events.delivery_count + 1,
+           last_received_at = GREATEST(shoplazza_webhook_events.last_received_at, EXCLUDED.last_received_at)`,
     [key, params.storeSubdomain, params.topic, parsed.orderId, parsed.orderNumber || null,
       JSON.stringify(params.payload), JSON.stringify(headers)],
   );
@@ -108,23 +127,27 @@ export function processPendingFulfillmentWebhooks(options: { limit?: number } = 
           topic: event.topic,
         });
         if (!result.matched) throw new Error('Order snapshot is not available yet; queued for retry');
-        await query(
+        const completed = await query(
           `UPDATE shoplazza_webhook_events SET status = 'processed', processed_at = now(),
              processing_started_at = NULL, next_attempt_at = NULL, error_message = NULL,
-             order_number = COALESCE(NULLIF($2, ''), order_number), updated_at = now() WHERE id = $1`,
-          [event.id, result.orderNumber],
+             order_number = COALESCE(NULLIF($2, ''), order_number), updated_at = now()
+           WHERE id = $1 AND status = 'processing' AND attempts = $3`,
+          [event.id, result.orderNumber, event.attempts],
         );
-        processed++;
+        if ((completed.rowCount ?? 0) > 0) processed++;
       } catch (error: any) {
         const delaySeconds = Math.min(3600, 30 * 2 ** Math.min(7, Math.max(0, Number(event.attempts) - 1)));
-        await query(
+        const failedEvent = await query(
           `UPDATE shoplazza_webhook_events SET status = 'failed', error_message = $2,
              processing_started_at = NULL, next_attempt_at = now() + ($3 * interval '1 second'),
-             updated_at = now() WHERE id = $1`,
-          [event.id, String(error.message || 'Fulfillment processing failed').slice(0, 500), delaySeconds],
+             updated_at = now()
+           WHERE id = $1 AND status = 'processing' AND attempts = $4`,
+          [event.id, String(error.message || 'Fulfillment processing failed').slice(0, 500), delaySeconds, event.attempts],
         );
-        failed++;
-        console.error(`[fulfillment-worker] event ${event.id} failed; retry in ${delaySeconds}s`);
+        if ((failedEvent.rowCount ?? 0) > 0) {
+          failed++;
+          console.error(`[fulfillment-worker] event ${event.id} failed; retry in ${delaySeconds}s`);
+        }
       }
     }
     return { processed, failed };

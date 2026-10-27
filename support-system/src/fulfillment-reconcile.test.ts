@@ -91,12 +91,14 @@ test('fulfillment response body timeout fails the check and releases the batch l
   }
 });
 
-test('existing order requests retain their previous timeout options', async () => {
+test('existing order GET requests also bound response bodies', async () => {
+  const timeouts: Array<number | undefined> = [];
   const client = api(async (_url, init) => {
-    assert.equal(init?.timeout, undefined);
+    timeouts.push(init?.timeout);
     return response({ orders: [], has_more: false });
   });
   await client.listPaidOrdersCreatedSince(STORE, NOW, NOW);
+  assert.deepEqual(timeouts, [18000]);
 });
 
 test('fulfillment API does not turn HTTP, business or malformed responses into an empty result', async t => {

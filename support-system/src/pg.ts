@@ -1,6 +1,7 @@
 import { Pool, PoolClient } from 'pg';
 
 let pool: Pool;
+let webhookPool: Pool;
 
 export function getPool(): Pool {
   if (!pool) {
@@ -14,6 +15,27 @@ export function getPool(): Pool {
 
 export async function query(text: string, params?: unknown[]) {
   return getPool().query(text, params);
+}
+
+// Keep webhook receipt independent of long-running sync queries. Shoplazza needs
+// an explicit response within five seconds; a stalled insert must fail promptly.
+export async function queryWebhook(text: string, params?: unknown[]) {
+  if (!webhookPool) {
+    webhookPool = new Pool({
+      connectionString: process.env.SUPPORT_DATABASE_URL,
+      max: 4,
+      connectionTimeoutMillis: 1000,
+      statement_timeout: 1500,
+      query_timeout: 2000,
+      idleTimeoutMillis: 10000,
+      allowExitOnIdle: true,
+    });
+  }
+  return webhookPool.query(text, params);
+}
+
+export async function closeDatabasePools(): Promise<void> {
+  await Promise.all([pool?.end(), webhookPool?.end()]);
 }
 
 export async function getClient(): Promise<PoolClient> {
@@ -348,7 +370,10 @@ export async function ensureTables(): Promise<void> {
   await p.query(`ALTER TABLE shoplazza_webhook_events ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0`);
   await p.query(`ALTER TABLE shoplazza_webhook_events ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ`);
   await p.query(`ALTER TABLE shoplazza_webhook_events ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ`);
+  await p.query(`ALTER TABLE shoplazza_webhook_events ADD COLUMN IF NOT EXISTS delivery_count INTEGER NOT NULL DEFAULT 1`);
+  await p.query(`ALTER TABLE shoplazza_webhook_events ADD COLUMN IF NOT EXISTS last_received_at TIMESTAMPTZ`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_fulfillment_webhook_pending ON shoplazza_webhook_events(next_attempt_at, received_at) WHERE event_key LIKE 'fulfillment:%' AND status IN ('received', 'failed', 'processing')`);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_paid_webhook_pending ON shoplazza_webhook_events(next_attempt_at, received_at) WHERE event_key LIKE 'paid:%' AND status IN ('received', 'failed', 'processing')`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_order_snapshots_email ON support_order_snapshots(customer_email)`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_order_snapshots_paid_at ON support_order_snapshots(paid_at)`);
 
@@ -522,6 +547,7 @@ export async function ensureTables(): Promise<void> {
 
   // 新增 raw_client_link 列（用于回复通知令牌复用）
   await p.query(`ALTER TABLE support_email_jobs ADD COLUMN IF NOT EXISTS raw_client_link TEXT`);
+  await p.query(`ALTER TABLE support_email_jobs ADD COLUMN IF NOT EXISTS job_source TEXT`);
 
   // ── 系统设置（运行时覆盖 .env 的配置）──
   await p.query(`

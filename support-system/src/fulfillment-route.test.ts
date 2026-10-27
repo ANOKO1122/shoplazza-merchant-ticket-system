@@ -21,7 +21,7 @@ function load<T>(filename: string, dependencies: Record<string, unknown>): T {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, esModuleInterop: true },
   }).outputText;
   vm.runInNewContext(code, {
-    module, exports: module.exports, Buffer, URL,
+    module, exports: module.exports, Buffer, URL, setTimeout, clearTimeout,
     process: { env: { SUPPORT_WEBHOOK_SECRET: SECRET } },
     console: { log() {}, warn() {}, error() {} },
     require(name: string) {
@@ -38,14 +38,15 @@ function gate() {
   return { promise, resolve };
 }
 
-async function harness(t: TestContext, persist?: () => Promise<void>) {
-  const calls = { queued: [] as any[][], paidEvents: [] as any[][], snapshots: [] as any[][], invites: [] as any[], worker: 0 };
+async function harness(t: TestContext, persist?: () => Promise<void>, stores?: () => Promise<typeof STORE[]>) {
+  const calls = { queued: [] as any[][], paidEvents: [] as any[][], snapshots: [] as any[][], invites: [] as any[], worker: 0, storeLookups: 0 };
   const finished: boolean[] = [];
   let saved = false;
+  let pendingPaid: any;
   const paidDone = gate();
   const forbid = () => { throw new Error('Offline route attempted an external API or live database'); };
   const config = {
-    loadStoresConfig: async () => [STORE],
+    loadStoresConfig: async () => { calls.storeLookups++; return stores ? stores() : [STORE]; },
     buildStoreDomain: (subdomain: string) => `${subdomain}.myshoplaza.com`,
   };
   const database = { query: async (sql: string, values: any[]) => {
@@ -54,24 +55,38 @@ async function harness(t: TestContext, persist?: () => Promise<void>) {
         calls.queued.push(values);
         if (persist) await persist();
         saved = true;
-      } else calls.paidEvents.push(values);
+      } else {
+        calls.paidEvents.push(values);
+        if (String(values[0]).startsWith('paid:')) {
+          if (persist) await persist();
+          saved = true;
+          pendingPaid = { id: 1, attempts: 1, store_subdomain: STORE.subdomain, payload_json: JSON.parse(values[5]) };
+        }
+      }
       return { rows: [{ id: 1 }], rowCount: 1 };
     }
+    if (sql.includes("SET status = 'processing'") && sql.includes("LIKE 'paid:%'")) {
+      const event = pendingPaid;
+      pendingPaid = undefined;
+      return { rows: event ? [event] : [], rowCount: event ? 1 : 0 };
+    }
+    if (sql.includes("SET status = 'processed'")) return { rows: [], rowCount: 1 };
     if (sql.includes('INSERT INTO support_order_snapshots')) {
       calls.snapshots.push(values);
       return { rows: [{ is_new: true }], rowCount: 1 };
     }
     return forbid();
   } };
+  const receiptDatabase = { ...database, queryWebhook: database.query };
   const core = load<typeof import('./fulfillment-service')>('fulfillment-service.ts', {
     'node:util': { isDeepStrictEqual }, './pg': { getPool: forbid },
   });
   const fulfillment = load<typeof import('./fulfillment-webhook')>('fulfillment-webhook.ts', {
-    crypto, './pg': database, './store-service': { getStoreBySubdomain: forbid }, './fulfillment-service': core,
+    crypto, './pg': receiptDatabase, './store-service': { getStoreBySubdomain: forbid }, './fulfillment-service': core,
   });
   const security = load<typeof import('./webhook-security')>('webhook-security.ts', { crypto, './config': config });
-  const router = load<typeof import('./shoplazza-webhook-routes')>('shoplazza-webhook-routes.ts', {
-    express, './config': config, './pg': database,
+  const processingDependencies = {
+    crypto, './config': config, './pg': receiptDatabase,
     './shoplazza-client': { getOrderByNumber: forbid, getOrderDetail: forbid, getOrderTransactions: forbid },
     './normalize-order': load('normalize-order.ts', {}),
     './email-service': {
@@ -82,6 +97,11 @@ async function harness(t: TestContext, persist?: () => Promise<void>) {
       },
     },
     './log-service': { logSync: async (entry: any) => { if (entry.action === 'order_paid') paidDone.resolve(); } },
+  };
+  const paid = load<typeof import('./paid-webhook')>('paid-webhook.ts', processingDependencies);
+  const router = load<typeof import('./shoplazza-webhook-routes')>('shoplazza-webhook-routes.ts', {
+    ...processingDependencies, express,
+    './paid-webhook': paid,
     './webhook-security': security,
     './fulfillment-webhook': {
       ...fulfillment,
@@ -206,4 +226,57 @@ test('HTTP paid event retains its existing snapshot and invite path without ente
   assert.equal(subject.calls.invites.length, 1);
   assert.equal(subject.calls.invites[0].customerEmail, 'buyer@example.invalid');
   assert.equal(subject.calls.queued.length + subject.calls.worker, 0);
+});
+
+test('HTTP paid receipt also waits for durable insert and never processes an unsaved event', { timeout: 5000 }, async t => {
+  const started = gate(); const commit = gate();
+  const subject = await harness(t, async () => { started.resolve(); await commit.promise; });
+  const response = subject.post('orders/paid', { order: {
+    id: 'order-a', number: 'ORDER-A', financial_status: 'paid', customer: { email: 'offline@example.invalid' },
+    line_items: [{ title: 'Fixture' }], payment_line: { payment_channel: 'paypal' },
+  } });
+  await started.promise;
+  try {
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.deepEqual(subject.finished, []);
+    assert.equal(subject.calls.snapshots.length + subject.calls.invites.length, 0);
+  } finally { commit.resolve(); }
+  assert.equal((await response).status, 200);
+  await subject.paidDone;
+  assert.deepEqual(subject.finished, [true]);
+  assert.equal(subject.calls.snapshots.length, 1);
+  assert.equal(subject.calls.invites.length, 1);
+});
+
+test('HTTP paid persistence failure returns retryable 503 before processing', { timeout: 5000 }, async t => {
+  const subject = await harness(t, async () => { throw new Error('secret-db-error'); });
+  const response = await subject.post('orders/paid', { order: { id: 'order-a' } });
+  assert.equal(response.status, 503);
+  assert.doesNotMatch(JSON.stringify(response.body), /secret-db-error/);
+  assert.equal(subject.calls.snapshots.length + subject.calls.invites.length, 0);
+  assert.deepEqual(subject.finished, [false]);
+});
+
+test('HTTP paid malformed/auth-failed/disabled requests do not enter either queue', { timeout: 5000 }, async t => {
+  const subject = await harness(t);
+  for (const payload of [{}, { order: {} }, { order: { id: 0 } }, { order: [] }]) {
+    assert.equal((await subject.post('orders/paid', payload)).status, 400);
+  }
+  assert.equal((await subject.post('orders/paid', { order: { id: 'a' } }, { key: 'wrong' })).status, 401);
+  assert.equal((await subject.post('orders/paid', { order: { id: 'a' } }, { subdomain: 'disabled' })).status, 404);
+  assert.equal(subject.calls.paidEvents.length + subject.calls.queued.length + subject.calls.invites.length, 0);
+});
+
+test('HTTP durable routes bound store lookup time and share one in-flight lookup during a burst', { timeout: 5000 }, async t => {
+  const storeGate = gate();
+  const subject = await harness(t, undefined, async () => { await storeGate.promise; return [STORE]; });
+  try {
+    const responses = await Promise.all([
+      subject.post('orders/paid', { order: { id: 'order-a' } }),
+      subject.post('fulfillments/update', { fulfillment: PARCEL }),
+    ]);
+    assert.deepEqual(responses.map(response => response.status), [503, 503]);
+    assert.equal(subject.calls.storeLookups, 1);
+    assert.equal(subject.calls.paidEvents.length + subject.calls.queued.length, 0);
+  } finally { storeGate.resolve(); }
 });

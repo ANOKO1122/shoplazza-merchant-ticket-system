@@ -13,7 +13,7 @@ async function waitForRateLimit(): Promise<void> {
   lastFetchAt = Date.now();
 }
 
-function shoplazzaFetch(url: string, store: ShoplazzaStoreConfig, bodyTimeoutMs?: number): Promise<import('node-fetch').Response> {
+function shoplazzaFetch(url: string, store: ShoplazzaStoreConfig, bodyTimeoutMs = 18000): Promise<import('node-fetch').Response> {
   const ms = 18000;
   return new Promise(async (resolve, reject) => {
     await waitForRateLimit();
@@ -27,7 +27,7 @@ function shoplazzaFetch(url: string, store: ShoplazzaStoreConfig, bodyTimeoutMs?
           'Access-Token': store.accessToken,
         },
         signal: controller.signal as any,
-        ...(bodyTimeoutMs === undefined ? {} : { timeout: bodyTimeoutMs }),
+        timeout: bodyTimeoutMs,
       });
       clearTimeout(timeoutId);
       resolve(res);

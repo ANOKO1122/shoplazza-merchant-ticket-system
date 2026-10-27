@@ -8,13 +8,16 @@ console.log('[support-bridge] DB URL:', (process.env.SUPPORT_DATABASE_URL || '')
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import { loadConfig, loadStoresConfig } from './config';
-import { ensureTables, getPool } from './pg';
+import { ensureTables, closeDatabasePools } from './pg';
 import { createShoplazzaWebhookRouter } from './shoplazza-webhook-routes';
 import { createSupportRouter } from './support-routes';
 import { createAdminRouter } from './admin-routes';
 import { processDueEmailJobs, cleanupEmailJobs } from './email-service';
 import { getAutoBackfillEnabled, runBackfillForAllStores } from './backfill-jobs';
 import { processPendingFulfillmentWebhooks } from './fulfillment-webhook';
+import { processPendingPaidWebhooks } from './paid-webhook';
+import { createApiLimiter, createWebhookIngressRouter, isShoplazzaWebhookRequest } from './api-rate-limits';
+import { logWebhookRejection } from './webhook-security';
 import { runFulfillmentReconciliation } from './fulfillment-reconcile';
 import { cleanupSyncLogs, cleanupOperationLogs } from './log-service';
 import { getRequestAgent } from './auth';
@@ -73,14 +76,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// 速率限制：全局 API 100次/分钟，登录接口更严格
-const apiLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { ok: false, error: '请求过于频繁，请稍后重试' },
-});
+// Interactive APIs share an IP budget; authenticated webhook stores use their own.
+const apiLimiter = createApiLimiter();
 
 const loginLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -91,6 +88,8 @@ const loginLimiter = rateLimit({
 });
 
 app.use('/api/', apiLimiter);
+// Authenticate webhook headers before spending work parsing an untrusted body.
+app.use('/api/shoplazza', createWebhookIngressRouter());
 
 app.use(express.json({ limit: '512kb' }));
 
@@ -236,6 +235,16 @@ app.get('/health', (_req, res) => {
 
 // ── Multer / 通用错误处理中间件（必须在所有路由之后、404 兜底之前注册） ──
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (isShoplazzaWebhookRequest(_req)) {
+    const reason = err.type === 'entity.too.large' ? 'payload_too_large'
+      : err.type === 'entity.parse.failed' ? 'invalid_json' : 'persist_failed';
+    logWebhookRejection(_req, reason);
+    if (!res.headersSent) {
+      const status = reason === 'payload_too_large' ? 413 : reason === 'invalid_json' ? 400 : 503;
+      res.status(status).json({ ok: false, error: 'Could not accept webhook' });
+    }
+    return;
+  }
   // Multer 文件大小超限
   if (err.code === 'LIMIT_FILE_SIZE') {
     res.status(413).json({ ok: false, error: 'File too large. Maximum size is 5MB per file.' });
@@ -289,6 +298,7 @@ async function startup() {
   let emailTimer: ReturnType<typeof setInterval> | null = null;
   let backfillTimer: ReturnType<typeof setInterval> | null = null;
   let fulfillmentTimer: ReturnType<typeof setInterval> | null = null;
+  let paidWebhookTimer: ReturnType<typeof setInterval> | null = null;
   let fulfillmentReconcileTimer: ReturnType<typeof setInterval> | null = null;
 
   // 优雅退出：关闭定时器、释放数据库连接池
@@ -297,10 +307,10 @@ async function startup() {
     if (emailTimer) clearInterval(emailTimer);
     if (backfillTimer) clearInterval(backfillTimer);
     if (fulfillmentTimer) clearInterval(fulfillmentTimer);
+    if (paidWebhookTimer) clearInterval(paidWebhookTimer);
     if (fulfillmentReconcileTimer) clearInterval(fulfillmentReconcileTimer);
     try {
-      const pool = getPool();
-      await pool.end();
+      await closeDatabasePools();
       console.log('[support-bridge] 数据库连接池已关闭');
     } catch (e: any) {
       console.error('[support-bridge] 关闭连接池失败:', e.message);
@@ -324,6 +334,12 @@ async function startup() {
     processFulfillments();
     fulfillmentTimer = setInterval(processFulfillments, 15000);
     fulfillmentTimer.unref();
+    const processPaid = () => {
+      processPendingPaidWebhooks().catch(() => console.error('[paid-webhook-worker] failed; will retry'));
+    };
+    processPaid();
+    paidWebhookTimer = setInterval(processPaid, 15000);
+    paidWebhookTimer.unref();
     const reconcileFulfillments = async () => {
       try {
         if (await getAutoBackfillEnabled()) await runFulfillmentReconciliation({ limit: 200 });
