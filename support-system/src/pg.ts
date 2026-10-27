@@ -377,6 +377,9 @@ export async function ensureTables(): Promise<void> {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_paid_webhook_pending ON shoplazza_webhook_events(next_attempt_at, received_at) WHERE event_key LIKE 'paid:%' AND status IN ('received', 'failed', 'processing')`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_order_snapshots_email ON support_order_snapshots(customer_email)`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_order_snapshots_paid_at ON support_order_snapshots(paid_at)`);
+  // Maildesk checks new IDs and both timestamps when refreshing its order cache.
+  await p.query(`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_support_order_snapshots_updated_at ON support_order_snapshots(updated_at)`);
+  await p.query(`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_support_order_snapshots_fetched_at ON support_order_snapshots(fetched_at)`);
 
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_email_events_ticket ON support_email_events(public_ticket_no)`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_email_events_order ON support_email_events(store_subdomain, order_id, event_type)`);
