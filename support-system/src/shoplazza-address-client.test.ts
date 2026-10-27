@@ -27,6 +27,25 @@ function client(fetch: (url: string, init: RequestInit) => Promise<any>, shortDe
 }
 function response(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status }); }
 
+test('status lookup requires a current complete order without requiring a shipping address', async () => {
+  const order = { id: 'order/1', status: 'placed', financial_status: 'refunded', fulfillment_status: 'shipped',
+    total_refund_price: '12.50', updated_at: '2026-10-27T01:00:00Z' };
+  const requests: Array<{ url: string; init: RequestInit }> = [];
+  const api = client(async (url, init) => { requests.push({ url, init }); return response({ code: 'Success', data: { order } }); });
+  assert.equal((await api.getOrderForStatusUpdate(STORE, 'order/1')).financial_status, 'refunded');
+  assert.equal(requests[0].url, 'https://fixture.invalid/openapi/2025-06/orders/order%2F1');
+  assert.equal(requests[0].init.method, 'GET');
+  for (const invalid of [ { ...order, id: 'wrong' }, { ...order, updated_at: '' },
+    { ...order, updated_at: 'invalid' }, { ...order, updated_at: undefined }, { ...order, financial_status: undefined } ]) {
+    const malformed = client(async () => response({ order: invalid }));
+    await assert.rejects(malformed.getOrderForStatusUpdate(STORE, 'order/1'), { code: 'invalid_order' });
+  }
+  for (const status of [403, 404, 429, 500]) {
+    const unavailable = client(async () => response({ error: 'secret' }, status));
+    await assert.rejects(unavailable.getOrderForStatusUpdate(STORE, 'order/1'), { code: 'http_error', httpStatus: status });
+  }
+});
+
 test('address API uses 2025-06 GET scopes/detail and sends only order.shipping_address on PUT', async () => {
   const requests: Array<{ url: string; init: RequestInit }> = [];
   const api = client(async (url, init) => {

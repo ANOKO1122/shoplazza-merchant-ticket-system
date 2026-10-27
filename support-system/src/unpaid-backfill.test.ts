@@ -176,7 +176,7 @@ function backfillHarness(
         if (sql.includes('INSERT INTO support_order_snapshots')) {
           const id = params[2];
           assert.equal(params[10], 'waiting');
-          assert.match(sql, /WHERE support_order_snapshots.payment_status IS DISTINCT FROM 'paid'/);
+          assert.match(sql, /WHERE COALESCE\(support_order_snapshots.payment_status, ''\) IN \('', 'waiting'\)/);
           if (failWrites.has(id)) throw new Error('simulated snapshot write failure');
           if (snapshots.get(id) === 'paid') return { rows: [], rowCount: 0 };
           const isNew = !snapshots.has(id);

@@ -66,6 +66,9 @@ function harness(initial: ReturnType<typeof state> | null = state()) {
           assert.ok(unlock, 'state is read only after the shared lock');
           return { rows: savedState ? [plain(savedState)] : [], rowCount: savedState ? 1 : 0 };
         }
+        if (sql.includes('SELECT state_json') || sql.includes('SELECT id, order_number, store_name, order_status')) {
+          return { rows: [], rowCount: 0 };
+        }
         if (sql.includes('UPDATE support_order_shipping_address_state')) {
           stagedState = { ...savedState, address_json: JSON.parse(values[2]), provider_updated_at: values[3], revision: savedState.revision + 1 };
           return { rows: [], rowCount: 1 };
@@ -112,7 +115,8 @@ function harness(initial: ReturnType<typeof state> | null = state()) {
     if (sql.includes('INSERT INTO support_backfill_state')) { calls.cursors.push(sql); return { rows: [], rowCount: 1 }; }
     throw new Error(`Unexpected outside transaction SQL: ${sql}`);
   } };
-  const subject = load<typeof import('./shipping-address-guard')>('shipping-address-guard.ts', { './pg': pg });
+  const status = load<typeof import('./order-status-service')>('order-status-service.ts', { './pg': pg, './normalize-order': normalizer });
+  const subject = load<typeof import('./shipping-address-guard')>('shipping-address-guard.ts', { './pg': pg, './order-status-service': status });
   async function confirm(value: ReturnType<typeof state>) {
     const client = await getClient();
     await client.query('BEGIN');

@@ -189,7 +189,7 @@ async function backfillOneStore(
       }
 
       // 标准化
-      const normalized = normalizeOrder(
+      let normalized = normalizeOrder(
         store.subdomain,
         store.store_name || store.subdomain,
         order,
@@ -198,7 +198,9 @@ async function backfillOneStore(
 
       // Step 3: 幂等写入快照（区分新增 vs 更新）
       const upsertResult = await withSnapshotShippingAddressGuard(
-        normalized, () => getOrderForAddressUpdate(storeConfig, normalized.orderId), (client, normalized) => client.query(
+        normalized, () => getOrderForAddressUpdate(storeConfig, normalized.orderId), (client, guarded) => {
+        normalized = guarded;
+        return client.query(
         `INSERT INTO support_order_snapshots
           (store_subdomain, store_name, order_id, order_number, customer_email, customer_name,
            order_status, fulfillment_status, order_amount, order_currency,
@@ -268,7 +270,7 @@ async function backfillOneStore(
           'backfill_sync',
           new Date().toISOString(),
         ],
-        ),
+        ); },
       );
       if (upsertResult.rows[0]?.is_insert) {
         snapshotsInserted++;
@@ -453,7 +455,7 @@ async function backfillUnpaidWindow(
            THEN jsonb_set(EXCLUDED.raw_order_json, '{fulfillments}', support_order_snapshots.raw_order_json->'fulfillments', true)
            ELSE EXCLUDED.raw_order_json END,
          updated_at = now()
-       WHERE support_order_snapshots.payment_status IS DISTINCT FROM 'paid'
+       WHERE COALESCE(support_order_snapshots.payment_status, '') IN ('', 'waiting')
        RETURNING (created_at = updated_at) AS is_new`,
       [
         normalized.storeSubdomain,

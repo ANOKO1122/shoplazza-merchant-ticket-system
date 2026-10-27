@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg';
 import { getClient } from './pg';
 import type { NormalizedOrder } from './normalize-order';
+import { guardSnapshotOrderStatus, lockOrderState, synchronizeSnapshotOrderStatus } from './order-status-service';
 
 type Address = Record<string, unknown>;
 type LatestOrder = { id?: unknown; updated_at?: unknown; shipping_address?: unknown };
@@ -12,8 +13,7 @@ type AddressState = {
 
 /** Shared with customer-service edits, including orders without a state row yet. */
 export async function lockOrderShippingAddress(client: PoolClient, storeSubdomain: string, orderId: string): Promise<void> {
-  await client.query('SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))',
-    [`support.shipping-address:${storeSubdomain}`, orderId]);
+  await lockOrderState(client, storeSubdomain, orderId);
 }
 
 function timestamp(value: unknown): number | null {
@@ -110,7 +110,10 @@ export async function withSnapshotShippingAddressGuard<T extends { rowCount: num
             [incoming.storeSubdomain, incoming.orderId],
           );
         }
+        const statusGuard = await guardSnapshotOrderStatus(client, guarded);
+        guarded = statusGuard.order;
         const written = await writeSnapshot(client, guarded);
+        if (statusGuard.hadSnapshots && (written.rowCount ?? 0) > 0) await synchronizeSnapshotOrderStatus(client, guarded);
         // In particular, a waiting event rejected by the paid-row WHERE clause
         // must not advance the protected address or its revision.
         if (advances && (written.rowCount ?? 0) > 0) {

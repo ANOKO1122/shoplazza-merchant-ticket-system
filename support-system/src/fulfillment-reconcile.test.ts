@@ -202,7 +202,7 @@ test('reconciliation includes old paid orders, has one global batch limit and sc
   assert.equal(summary.remainingDue, 7);
   assert.equal(calls.selections[0].params[2], 200);
   const sql = calls.selections[0].sql;
-  assert.match(sql, /snapshot.payment_status = 'paid'/);
+  assert.match(sql, /snapshot.payment_status IN \('paid', 'partially_refunded'\)/);
   assert.match(sql, /GROUP BY snapshot.store_subdomain, snapshot.order_id/);
   assert.match(sql, /PARTITION BY \(state.last_attempt_at IS NULL\)/);
   assert.match(sql, /state.next_check_at <= now\(\)/);

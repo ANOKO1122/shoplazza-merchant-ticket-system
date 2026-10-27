@@ -154,6 +154,18 @@ export async function getOrderForAddressUpdate(store: ShoplazzaStoreConfig, orde
   return order;
 }
 
+/** Status webhooks fetch the current order; errors must remain retryable, never look like deletion. */
+export async function getOrderForStatusUpdate(store: ShoplazzaStoreConfig, orderId: string): Promise<ShoplazzaOrderDetail> {
+  const json = await addressApiRequest(store, `orders/${encodeURIComponent(orderId)}`, 'GET');
+  const order = extractSingleOrder(json);
+  if (!order || String(order.id) !== orderId
+    || typeof order.updated_at !== 'string' || !order.updated_at.trim() || !Number.isFinite(Date.parse(order.updated_at))
+    || !['status', 'financial_status', 'fulfillment_status'].every(key => typeof order[key] === 'string' && String(order[key]).trim())) {
+    throw new ShoplazzaAddressApiError('invalid_order');
+  }
+  return order;
+}
+
 export async function getOrderAddressAccessScopes(store: ShoplazzaStoreConfig): Promise<string[]> {
   const json = await addressApiRequest(store, 'oauth/access_scopes', 'GET');
   const scopes: unknown = json.data?.access_scopes ?? json.access_scopes;
@@ -416,13 +428,18 @@ export interface ShoplazzaWebhook {
   created_at?: string;
 }
 
-/** 支付、订单发货及独立的物流创建/修改事件。 */
+/** 支付、物流及已有订单的后续状态变化。 */
 export const STORE_WEBHOOK_TOPICS = [
   'orders/paid',
   'orders/fulfilled',
   'orders/partially_fulfilled',
   'fulfillments/create',
   'fulfillments/update',
+  'orders/update',
+  'orders/partially_refunded',
+  'orders/refunded',
+  'orders/cancelled',
+  'orders/finished',
 ] as const;
 
 /** 以前注册过、现在要删掉的事件。 */

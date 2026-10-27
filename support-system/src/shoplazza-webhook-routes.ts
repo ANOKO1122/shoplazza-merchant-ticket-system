@@ -1,10 +1,10 @@
 import express from 'express';
 import { loadStoresConfig } from './config';
 import { query } from './pg';
-import { logSync } from './log-service';
 import { requireWebhookAuth, logWebhookRejection } from './webhook-security';
 import { FULFILLMENT_WEBHOOK_TOPICS, parseFulfillmentWebhook, enqueueFulfillmentWebhook, processPendingFulfillmentWebhooks } from './fulfillment-webhook';
-import { parsePaidWebhook, enqueuePaidWebhook, processPendingPaidWebhooks, processOrderWebhook } from './paid-webhook';
+import { parsePaidWebhook, enqueuePaidWebhook, processPendingPaidWebhooks } from './paid-webhook';
+import { ORDER_STATUS_WEBHOOK_TOPICS, parseOrderStatusWebhook, enqueueOrderStatusWebhook, processPendingOrderStatusWebhooks } from './order-status-webhook';
 
 function buildEventKey(params: {
   topic: string;
@@ -142,6 +142,32 @@ export function createShoplazzaWebhookRouter(): express.Router {
       return;
     }
 
+    if (ORDER_STATUS_WEBHOOK_TOPICS.includes(topic)) {
+      try {
+        parseOrderStatusWebhook(topic, payload);
+      } catch {
+        logWebhookRejection(req, 'invalid_payload');
+        res.status(400).json({ ok: false, error: 'Invalid order status payload' });
+        return;
+      }
+      try {
+        const stores = await ensureStoresForReceipt();
+        if (!stores.some(store => store.subdomain === storeSubdomain)) {
+          logWebhookRejection(req, 'store_disabled');
+          res.status(404).json({ ok: false, error: 'Store is not enabled' });
+          return;
+        }
+        await enqueueOrderStatusWebhook({ storeSubdomain, topic, payload, headers: req.headers });
+      } catch {
+        logWebhookRejection(req, 'persist_failed');
+        res.status(503).json({ ok: false, error: 'Could not save order status event' });
+        return;
+      }
+      res.status(200).json({ ok: true });
+      processPendingOrderStatusWebhooks().catch(() => console.error('[order-status-worker] processing failed; scheduled retry remains enabled'));
+      return;
+    }
+
     res.status(200).json({ ok: true });
 
     const stores = await ensureStores();
@@ -182,23 +208,6 @@ export function createShoplazzaWebhookRouter(): express.Router {
       if (inserted) {
         console.log(`[webhook] 收到事件: ${topic}`);
 
-        const orderTopics = ['orders/updated'];
-        if (orderTopics.includes(topic) && (orderId || orderNumber)) {
-          try {
-            await processOrderWebhook({ store, topic: 'orders/updated', payload });
-          } catch (err: any) {
-            console.error(`[webhook] 订单处理失败: ${orderId}`, err.message);
-            await logSync({
-              source: 'webhook',
-              action: 'order_paid',
-              storeSubdomain,
-              targetId: orderId || orderNumber || '',
-              itemsTotal: 1,
-              status: 'failed',
-              errorMessage: err.message,
-            });
-          }
-        }
       }
     } catch (err: any) {
       console.error(`[webhook] 入库失败: ${topic}`);

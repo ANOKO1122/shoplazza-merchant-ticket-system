@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { getPool } from './pg';
+import { lockOrderState } from './order-status-service';
 
 type Fulfillment = Record<string, any> & { id: string };
 type ChangeKind = 'added' | 'updated' | 'history_added' | 'stale' | 'unchanged';
@@ -236,6 +237,7 @@ export async function applyFulfillmentUpdate(params: ApplyFulfillmentUpdateParam
   const client = await getPool().connect();
   try {
     await client.query('BEGIN');
+    await lockOrderState(client, params.storeSubdomain.trim(), params.orderId.trim());
     const snapshots = await client.query(
       `SELECT id, order_number, store_name, fulfillment_status, raw_order_json
        FROM support_order_snapshots
@@ -261,7 +263,8 @@ export async function applyFulfillmentUpdate(params: ApplyFulfillmentUpdateParam
         `UPDATE support_order_snapshots
          SET raw_order_json = jsonb_set(
                CASE WHEN jsonb_typeof(raw_order_json) = 'object' THEN raw_order_json ELSE '{}'::jsonb END,
-               '{fulfillments}', $2::jsonb, true),
+               '{fulfillments}', $2::jsonb, true)
+               || CASE WHEN $5::text IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('fulfillment_status', $5::text) END,
              last_webhook_topic = CASE WHEN $3 = 'webhook' THEN COALESCE($4, last_webhook_topic) ELSE last_webhook_topic END,
              last_webhook_received_at = CASE WHEN $3 = 'webhook' THEN now() ELSE last_webhook_received_at END,
              fulfillment_status = COALESCE($5, fulfillment_status),
@@ -270,6 +273,14 @@ export async function applyFulfillmentUpdate(params: ApplyFulfillmentUpdateParam
         [snapshots.rows.map(row => row.id), JSON.stringify(merged.fulfillments), params.source, params.topic || null,
           nextStatus],
       );
+      if (statusChanged) {
+        // A parcel event has its own clock: advance shipping without changing the order-state version.
+        await client.query(
+          `UPDATE support_order_status_state SET state_json = jsonb_set(state_json, '{fulfillment_status}', to_jsonb($3::text), true),
+             updated_at = now() WHERE store_subdomain = $1 AND order_id = $2`,
+          [params.storeSubdomain.trim(), params.orderId.trim(), nextStatus],
+        );
+      }
     }
 
     const itemsTotal = new Set(incoming.map(item => item.id)).size;

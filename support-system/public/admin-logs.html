@@ -34,7 +34,7 @@ function showToast(m,t){var d=document.createElement('div');d.className='toast '
 
 function logStatusDot(s){if(s==='success')return'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#52c41a;margin-right:4px;vertical-align:middle"></span>成功';if(s==='partial')return'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#faad14;margin-right:4px;vertical-align:middle"></span>部分成功';return'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ff4d4f;margin-right:4px;vertical-align:middle"></span>失败'}
 function syncSrcCN(s){var m={webhook:'Webhook',backfill:'兜底同步',api:'API补全'};return m[s]||s}
-function syncActCN(a,l){var detail=l&&l.detail_json||{};var topic=detail.topic;var pay=detail.paymentStatus;if(a==='order_upsert'){if(topic==='orders/create'||pay==='waiting')a='order_unpaid';else if(topic==='orders/paid'||pay==='paid')a='order_paid'}if(a==='fulfillment_update'&&!Array.isArray(detail.changes)){if(topic==='orders/partially_fulfilled')a='order_partial';else if(topic==='orders/fulfilled')a='order_shipped'}var m={order_unpaid:'订单进入未支付',order_paid:'已支付',fulfillment_update:'物流更新',fulfillment_order_recovered:'物流补单（不发通知）',fulfillment_reconcile_summary:'物流兜底汇总',order_shipped:'已发货',order_partial:'部分发货',order_upsert:'订单更新',unpaid_summary:'未支付兜底',backfill_summary:'兜底汇总',order_list_page:'列表拉取',transaction_lookup:'交易查询',transaction_fetch:'交易查询',order_detail_fetch:'订单详情',order_detail_from_payload:'正文替代详情'};return(m[a]||a)+' ('+a+')'}
+function syncActCN(a,l){var detail=l&&l.detail_json||{};var topic=detail.topic;var pay=detail.paymentStatus;if(a==='order_upsert'){if(topic==='orders/create'||pay==='waiting')a='order_unpaid';else if(topic==='orders/paid'||pay==='paid')a='order_paid'}if(a==='fulfillment_update'&&!Array.isArray(detail.changes)){if(topic==='orders/partially_fulfilled')a='order_partial';else if(topic==='orders/fulfilled')a='order_shipped'}var m={order_unpaid:'订单进入未支付',order_paid:'已支付',order_status_update:'订单状态更新',fulfillment_update:'物流更新',fulfillment_order_recovered:'物流补单（不发通知）',fulfillment_reconcile_summary:'物流兜底汇总',order_shipped:'已发货',order_partial:'部分发货',order_upsert:'订单更新',unpaid_summary:'未支付兜底',backfill_summary:'兜底汇总',order_list_page:'列表拉取',transaction_lookup:'交易查询',transaction_fetch:'交易查询',order_detail_fetch:'订单详情',order_detail_from_payload:'正文替代详情'};return(m[a]||a)+' ('+a+')'}
 function opActionCN(a){var m={shipping_address_update:'修改收货地址',job_resent:'手动补发',jobs_send_pending:'一键发送待发',job_failed:'发送失败',job_cancelled:'取消待发',job_sent:'发送成功',store_create:'新增店铺',store_delete:'删除店铺',store_update:'修改店铺',store_toggle:'启停店铺',auto_send_toggled:'切换自动发送',auto_backfill_toggled:'切换自动查漏',backfill_store_complete:'兜底完成',backfill_auto_run:'自动兜底',ticket_status_changed:'变更工单状态',agent_reply:'客服回复',customer_reply:'顾客回复',ticket_created:'工单创建',ticket_closed:'工单关闭',email_template_updated:'更新邮件模板'};return(m[a]||a)+' ('+a+')'}
 function opCategoryCN(c){var m={email:'邮件',ticket:'工单',store:'店铺',config:'配置',backfill:'兜底',webhook:'Webhook'};return m[c]||c}
 
@@ -48,7 +48,7 @@ function switchLogTab(el,tab){logSubTab=tab;$$('.filter-btn[data-log-tab]').forE
 
 function buildSyncFilters(){
   var sources=[['all','全部来源'],['webhook','Webhook'],['backfill','兜底'],['api','API']];
-  var actions=[['all','全部动作'],['order_unpaid','订单进入未支付'],['order_paid','已支付'],['unpaid_summary','未支付兜底'],['fulfillment_update','物流更新'],['fulfillment_order_recovered','物流补单（不发通知）'],['fulfillment_reconcile_summary','物流兜底汇总']];
+  var actions=[['all','全部动作'],['order_unpaid','订单进入未支付'],['order_paid','已支付'],['order_status_update','订单状态更新'],['unpaid_summary','未支付兜底'],['fulfillment_update','物流更新'],['fulfillment_order_recovered','物流补单（不发通知）'],['fulfillment_reconcile_summary','物流兜底汇总']];
   var statuses=[['all','全部状态'],['success','成功'],['partial','部分成功'],['failed','失败']];
   var h='<div class="filter-bar" style="border-bottom:none;padding:4px 20px;flex-wrap:wrap">';
   sources.forEach(function(item){h+='<button class="filter-btn '+(syncLogSource===item[0]?'active':'')+'" data-value="'+esc(item[0])+'" onclick="setSyncSource(this.dataset.value)">'+esc(item[1])+'</button>'});
@@ -94,6 +94,7 @@ function fulfillmentKindLabel(change){
 }
 function syncLogSummary(l){
   var d=l.detail_json||{};
+  if(l.action==='order_status_update')return orderStatusLogSummary(d,l.error_message);
   if(l.action==='fulfillment_reconcile_summary')return '检查 '+logCount(d.checked)+' · 有变化 '+logCount(d.changed)+' · 失败 '+logCount(d.failed);
   if(l.action==='fulfillment_update'){
     if(Array.isArray(d.changes)){
@@ -106,6 +107,31 @@ function syncLogSummary(l){
   }
   if(l.action==='unpaid_summary')return '列表 '+logCount(l.items_total)+' · 跳过 '+logCount(l.items_skipped);
   return l.error_message||'';
+}
+function orderStatusLogValue(field,value){
+  var text=value==null?'':String(value).trim();if(!text)return '未提供';
+  var labels={
+    orderStatus:{opened:'待付款',placed:'进行中',cancelled:'已取消',finished:'已完成'},
+    paymentStatus:{waiting:'待付款',paying:'付款审核中',authorized:'已授权',partially_paid:'部分付款',paid:'已付款',cancelled:'付款已取消',failed:'付款失败',refunding:'退款中',refund_failed:'退款失败',refunded:'已全额退款',partially_refunded:'已部分退款'},
+    fulfillmentStatus:{initialled:'未发货',waiting:'待发货',unfulfilled:'未发货',partially_shipped:'部分发货',shipped:'已发货',partially_finished:'部分签收',finished:'已签收',cancelled:'发货已取消',returning:'退货中',partially_returned:'部分退货',returned:'已退货'},
+    refundStatus:{pending:'退款处理中',finished:'退款完成',failed:'退款失败',refunding:'退款中',refund_failed:'退款失败',refunded:'已全额退款',partially_refunded:'已部分退款'}
+  };
+  var values=labels[field]||{};return Object.prototype.hasOwnProperty.call(values,text)?values[text]+' ('+text+')':text;
+}
+function orderStatusLogSummary(detail,errorMessage){
+  var before=detail.before||{},after=detail.after||{},parts=[];
+  [['orderStatus','订单'],['paymentStatus','付款'],['fulfillmentStatus','发货'],['refundStatus','退款'],['refundAmount','退款金额']].forEach(function(field){
+    var previous=orderStatusLogValue(field[0],before[field[0]]),next=orderStatusLogValue(field[0],after[field[0]]);
+    if(previous!==next)parts.push(field[1]+'：'+previous+' → '+next);
+  });
+  if(!parts.length)parts.push(detail.before&&detail.after?'状态无变化':'未记录状态明细');
+  if(detail.matchedRows!=null)parts.push('匹配快照 '+logCount(detail.matchedRows));
+  if(detail.changedRows!=null)parts.push('更新快照 '+logCount(detail.changedRows));
+  var reasons={updated:'已更新',unchanged:'无变化',not_found:'库内无此订单已跳过',stale:'忽略旧版本',missing_updated_at:'缺更新时间',retry:'处理失败已排队重试'};
+  if(detail.reason)parts.push('原因：'+(Object.prototype.hasOwnProperty.call(reasons,detail.reason)?reasons[detail.reason]:String(detail.reason)));
+  if(errorMessage)parts.push('错误：'+String(errorMessage));
+  if(detail.topic)parts.unshift(String(detail.topic));
+  return parts.join(' · ');
 }
 function fulfillmentDetailHtml(l){
   var d=l.detail_json||{};

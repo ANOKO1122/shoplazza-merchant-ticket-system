@@ -39,7 +39,8 @@ function gate() {
 }
 
 async function harness(t: TestContext, persist?: () => Promise<void>, stores?: () => Promise<typeof STORE[]>) {
-  const calls = { queued: [] as any[][], paidEvents: [] as any[][], snapshots: [] as any[][], invites: [] as any[], worker: 0, storeLookups: 0 };
+  const calls = { queued: [] as any[][], paidEvents: [] as any[][], statusEvents: [] as any[][],
+    snapshots: [] as any[][], invites: [] as any[], worker: 0, statusWorker: 0, storeLookups: 0 };
   const finished: boolean[] = [];
   let saved = false;
   let pendingPaid: any;
@@ -53,6 +54,10 @@ async function harness(t: TestContext, persist?: () => Promise<void>, stores?: (
     if (sql.includes('INSERT INTO shoplazza_webhook_events')) {
       if (String(values[0]).startsWith('fulfillment:')) {
         calls.queued.push(values);
+        if (persist) await persist();
+        saved = true;
+      } else if (String(values[0]).startsWith('order-status:')) {
+        calls.statusEvents.push(values);
         if (persist) await persist();
         saved = true;
       } else {
@@ -80,6 +85,7 @@ async function harness(t: TestContext, persist?: () => Promise<void>, stores?: (
   const receiptDatabase = { ...database, queryWebhook: database.query };
   const core = load<typeof import('./fulfillment-service')>('fulfillment-service.ts', {
     'node:util': { isDeepStrictEqual }, './pg': { getPool: forbid },
+    './order-status-service': { lockOrderState: forbid },
   });
   const fulfillment = load<typeof import('./fulfillment-webhook')>('fulfillment-webhook.ts', {
     crypto, './pg': receiptDatabase, './store-service': { getStoreBySubdomain: forbid }, './fulfillment-service': core,
@@ -101,9 +107,18 @@ async function harness(t: TestContext, persist?: () => Promise<void>, stores?: (
     './log-service': { logSync: async (entry: any) => { if (entry.action === 'order_paid') paidDone.resolve(); } },
   };
   const paid = load<typeof import('./paid-webhook')>('paid-webhook.ts', processingDependencies);
+  const statuses = load<typeof import('./order-status-webhook')>('order-status-webhook.ts', {
+    crypto, './pg': receiptDatabase, './store-service': { getStoreBySubdomain: forbid },
+    './shoplazza-client': { getOrderForStatusUpdate: forbid },
+    './order-status-service': { applyOrderStatusUpdate: forbid }, './log-service': { logSync: forbid },
+  });
   const router = load<typeof import('./shoplazza-webhook-routes')>('shoplazza-webhook-routes.ts', {
     ...processingDependencies, express,
     './paid-webhook': paid,
+    './order-status-webhook': {
+      ...statuses,
+      processPendingOrderStatusWebhooks: async () => { calls.statusWorker++; return { processed: 0, failed: 0 }; },
+    },
     './webhook-security': security,
     './fulfillment-webhook': {
       ...fulfillment,
@@ -276,9 +291,46 @@ test('HTTP durable routes bound store lookup time and share one in-flight lookup
     const responses = await Promise.all([
       subject.post('orders/paid', { order: { id: 'order-a' } }),
       subject.post('fulfillments/update', { fulfillment: PARCEL }),
+      subject.post('orders/update', { order: { id: 'order-a' } }),
     ]);
-    assert.deepEqual(responses.map(response => response.status), [503, 503]);
+    assert.deepEqual(responses.map(response => response.status), [503, 503, 503]);
     assert.equal(subject.calls.storeLookups, 1);
-    assert.equal(subject.calls.paidEvents.length + subject.calls.queued.length, 0);
+    assert.equal(subject.calls.paidEvents.length + subject.calls.queued.length + subject.calls.statusEvents.length, 0);
   } finally { storeGate.resolve(); }
+});
+
+test('HTTP status receipt is durable before ACK and every status topic avoids paid/email processing', { timeout: 5000 }, async t => {
+  const started = gate(); const commit = gate();
+  const subject = await harness(t, async () => { started.resolve(); await commit.promise; });
+  const pending = subject.post('orders/update', { order: { id: 'order-a', financial_status: 'partially_refunded' } });
+  await started.promise;
+  try {
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.deepEqual(subject.finished, []);
+    assert.equal(subject.calls.statusWorker, 0);
+  } finally { commit.resolve(); }
+  assert.equal((await pending).status, 200);
+  for (const topic of ['orders/partially_refunded', 'orders/refunded', 'orders/cancelled', 'orders/finished']) {
+    assert.equal((await subject.post(topic, { order: { id: 'order-a' } })).status, 200);
+  }
+  assert.equal(subject.calls.statusEvents.length, 5);
+  assert.equal(subject.calls.statusWorker, 5);
+  assert.ok(subject.finished.every(Boolean));
+  assert.equal(subject.calls.paidEvents.length + subject.calls.queued.length + subject.calls.snapshots.length + subject.calls.invites.length, 0);
+});
+
+test('HTTP status failures stay retryable and invalid/auth-failed/disabled events never queue', { timeout: 5000 }, async t => {
+  const failing = await harness(t, async () => { throw new Error('sensitive-fixture-error'); });
+  const response = await failing.post('orders/refunded', { order: { id: 'order-a' } });
+  assert.equal(response.status, 503);
+  assert.doesNotMatch(JSON.stringify(response.body), /sensitive-fixture/);
+  assert.equal(failing.calls.statusWorker, 0);
+  const subject = await harness(t);
+  for (const payload of [{}, { order: [] }, { order: { number: 'number-without-id' } }, { order: { id: 0 } }]) {
+    assert.equal((await subject.post('orders/update', payload)).status, 400);
+  }
+  assert.equal((await subject.post('orders/update', { order: { id: 'a' } }, { key: 'wrong' })).status, 401);
+  assert.equal((await subject.post('orders/update', { order: { id: 'a' } }, { domain: 'other.myshoplaza.com' })).status, 403);
+  assert.equal((await subject.post('orders/update', { order: { id: 'a' } }, { subdomain: 'disabled' })).status, 404);
+  assert.equal(subject.calls.statusEvents.length + subject.calls.statusWorker + subject.calls.invites.length, 0);
 });

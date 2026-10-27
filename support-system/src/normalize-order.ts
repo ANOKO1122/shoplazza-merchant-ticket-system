@@ -33,6 +33,16 @@ function apiStr(v: unknown): string {
   return '';
 }
 
+export function refundStatusFromFinancialStatus(value: unknown): string {
+  const status = apiStr(value);
+  return ['partially_refunded', 'refunded', 'refunding', 'refund_failed'].includes(status) ? status : '';
+}
+
+export function normalizeRefundAmount(value: unknown): string {
+  const amount = apiStr(value);
+  return /^\d+(?:\.\d+)?$/.test(amount) ? amount : '';
+}
+
 function extractEmail(order: ShoplazzaOrderDetail): string {
   if (order.customer?.email) return order.customer.email.trim().toLowerCase();
   const ship = order.shipping_address as Record<string, unknown> | null;
@@ -117,8 +127,8 @@ export function normalizeOrder(
     paymentStatus: apiStr(order.financial_status),
     paymentMethod,
     paidAt,
-    refundStatus: '',
-    refundAmount: '',
+    refundStatus: refundStatusFromFinancialStatus(order.financial_status),
+    refundAmount: normalizeRefundAmount(order.total_refund_price),
     transactionIdMasked: maskTransactionId(transactions),
     cardLast4,
     itemsJson: Array.isArray(order.line_items) ? order.line_items : [],

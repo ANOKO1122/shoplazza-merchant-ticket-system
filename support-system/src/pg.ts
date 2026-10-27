@@ -94,6 +94,18 @@ export async function ensureTables(): Promise<void> {
   `);
 
   await p.query(`
+    CREATE TABLE IF NOT EXISTS support_order_status_state (
+      store_subdomain TEXT NOT NULL,
+      order_id TEXT NOT NULL,
+      state_json JSONB NOT NULL,
+      provider_updated_at TIMESTAMPTZ NOT NULL,
+      last_topic TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (store_subdomain, order_id)
+    )
+  `);
+
+  await p.query(`
     CREATE TABLE IF NOT EXISTS support_email_events (
       id BIGSERIAL PRIMARY KEY,
       event_key TEXT UNIQUE NOT NULL,
@@ -385,6 +397,7 @@ export async function ensureTables(): Promise<void> {
   await p.query(`ALTER TABLE shoplazza_webhook_events ADD COLUMN IF NOT EXISTS last_received_at TIMESTAMPTZ`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_fulfillment_webhook_pending ON shoplazza_webhook_events(next_attempt_at, received_at) WHERE event_key LIKE 'fulfillment:%' AND status IN ('received', 'failed', 'processing')`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_paid_webhook_pending ON shoplazza_webhook_events(next_attempt_at, received_at) WHERE event_key LIKE 'paid:%' AND status IN ('received', 'failed', 'processing')`);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_order_status_webhook_pending ON shoplazza_webhook_events(next_attempt_at, received_at) WHERE event_key LIKE 'order-status:%' AND status IN ('received', 'failed', 'processing')`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_order_snapshots_email ON support_order_snapshots(customer_email)`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_order_snapshots_paid_at ON support_order_snapshots(paid_at)`);
   // Maildesk checks new IDs and both timestamps when refreshing its order cache.

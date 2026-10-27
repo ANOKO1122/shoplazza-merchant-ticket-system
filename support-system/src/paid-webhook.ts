@@ -108,7 +108,7 @@ export async function processOrderWebhook(params: {
     });
   }
 
-  const normalized = normalizeOrder(storeSubdomain, store.storeName, detail, transactions);
+  let normalized = normalizeOrder(storeSubdomain, store.storeName, detail, transactions);
 
   // 只处理已支付订单的快照和邮件（安全校验）
   if (normalized.paymentStatus !== 'paid') {
@@ -120,7 +120,9 @@ export async function processOrderWebhook(params: {
   }
 
   const snapshotResult = await withSnapshotShippingAddressGuard(
-    normalized, () => getOrderForAddressUpdate(store, normalized.orderId), (client, normalized) => client.query(
+    normalized, () => getOrderForAddressUpdate(store, normalized.orderId), (client, guarded) => {
+    normalized = guarded;
+    return client.query(
     `INSERT INTO support_order_snapshots
       (store_subdomain, store_name, order_id, order_number, customer_email, customer_name,
        order_status, fulfillment_status, order_amount, order_currency,
@@ -193,10 +195,10 @@ export async function processOrderWebhook(params: {
       receivedAt || new Date().toISOString(),
       new Date().toISOString(),
     ],
-    ),
+    ); },
   );
 
-  if (topic === 'orders/paid') {
+  if (topic === 'orders/paid' && normalized.paymentStatus === 'paid') {
     const emailJob = await createPaidSupportInviteEmailJob({
       storeSubdomain: normalized.storeSubdomain,
       storeName: normalized.storeName,

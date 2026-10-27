@@ -90,7 +90,7 @@ export async function runFulfillmentReconciliation(options: {
                   MAX(snapshot.order_number) AS order_number,
                   MAX(COALESCE(snapshot.paid_at, snapshot.created_at)) AS ordered_at
            FROM support_order_snapshots snapshot
-           WHERE snapshot.payment_status = 'paid'
+           WHERE snapshot.payment_status IN ('paid', 'partially_refunded')
              AND snapshot.store_subdomain = ANY($1::text[])
              AND ($2::text IS NULL OR snapshot.order_id = $2)
            GROUP BY snapshot.store_subdomain, snapshot.order_id
@@ -203,7 +203,7 @@ export async function runFulfillmentReconciliation(options: {
          FROM (
            SELECT DISTINCT store_subdomain, order_id
            FROM support_order_snapshots
-           WHERE payment_status = 'paid' AND store_subdomain = ANY($1::text[])
+           WHERE payment_status IN ('paid', 'partially_refunded') AND store_subdomain = ANY($1::text[])
          ) paid
          LEFT JOIN support_fulfillment_sync_state state
            ON state.store_subdomain = paid.store_subdomain AND state.order_id = paid.order_id

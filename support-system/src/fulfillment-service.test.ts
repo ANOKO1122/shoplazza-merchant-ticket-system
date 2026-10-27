@@ -252,6 +252,11 @@ function fakeDatabase(t: TestContext, rows: Row[], failAt?: 'update' | 'log') {
         const sql = text.replace(/\s+/g, ' ').trim();
         calls.push({ sql, values: clone(values) });
         if (sql === 'BEGIN') return { rows: [] };
+        if (sql.includes('pg_advisory_xact_lock')) {
+          assert.deepEqual(values, [`support.shipping-address:${fixture.storeSubdomain}`, fixture.orderId]);
+          return { rows: [] };
+        }
+        if (sql.startsWith('UPDATE support_order_status_state')) return { rows: [], rowCount: 0 };
         if (sql.startsWith('SELECT')) {
           assert.match(sql, /WHERE store_subdomain = \$1 AND order_id = \$2 ORDER BY id FOR UPDATE$/);
           assert.deepEqual(values, [fixture.storeSubdomain, fixture.orderId]);
@@ -272,7 +277,10 @@ function fakeDatabase(t: TestContext, rows: Row[], failAt?: 'update' | 'log') {
           for (const item of staged) {
             if (!values[0].includes(item.id)) continue;
             item.raw_order_json.fulfillments = JSON.parse(values[1]);
-            if (values[4] !== null) item.fulfillment_status = values[4];
+            if (values[4] !== null) {
+              item.fulfillment_status = values[4];
+              item.raw_order_json.fulfillment_status = values[4];
+            }
           }
           return { rows: [], rowCount: staged.length };
         }

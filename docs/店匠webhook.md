@@ -1,3 +1,22 @@
+## 当前实现（2026-10-27）
+
+每店保留付款与物流五类订阅：`orders/paid`、`orders/fulfilled`、`orders/partially_fulfilled`、`fulfillments/create`、`fulfillments/update`。
+新增已有订单状态订阅：`orders/update`、`orders/partially_refunded`、`orders/refunded`、`orders/cancelled`、`orders/finished`。正式主题是 `orders/update`，不是 `orders/updated`。
+
+- 验证回调后，先持久化到 `shoplazza_webhook_events` 再返回成功。状态事件使用 `order-status:` 前缀和规范化正文哈希去重；同一订单不同更新分别处理，不依赖可能被复用的店匠去重请求头。
+- 状态处理只针对库内已有的 `store_subdomain + order_id`。收到事件后读取店匠当前订单，更新该订单全部邮箱快照的订单、付款、发货、退款状态与累计已退款金额；未知订单跳过，不新增订单。
+- 累计已退款金额来自 `total_refund_price`；不把最新单次退款申请金额或已弃用的 webhook `refund_status` 当作累计成功退款。退款与订单取消是独立状态。
+- `support_order_status_state` 保存店匠状态版本。付款、未付款、物流和地址写入共用同订单事务锁，防止迟到的付款/未付款数据回退新状态，并保留地址保护及累计运单历史。
+- 仅由 webhook 触发。后台每 15 秒检查已收到但未处理成功的队列，这是失败重试，不扫描订单、不增加定时状态兜底，也不批量修复历史状态。详情读取失败（含 404、限流、缺失有效更新时间）保留事件重试，不推断为取消或删除。
+- 状态路径只更新快照、状态版本和日志，不创建邮件、入口令牌或工单，不改变工单状态。已有付款、物流兜底保留；部分退款订单仍可继续物流复查。
+- 客服后台订单详情展示独立状态和“已退款金额”，日志动作是 `order_status_update`，包含前后状态和跳过/失败原因。顾客页面与顾客视角预览不改动。
+
+部署后必须为各店新增以上五类状态订阅，并核对全部十类主题指向本系统的正确回调地址。只管理本系统的订阅，保留其他应用的回调；Token 和带密钥的回调 URL 不写入文档或日志。
+
+以下为原始接口调研资料，涉及实现流程的说明以本节及当前代码为准。
+
+---
+
 可以用 店匠 orders/paid Webhook 做“用户付款后立刻发邮件”的触发源。官方 orders/paid 说明是：订单成功下单时触发；对于 COD，它代表成功付款。这个事件需要 order 权限。
 
 你们应该给每个店铺注册 webhook，注册时传 address 和 topic，例如 topic 用 orders/paid。店匠创建 Webhook API 的参数里明确有 address 和 topic。

@@ -82,7 +82,7 @@ function assertSafe(html) {
 }
 
 function maliciousData() {
-  const order = Object.fromEntries(['customer_name', 'store_name', 'order_number', 'order_currency', 'order_amount', 'payment_method', 'card_last4', 'tracking_no'].map(key => [key, payload]));
+  const order = Object.fromEntries(['customer_name', 'store_name', 'order_number', 'order_currency', 'order_amount', 'payment_method', 'card_last4', 'tracking_no', 'order_status', 'payment_status', 'fulfillment_status', 'refund_status', 'refund_amount'].map(key => [key, payload]));
   order.store_subdomain = 'store.example.test';
   order.items = [{ title: payload, quantity: payload, image: quoteUrl }];
   order.tracking_numbers = ['HISTORY123', 'FIRST123', payload, 'SECOND123'];
@@ -131,6 +131,30 @@ async function main() {
   assertSafe(admin.get('#ticketTbody').innerHTML);
   assertPackages(admin.get('#detailPanel').innerHTML, '当前');
   assert.ok(admin.get('#detailPanel').innerHTML.includes(safe.escape(payload) + '\nsecond line'));
+  assertSafe(admin.context.renderOrderStatusFields(data.order));
+  assert.equal(admin.context.renderOrderStatusFields({}).split('未提供').length - 1, 5, 'missing states and refund amount remain unknown');
+  for (const value of [undefined, null, '', '  ']) {
+    assert.equal(admin.context.orderRefundAmount({ order_currency: 'USD', refund_amount: value }), '未提供');
+  }
+  for (const value of [0, '0', '0.00']) {
+    assert.equal(admin.context.orderRefundAmount({ order_currency: 'EUR', refund_amount: value }), 'EUR ' + value);
+  }
+  assert.equal(admin.context.orderRefundAmount({ refund_amount: '12.50' }), '12.50', 'unknown currency must not default to USD');
+  const statusView = page('admin.html');
+  statusView.context.renderDetail({ ticket: { ...data.ticket, status: 'open' }, messages: [], order: {
+    order_status: 'cancelled', payment_status: 'partially_refunded', fulfillment_status: 'partially_shipped',
+    refund_status: 'finished', refund_amount: '12.50', order_currency: 'EUR',
+  } });
+  const statusHtml = statusView.get('#detailPanel').innerHTML;
+  assertSafe(statusHtml);
+  for (const text of ['工单：待处理', '订单状态', '已取消 (cancelled)', '付款状态', '已部分退款 (partially_refunded)',
+    '发货状态', '部分发货 (partially_shipped)', '退款状态', '退款完成 (finished)', '已退款金额', 'EUR 12.50']) {
+    assert.ok(statusHtml.includes(text), text);
+  }
+  assert.ok(!statusHtml.includes('可退金额'));
+  assert.equal(statusView.context.orderStateLabel('order_status', 'future_state'), 'future_state');
+  assert.equal(statusView.context.orderStateLabel('order_status', 'constructor'), 'constructor');
+  assert.equal(statusView.context.orderStateLabel('refund_status', 'partially_refunded'), '已部分退款 (partially_refunded)');
   const row = tags(admin.get('#ticketTbody').innerHTML).find(t => t.tag === 'tr');
   let selected;
   admin.context.selectTicket = (_element, ticketNo) => { selected = ticketNo; };
@@ -337,7 +361,41 @@ async function main() {
   assert.equal(logs.context.fulfillmentDuration(0), '0 毫秒');
   assert.equal(logs.context.fulfillmentDuration(null), '未记录');
   const filters = logs.context.buildSyncFilters();
-  for (const action of ['order_unpaid', 'unpaid_summary', 'fulfillment_update', 'fulfillment_reconcile_summary']) assert.ok(filters.includes('data-value="' + action + '"'));
+  for (const action of ['order_unpaid', 'unpaid_summary', 'fulfillment_update', 'fulfillment_reconcile_summary', 'order_status_update']) assert.ok(filters.includes('data-value="' + action + '"'));
+
+  const orderStatusLog = { id: 14, action: 'order_status_update', source: 'webhook', status: 'success', detail_json: {
+    topic: 'orders/updated', reason: 'applied', matchedRows: 2, changedRows: 2,
+    before: { orderStatus: 'placed', paymentStatus: 'paid', fulfillmentStatus: 'waiting', refundStatus: null, refundAmount: null },
+    after: { orderStatus: 'cancelled', paymentStatus: 'partially_refunded', fulfillmentStatus: 'partially_shipped', refundStatus: 'finished', refundAmount: '12.50' },
+  } };
+  logs.context.renderSyncLogs([orderStatusLog], 1);
+  const statusLogHtml = logs.get('#logTbody').innerHTML;
+  assertSafe(statusLogHtml);
+  for (const text of ['订单状态更新', '进行中 (placed) → 已取消 (cancelled)', '已付款 (paid) → 已部分退款 (partially_refunded)',
+    '待发货 (waiting) → 部分发货 (partially_shipped)', '未提供 → 退款完成 (finished)', '退款金额：未提供 → 12.50', '匹配快照 2', '更新快照 2']) {
+    assert.ok(statusLogHtml.includes(text), text);
+  }
+  const zeroRefundLog = { ...orderStatusLog, detail_json: { before: { refundAmount: null }, after: { refundAmount: 0 }, matchedRows: 1, changedRows: 1 } };
+  assert.ok(logs.context.syncLogSummary(zeroRefundLog).includes('退款金额：未提供 → 0'));
+  assert.ok(logs.context.syncLogSummary({ ...zeroRefundLog, detail_json: { before: { refundAmount: '0' }, after: { refundAmount: 0 } } }).includes('状态无变化'));
+  assert.ok(logs.context.syncLogSummary({ ...orderStatusLog, detail_json: {} }).includes('未记录状态明细'));
+  assert.equal(logs.context.orderStatusLogValue('refundStatus', 'refunded'), '已全额退款 (refunded)');
+  for (const [reason, label] of [['updated', '已更新'], ['unchanged', '无变化'], ['not_found', '库内无此订单已跳过'],
+    ['stale', '忽略旧版本'], ['missing_updated_at', '缺更新时间'], ['retry', '处理失败已排队重试']]) {
+    assert.ok(logs.context.syncLogSummary({ ...orderStatusLog, detail_json: { reason } }).includes('原因：' + label));
+  }
+  assert.ok(logs.context.syncLogSummary({ ...orderStatusLog, detail_json: { reason: 'future_reason' } }).includes('原因：future_reason'));
+  const failedStatusLog = { ...orderStatusLog, status: 'failed', error_message: 'Shoplazza order lookup HTTP 403; queued for retry', detail_json: { reason: 'retry' } };
+  assert.ok(logs.context.syncLogSummary(failedStatusLog).includes('错误：Shoplazza order lookup HTTP 403; queued for retry'));
+  logs.context.renderSyncLogs([{ ...failedStatusLog, error_message: payload }], 1);
+  assertSafe(logs.get('#logTbody').innerHTML);
+  assert.ok(logs.get('#logTbody').innerHTML.includes('错误：' + safe.escape(payload)));
+  const hostileStatus = { ...orderStatusLog, detail_json: { topic: payload, reason: payload, before: {},
+    after: { orderStatus: payload, paymentStatus: payload, fulfillmentStatus: payload, refundStatus: payload, refundAmount: payload },
+    matchedRows: payload, changedRows: payload } };
+  logs.context.renderSyncLogs([hostileStatus], 1);
+  assertSafe(logs.get('#logTbody').innerHTML);
+  assert.ok(logs.get('#logTbody').innerHTML.includes(safe.escape(payload)));
 
   // Existing unpaid rows still open their dedicated order detail, including legacy notes.
   const unpaid = { id: 13, action: 'unpaid_summary', items_total: 2, items_skipped: 1, detail_json: { orders: [{ orderNumber: payload, kind: 'updated' }] } };

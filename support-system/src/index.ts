@@ -16,6 +16,7 @@ import { processDueEmailJobs, cleanupEmailJobs } from './email-service';
 import { getAutoBackfillEnabled, runBackfillForAllStores } from './backfill-jobs';
 import { processPendingFulfillmentWebhooks } from './fulfillment-webhook';
 import { processPendingPaidWebhooks } from './paid-webhook';
+import { processPendingOrderStatusWebhooks } from './order-status-webhook';
 import { processPendingShippingAddressRequests } from './order-address-service';
 import { createApiLimiter, createWebhookIngressRouter, isShoplazzaWebhookRequest } from './api-rate-limits';
 import { logWebhookRejection } from './webhook-security';
@@ -300,6 +301,7 @@ async function startup() {
   let backfillTimer: ReturnType<typeof setInterval> | null = null;
   let fulfillmentTimer: ReturnType<typeof setInterval> | null = null;
   let paidWebhookTimer: ReturnType<typeof setInterval> | null = null;
+  let orderStatusWebhookTimer: ReturnType<typeof setInterval> | null = null;
   let shippingAddressTimer: ReturnType<typeof setInterval> | null = null;
   let fulfillmentReconcileTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -310,6 +312,7 @@ async function startup() {
     if (backfillTimer) clearInterval(backfillTimer);
     if (fulfillmentTimer) clearInterval(fulfillmentTimer);
     if (paidWebhookTimer) clearInterval(paidWebhookTimer);
+    if (orderStatusWebhookTimer) clearInterval(orderStatusWebhookTimer);
     if (shippingAddressTimer) clearInterval(shippingAddressTimer);
     if (fulfillmentReconcileTimer) clearInterval(fulfillmentReconcileTimer);
     try {
@@ -349,6 +352,13 @@ async function startup() {
     processPaid();
     paidWebhookTimer = setInterval(processPaid, 15000);
     paidWebhookTimer.unref();
+    // Retry received webhooks only. This never scans or polls orders for new changes.
+    const processOrderStatuses = () => {
+      processPendingOrderStatusWebhooks().catch(() => console.error('[order-status-worker] failed; will retry'));
+    };
+    processOrderStatuses();
+    orderStatusWebhookTimer = setInterval(processOrderStatuses, 15000);
+    orderStatusWebhookTimer.unref();
     const reconcileFulfillments = async () => {
       try {
         if (await getAutoBackfillEnabled()) await runFulfillmentReconciliation({ limit: 200 });
