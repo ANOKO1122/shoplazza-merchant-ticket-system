@@ -84,6 +84,16 @@ export async function ensureTables(): Promise<void> {
   `);
 
   await p.query(`
+    CREATE TABLE IF NOT EXISTS support_order_notification_suppressions (
+      store_subdomain TEXT NOT NULL,
+      order_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (store_subdomain, order_id)
+    )
+  `);
+
+  await p.query(`
     CREATE TABLE IF NOT EXISTS support_email_events (
       id BIGSERIAL PRIMARY KEY,
       event_key TEXT UNIQUE NOT NULL,

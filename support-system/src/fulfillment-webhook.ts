@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { query, queryWebhook } from './pg';
 import { getStoreBySubdomain } from './store-service';
 import { applyFulfillmentUpdate, validateFulfillments } from './fulfillment-service';
+import { recoverMissingFulfillmentOrder } from './fulfillment-order-recovery';
 
 export const FULFILLMENT_WEBHOOK_TOPICS = [
   'orders/fulfilled', 'orders/partially_fulfilled',
@@ -119,6 +120,11 @@ export function processPendingFulfillmentWebhooks(options: { limit?: number } = 
         const store = await getStoreBySubdomain(event.store_subdomain);
         if (!store?.enabled) throw new Error('Store is not currently enabled');
         const parsed = parseFulfillmentWebhook(event.topic, event.payload_json);
+        await recoverMissingFulfillmentOrder({
+          store: { subdomain: event.store_subdomain, storeName: store.store_name, accessToken: store.access_token },
+          orderId: parsed.orderId,
+          topic: event.topic,
+        });
         const result = await applyFulfillmentUpdate({
           storeSubdomain: event.store_subdomain,
           storeName: store.store_name,

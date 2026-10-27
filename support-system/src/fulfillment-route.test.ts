@@ -83,6 +83,7 @@ async function harness(t: TestContext, persist?: () => Promise<void>, stores?: (
   });
   const fulfillment = load<typeof import('./fulfillment-webhook')>('fulfillment-webhook.ts', {
     crypto, './pg': receiptDatabase, './store-service': { getStoreBySubdomain: forbid }, './fulfillment-service': core,
+    './fulfillment-order-recovery': { recoverMissingFulfillmentOrder: forbid },
   });
   const security = load<typeof import('./webhook-security')>('webhook-security.ts', { crypto, './config': config });
   const processingDependencies = {

@@ -50,6 +50,7 @@ interface FakeResult {
 function fakeDatabase(t: TestContext, options: {
   insert: (attempt: number, values: unknown[]) => FakeResult;
   previousReply?: Record<string, unknown>;
+  suppression?: (read: number, values: unknown[]) => boolean;
 }) {
   // Never load .env. Every database/SMTP/network operation is mocked or blocked.
   const env = {
@@ -76,10 +77,16 @@ function fakeDatabase(t: TestContext, options: {
   const tokenHashes = new Map<unknown, number>();
   let templateReads = 0;
   let existingJobReads = 0;
+  let suppressionReads = 0;
   const existingJob = { id: 99, email_job_no: 'existing-job', status: 'sent' };
 
   t.mock.method(Pool.prototype, 'query', async (text: string, values: unknown[] = []): Promise<FakeResult> => {
     const sql = text.replace(/\s+/g, ' ').trim();
+    if (sql.startsWith('SELECT reason FROM support_order_notification_suppressions')) {
+      suppressionReads++;
+      const rows = options.suppression?.(suppressionReads, values) ? [{ reason: 'fulfillment_recovery' }] : [];
+      return { rows, rowCount: rows.length };
+    }
     if (sql.startsWith('SELECT value FROM support_system_settings')) {
       return { rows: [{ value: env.SUPPORT_PUBLIC_BASE_URL }], rowCount: 1 };
     }
@@ -108,6 +115,7 @@ function fakeDatabase(t: TestContext, options: {
     if (sql.startsWith('INSERT INTO support_email_jobs')) {
       if (sql.includes("'paid_support_invite'")) {
         assert.match(sql, /ON CONFLICT \(event_key\) DO NOTHING/);
+        assert.match(sql, /WHERE NOT EXISTS \( SELECT 1 FROM support_order_notification_suppressions WHERE store_subdomain = \$3 AND order_id = \$7 \)/);
       }
       inserts.push([...values]);
       return options.insert(inserts.length, values);
@@ -126,6 +134,7 @@ function fakeDatabase(t: TestContext, options: {
     get tokenCount() { return tokenHashes.size; },
     get templateReads() { return templateReads; },
     get existingJobReads() { return existingJobReads; },
+    get suppressionReads() { return suppressionReads; },
   };
 }
 
@@ -224,4 +233,55 @@ test('reply job retries preserve a previously sent valid customer link', async t
   assert.equal(db.inserts[1][14], link);
   assert.ok(String(db.inserts[1][12]).includes(link));
   assert.deepEqual(db.inserts[0].slice(1), db.inserts[1].slice(1));
+});
+
+test('recovered order suppresses paid invites before token/template creation across recipient changes', async t => {
+  const db = fakeDatabase(t, {
+    suppression(_read, values) {
+      assert.deepEqual(values, [fixture.storeSubdomain, fixture.orderId]);
+      return true;
+    },
+    insert() { throw new Error('Suppressed invitation must not reach INSERT'); },
+  });
+  for (const customerEmail of [fixture.customerEmail, 'new-recipient@example.invalid']) {
+    assert.deepEqual(await createPaidSupportInviteEmailJob({ ...fixture, customerEmail }),
+      { job: null, inserted: false, suppressed: true });
+  }
+  assert.equal(db.tokenCount, 0); assert.equal(db.templateReads, 0); assert.equal(db.inserts.length, 0);
+});
+
+test('recovery committed during preparation prevents the paid invite INSERT and returns a suppressed outcome', async t => {
+  const db = fakeDatabase(t, {
+    suppression: read => read > 1,
+    insert(_attempt, values) {
+      assert.equal(values[2], fixture.storeSubdomain); assert.equal(values[6], fixture.orderId);
+      return { rows: [], rowCount: 0 };
+    },
+  });
+  assert.deepEqual(await createPaidSupportInviteEmailJob(fixture), { job: null, inserted: false, suppressed: true });
+  assert.equal(db.existingJobReads, 0); assert.equal(db.suppressionReads, 2);
+});
+
+test('suppression read failure fails closed before creating a paid invitation or access token', async t => {
+  const db = fakeDatabase(t, {
+    suppression() { throw new Error('suppression lookup unavailable'); },
+    insert() { throw new Error('Unexpected insert'); },
+  });
+  await assert.rejects(createPaidSupportInviteEmailJob(fixture), /suppression lookup unavailable/);
+  assert.equal(db.tokenCount, 0); assert.equal(db.inserts.length, 0);
+});
+
+test('unmarked payment still creates its invitation even when orderedAt represents an old placed_at fallback', async t => {
+  const db = fakeDatabase(t, { insert: (_attempt, values) => ({ rows: [{ id: 100, email_job_no: values[0] }], rowCount: 1 }) });
+  const result = await createPaidSupportInviteEmailJob({ ...fixture, orderedAt: '2020-01-01T00:00:00Z' });
+  assert.equal(result.inserted, true); assert.equal(result.suppressed, undefined);
+  assert.equal(db.inserts.length, 1); assert.equal(db.tokenCount, 1);
+});
+
+test('order paid-invite suppression does not affect reply notices or manually requested complaint invitations', async t => {
+  const db = fakeDatabase(t, { suppression: () => true,
+    insert: (_attempt, values) => ({ rows: [{ id: 100, email_job_no: values[0] }], rowCount: 1 }) });
+  await createAgentReplyNoticeEmailJob(fixture);
+  await createCustomerComplaintInviteJob(fixture);
+  assert.equal(db.suppressionReads, 0); assert.equal(db.inserts.length, 2);
 });

@@ -212,7 +212,11 @@ export async function processOrderWebhook(params: {
       orderCurrency: normalized.orderCurrency,
       jobSource: 'webhook',
     });
-    console.log(`[webhook] email job ${emailJob.inserted ? 'created' : 'exists'}: ${emailJob.job.email_job_no}`);
+    if (emailJob.suppressed) {
+      console.log('[webhook] paid invitation suppressed for recovered order');
+    } else {
+      console.log(`[webhook] email job ${emailJob.inserted ? 'created' : 'exists'}: ${emailJob.job?.email_job_no || ''}`);
+    }
   }
   console.log(`[webhook] 订单快照已更新: ${normalized.orderNumber}`);
 

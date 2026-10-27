@@ -232,7 +232,20 @@ function getMailDomain(): string {
   return match ? match[1].trim() : '';
 }
 
-export async function createPaidSupportInviteEmailJob(params: PaidSupportInviteSnapshot): Promise<{ job: any; inserted: boolean }> {
+async function paidInviteSuppressionReason(storeSubdomain: string, orderId: string): Promise<string | null> {
+  const result = await query(
+    `SELECT reason FROM support_order_notification_suppressions WHERE store_subdomain = $1 AND order_id = $2`,
+    [storeSubdomain, orderId],
+  );
+  return result.rows.length ? String(result.rows[0].reason || 'order_notification_suppressed') : null;
+}
+
+export async function createPaidSupportInviteEmailJob(params: PaidSupportInviteSnapshot): Promise<{ job: any; inserted: boolean; suppressed?: boolean }> {
+  // Recovery is an order-level policy, independent of email address, job retention
+  // and later webhook/backfill retries. Check before creating tokens or content.
+  if (await paidInviteSuppressionReason(params.storeSubdomain, params.orderId)) {
+    return { job: null, inserted: false, suppressed: true };
+  }
   const eventKey = buildPaidSupportInviteEventKey({
     storeSubdomain: params.storeSubdomain,
     orderId: params.orderId,
@@ -274,7 +287,10 @@ export async function createPaidSupportInviteEmailJob(params: PaidSupportInviteS
       (email_job_no, event_key, store_subdomain, store_name, store_domain, mail_domain,
        order_id, order_number, ordered_at, email_type, customer_email, status, scheduled_at,
        token_id, subject_snapshot, body_snapshot, client_link_snapshot, raw_client_link, job_source)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'paid_support_invite',$10,'pending',now(),$11,$12,$13,$14,$15,$16)
+     SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,'paid_support_invite',$10,'pending',now(),$11,$12,$13,$14,$15,$16
+     WHERE NOT EXISTS (
+       SELECT 1 FROM support_order_notification_suppressions WHERE store_subdomain = $3 AND order_id = $7
+     )
      ON CONFLICT (event_key) DO NOTHING
      RETURNING *`,
     [
@@ -296,6 +312,11 @@ export async function createPaidSupportInviteEmailJob(params: PaidSupportInviteS
     ],
   );
   if ((result.rowCount || 0) > 0) return { job: result.rows[0], inserted: true };
+
+  // A recovery marker may have committed while the template/token was prepared.
+  if (await paidInviteSuppressionReason(params.storeSubdomain, params.orderId)) {
+    return { job: null, inserted: false, suppressed: true };
+  }
 
   const existing = await query(`SELECT * FROM support_email_jobs WHERE event_key = $1`, [eventKey]);
   return { job: existing.rows[0], inserted: false };
@@ -704,7 +725,7 @@ export async function sendPendingEmailJobs(limit = 100): Promise<{ picked: numbe
     const check = await query(`SELECT status FROM support_email_jobs WHERE id = $1`, [row.id]);
     const status = check.rows[0]?.status;
     if (status === 'sent' || status === 'sending') sent += 1;
-    else failed += 1;
+    else if (status !== 'skipped') failed += 1;
   }
   const remainR = await query(`SELECT count(*)::int AS cnt FROM support_email_jobs WHERE status = 'pending'`);
   return { picked: jobs.rows.length, sent, failed, remaining: Number(remainR.rows[0]?.cnt || 0) };
@@ -740,7 +761,10 @@ export async function processDueEmailJobs(params: { limit?: number; onlyJobId?: 
   for (const row of jobs.rows) {
     const ok = await sendEmailJob(Number(row.id));
     if (ok) sent += 1;
-    else failed += 1;
+    else {
+      const check = await query(`SELECT status FROM support_email_jobs WHERE id = $1`, [row.id]);
+      if (check.rows[0]?.status !== 'skipped') failed += 1;
+    }
   }
   return { picked: jobs.rows.length, sent, failed };
 }
@@ -835,6 +859,25 @@ async function sendEmailJob(id: number): Promise<boolean> {
        WHERE id = $1`,
       [id, tokenId, subject, snapshotBody, maskedLink],
     );
+
+    // Every entry point (automatic, send-all, or retry) passes through this last
+    // check. A cancelled/skipped job reset by a manual retry must stay suppressed.
+    if (job.email_type === 'paid_support_invite') {
+      const suppressionReason = await paidInviteSuppressionReason(job.store_subdomain, job.order_id);
+      if (suppressionReason) {
+        await query(
+          `UPDATE support_email_jobs SET status = 'skipped', failed_at = NULL,
+             last_error = $2, updated_at = now() WHERE id = $1 AND status = 'sending'`,
+          [id, `paid_invite_suppressed: ${suppressionReason}`],
+        );
+        await logOperation({ category: 'email', action: 'job_skipped', actor: 'system',
+          storeSubdomain: job.store_subdomain, target: job.email_job_no,
+          summary: '物流补单订单不发送自动付款邀请', status: 'success',
+          detailJson: { email_type: job.email_type, reason: suppressionReason },
+        });
+        return false;
+      }
+    }
 
     const mailResult = await sendSupportEmail({
       to: job.customer_email,

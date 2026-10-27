@@ -25,6 +25,7 @@ function load(dependencies: Record<string, unknown> = {}) {
     },
     './store-service': { getStoreBySubdomain: async () => store },
     './fulfillment-service': { applyFulfillmentUpdate: async () => applied, validateFulfillments },
+    './fulfillment-order-recovery': { recoverMissingFulfillmentOrder: async () => ({ recovered: false, orderNumber: 'ORDER1' }) },
     ...dependencies,
   };
   vm.runInNewContext(code, { module, exports: module.exports, console: { error() {} }, require(name: string) {
@@ -127,6 +128,47 @@ test('an order not yet inserted stays retryable and is never marked processed', 
   const failure = queries.find(q => q.sql.includes("status = 'failed'"));
   assert.equal(failure?.params?.[2], 60);
   assert.match(failure?.params?.[1], /queued for retry/);
+});
+
+test('a missing order is recovered before its original tracking update is applied', async () => {
+  const steps: string[] = [];
+  let claims = 0;
+  const subject = load({
+    './pg': { query: async (sql: string) => ({ rows: sql.includes('RETURNING *') && claims++ === 0
+      ? [{ id: 42, store_subdomain: 'fixture', topic: 'fulfillments/update', payload_json: payload, attempts: 1 }] : [], rowCount: 1 }) },
+    './fulfillment-order-recovery': { recoverMissingFulfillmentOrder: async (params: any) => {
+      assert.equal(params.orderId, 'order-1');
+      assert.equal(params.store.subdomain, 'fixture');
+      steps.push('recover');
+      return { recovered: true, orderNumber: 'ORDER1' };
+    } },
+    './fulfillment-service': { validateFulfillments, applyFulfillmentUpdate: async (params: any) => {
+      steps.push('merge');
+      assert.equal(params.fulfillments[0].tracking_number, 'TRACK10001');
+      return applied;
+    } },
+  });
+  assert.equal((await subject.processPendingFulfillmentWebhooks()).processed, 1);
+  assert.deepEqual(steps, ['recover', 'merge']);
+});
+
+test('failed recovery remains queued without applying a partial order or entering the paid flow', async () => {
+  let claims = 0;
+  const queries: string[] = [];
+  const subject = load({
+    './pg': { query: async (sql: string) => {
+      queries.push(sql);
+      return { rows: sql.includes('RETURNING *') && claims++ === 0
+        ? [{ id: 42, store_subdomain: 'fixture', topic: 'fulfillments/create', payload_json: payload, attempts: 1 }] : [], rowCount: 1 };
+    } },
+    './fulfillment-order-recovery': { recoverMissingFulfillmentOrder: async () => { throw new Error('Current detail unavailable'); } },
+    './fulfillment-service': { validateFulfillments, applyFulfillmentUpdate: async () => { throw new Error('Must not apply before recovery'); } },
+  });
+  const result = await subject.processPendingFulfillmentWebhooks();
+  assert.equal(result.failed, 1);
+  assert.equal(result.processed, 0);
+  assert.ok(queries.some(sql => sql.includes("status = 'failed'")));
+  assert.ok(!queries.some(sql => sql.includes("status = 'processed'")));
 });
 
 test('overlapping worker triggers share the active run', async () => {
