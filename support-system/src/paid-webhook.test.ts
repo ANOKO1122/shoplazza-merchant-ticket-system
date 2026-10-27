@@ -33,7 +33,7 @@ function harness(options: { payload?: any; emailFailures?: number; snapshotFailu
   const calls = { receipt: [] as any[], sql: [] as any[], snapshots: [] as any[], logs: [] as any[], invites: [] as any[], api: 0 };
   const jobs = new Set<string>();
   const forbidden = async () => { throw new Error('Unexpected real API dependency'); };
-  const subject = load<typeof import('./paid-webhook')>('paid-webhook.ts', {
+  const dependencies: Record<string, any> = {
     crypto,
     './config': { loadStoresConfig: async () => options.enabled === false ? [] : [STORE], buildStoreDomain: () => 'offline.invalid' },
     './normalize-order': load('normalize-order.ts', {}),
@@ -81,7 +81,9 @@ function harness(options: { payload?: any; emailFailures?: number; snapshotFailu
         throw new Error('Unmocked SQL');
       },
     },
-  });
+  };
+  dependencies['./shipping-address-guard'] = { withSnapshotShippingAddressGuard: async (order: any, _fetch: unknown, write: any) => write(dependencies['./pg'], order) };
+  const subject = load<typeof import('./paid-webhook')>('paid-webhook.ts', dependencies);
   return { subject, calls, event, jobs };
 }
 

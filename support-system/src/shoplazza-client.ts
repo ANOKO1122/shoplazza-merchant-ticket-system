@@ -102,6 +102,79 @@ function extractSingleOrder(body: any): ShoplazzaOrderDetail | null {
   return tryRec(body.order) || tryRec(body.data?.order) || tryRec(body.data) || tryRec(body);
 }
 
+/** Address writes must fail closed and never expose provider bodies or credentials in errors. */
+export class ShoplazzaAddressApiError extends Error {
+  constructor(public readonly code: string, public readonly httpStatus = 0) {
+    super(httpStatus ? `Shoplazza address API HTTP ${httpStatus}` : 'Shoplazza address API request failed');
+    this.name = 'ShoplazzaAddressApiError';
+  }
+}
+
+async function addressApiRequest(
+  store: ShoplazzaStoreConfig, endpoint: string, method: 'GET' | 'PUT', body?: unknown,
+): Promise<any> {
+  await waitForRateLimit();
+  const controller = new AbortController();
+  // Keep the deadline alive while consuming the body, including successful PUT responses.
+  const timeout = setTimeout(() => controller.abort(), 18000);
+  try {
+    const response = await fetch(`https://${buildApiHost(store.subdomain)}/openapi/2025-06/${endpoint}`, {
+      method,
+      headers: { 'Access-Token': store.accessToken, 'Content-Type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: controller.signal as any,
+      timeout: 18000,
+      size: 5 * 1024 * 1024,
+    });
+    if (!response.ok) {
+      (response.body as any)?.destroy?.();
+      throw new ShoplazzaAddressApiError('http_error', response.status);
+    }
+    const json = JSON.parse(await response.text());
+    if (!json || typeof json !== 'object' || Array.isArray(json)
+      || (json.code !== undefined && json.code !== 'Success')) {
+      throw new ShoplazzaAddressApiError('invalid_response');
+    }
+    return json;
+  } catch (error) {
+    if (error instanceof ShoplazzaAddressApiError) throw error;
+    throw new ShoplazzaAddressApiError('request_failed');
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function getOrderForAddressUpdate(store: ShoplazzaStoreConfig, orderId: string): Promise<ShoplazzaOrderDetail> {
+  const json = await addressApiRequest(store, `orders/${encodeURIComponent(orderId)}`, 'GET');
+  const order = extractSingleOrder(json);
+  if (!order || String(order.id) !== orderId || !order.shipping_address
+    || typeof order.shipping_address !== 'object' || Array.isArray(order.shipping_address)) {
+    throw new ShoplazzaAddressApiError('invalid_order');
+  }
+  return order;
+}
+
+export async function getOrderAddressAccessScopes(store: ShoplazzaStoreConfig): Promise<string[]> {
+  const json = await addressApiRequest(store, 'oauth/access_scopes', 'GET');
+  const scopes: unknown = json.data?.access_scopes ?? json.access_scopes;
+  if (!Array.isArray(scopes) || scopes.some(scope => !scope || typeof scope.handle !== 'string')) {
+    throw new ShoplazzaAddressApiError('invalid_scopes');
+  }
+  return scopes.map(scope => scope.handle);
+}
+
+/** Callers must preserve the current email; only the shipping-address object is sent. No retries. */
+export async function putOrderShippingAddress(
+  store: ShoplazzaStoreConfig, orderId: string, address: Record<string, string>,
+): Promise<void> {
+  const fields = ['first_name', 'last_name', 'phone', 'country', 'country_code', 'province', 'province_code',
+    'area', 'city', 'address', 'address1', 'company', 'zip', 'phone_area_code', 'email'];
+  if (Object.keys(address).some(key => !fields.includes(key) || typeof address[key] !== 'string')) {
+    throw new ShoplazzaAddressApiError('invalid_address');
+  }
+  await addressApiRequest(store, `orders/${encodeURIComponent(orderId)}`, 'PUT', { order: { shipping_address: address } });
+}
+
 export async function getOrderByNumber(store: ShoplazzaStoreConfig, orderNumber: string): Promise<ShoplazzaOrderDetail | null> {
   const num = orderNumber.replace(/^#/, '').trim();
   if (!num) return null;

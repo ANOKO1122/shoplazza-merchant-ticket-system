@@ -89,6 +89,7 @@ async function harness(t: TestContext, persist?: () => Promise<void>, stores?: (
     crypto, './config': config, './pg': receiptDatabase,
     './shoplazza-client': { getOrderByNumber: forbid, getOrderDetail: forbid, getOrderTransactions: forbid },
     './normalize-order': load('normalize-order.ts', {}),
+    './shipping-address-guard': { withSnapshotShippingAddressGuard: async (order: any, _fetch: unknown, write: any) => write(database, order) },
     './email-service': {
       extractStoreCustomDomain: () => '',
       createPaidSupportInviteEmailJob: async (params: unknown) => {

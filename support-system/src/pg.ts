@@ -1,4 +1,5 @@
 import { Pool, PoolClient } from 'pg';
+import { ORDER_ADDRESS_SCHEMA_SQL } from './order-address-schema';
 
 let pool: Pool;
 let webhookPool: Pool;
@@ -607,6 +608,8 @@ export async function ensureTables(): Promise<void> {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_op_logs_target ON support_operation_logs(target)`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_op_logs_created ON support_operation_logs(created_at)`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_email_jobs_created ON support_email_jobs(created_at)`);
+
+  await p.query(ORDER_ADDRESS_SCHEMA_SQL);
 
   // 统计实际表数和索引数
   const tableR = await p.query(

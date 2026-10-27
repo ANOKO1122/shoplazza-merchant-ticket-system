@@ -1,10 +1,11 @@
 import crypto from 'crypto';
 import { ShoplazzaStoreConfig, loadStoresConfig, buildStoreDomain } from './config';
 import { query, queryWebhook } from './pg';
-import { getOrderByNumber, getOrderDetail, getOrderTransactions, ShoplazzaOrderDetail, ShoplazzaTransaction } from './shoplazza-client';
+import { getOrderByNumber, getOrderDetail, getOrderForAddressUpdate, getOrderTransactions, ShoplazzaOrderDetail, ShoplazzaTransaction } from './shoplazza-client';
 import { normalizeOrder } from './normalize-order';
 import { createPaidSupportInviteEmailJob, extractStoreCustomDomain } from './email-service';
 import { logSync } from './log-service';
+import { withSnapshotShippingAddressGuard } from './shipping-address-guard';
 
 /** 需要查卡号后四位的支付渠道（店匠自有支付），第三方支付（PayPal等）跳过交易查询 */
 const CARD_LOOKUP_CHANNELS = ['shoplazzapayment'];
@@ -118,7 +119,8 @@ export async function processOrderWebhook(params: {
     throw new Error('Paid order is missing its ID or customer email; queued for retry');
   }
 
-  const snapshotResult = await query(
+  const snapshotResult = await withSnapshotShippingAddressGuard(
+    normalized, () => getOrderForAddressUpdate(store, normalized.orderId), (client, normalized) => client.query(
     `INSERT INTO support_order_snapshots
       (store_subdomain, store_name, order_id, order_number, customer_email, customer_name,
        order_status, fulfillment_status, order_amount, order_currency,
@@ -191,6 +193,7 @@ export async function processOrderWebhook(params: {
       receivedAt || new Date().toISOString(),
       new Date().toISOString(),
     ],
+    ),
   );
 
   if (topic === 'orders/paid') {

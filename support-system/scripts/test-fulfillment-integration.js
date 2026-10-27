@@ -272,6 +272,7 @@ async function paidDurableQueueRetry() {
   const dependencies = {
     crypto, './pg': pg, './config': config, './log-service': logService, './email-service': mailJobs,
     './normalize-order': loadModule('normalize-order.ts', {}),
+    './shipping-address-guard': loadModule('shipping-address-guard.ts', { './pg': pg }),
     './shoplazza-client': { getOrderDetail: forbidden, getOrderByNumber: forbidden, getOrderTransactions: forbidden },
   };
   const paidWorker = () => loadModule('paid-webhook.ts', dependencies);

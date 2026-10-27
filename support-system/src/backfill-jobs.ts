@@ -13,11 +13,12 @@
  */
 import { getEnabledStores, StoreRecord } from './store-service';
 import { query } from './pg';
-import { listPaidOrdersCreatedSince, listWaitingOrdersUpdatedSince, getOrderTransactions, ShoplazzaOrderDetail } from './shoplazza-client';
+import { listPaidOrdersCreatedSince, listWaitingOrdersUpdatedSince, getOrderForAddressUpdate, getOrderTransactions, ShoplazzaOrderDetail } from './shoplazza-client';
 import { normalizeOrder } from './normalize-order';
 import { createPaidSupportInviteEmailJob, extractStoreCustomDomain } from './email-service';
 import { logSync, logOperation } from './log-service';
 import { buildStoreDomain } from './config';
+import { withSnapshotShippingAddressGuard } from './shipping-address-guard';
 
 // ── 状态管理 ──
 
@@ -196,7 +197,8 @@ async function backfillOneStore(
       );
 
       // Step 3: 幂等写入快照（区分新增 vs 更新）
-      const upsertResult = await query(
+      const upsertResult = await withSnapshotShippingAddressGuard(
+        normalized, () => getOrderForAddressUpdate(storeConfig, normalized.orderId), (client, normalized) => client.query(
         `INSERT INTO support_order_snapshots
           (store_subdomain, store_name, order_id, order_number, customer_email, customer_name,
            order_status, fulfillment_status, order_amount, order_currency,
@@ -266,6 +268,7 @@ async function backfillOneStore(
           'backfill_sync',
           new Date().toISOString(),
         ],
+        ),
       );
       if (upsertResult.rows[0]?.is_insert) {
         snapshotsInserted++;
@@ -385,7 +388,7 @@ async function saveUnpaidCursor(storeSubdomain: string, syncedAt: string): Promi
   );
 }
 
-/** 未支付订单按更新时间补进快照。没有邮箱的跳过，不打详情，不发邮件，也不改已支付进度。 */
+/** 未支付订单按更新时间补进快照；已改址订单仅在地址版本冲突时回读详情，不发邮件。 */
 async function backfillUnpaidWindow(
   store: StoreRecord,
   updatedAtMin: string,
@@ -419,7 +422,8 @@ async function backfillUnpaidWindow(
       if (skippedNo) orderLines.push({ orderNumber: skippedNo, kind: 'skipped' });
       continue;
     }
-    const snapshotResult = await query(
+    const snapshotResult = await withSnapshotShippingAddressGuard(
+      normalized, () => getOrderForAddressUpdate(storeConfig, normalized.orderId), (client, normalized) => client.query(
       `INSERT INTO support_order_snapshots
         (store_subdomain, store_name, order_id, order_number, customer_email, customer_name,
          order_status, fulfillment_status, order_amount, order_currency,
@@ -478,6 +482,7 @@ async function backfillUnpaidWindow(
         'backfill_unpaid',
         new Date().toISOString(),
       ],
+      ),
     );
     const isNew = Boolean(snapshotResult.rows[0]?.is_new);
     const kept = (snapshotResult.rowCount ?? 0) === 0;

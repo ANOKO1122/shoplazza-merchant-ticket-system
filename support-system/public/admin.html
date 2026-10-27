@@ -5,6 +5,44 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>客服后台 - 工单管理</title>
 <link rel="stylesheet" href="/admin-base.css">
+<style>
+.shipping-address-card { padding: 16px 0; margin-bottom: 16px; border-top: 1px solid var(--border-strong); border-bottom: 1px solid var(--border-strong); }
+.shipping-address-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.shipping-address-heading h4 { font-size: 14px; font-weight: 600; }
+.shipping-address-heading .btn-sm { flex-shrink: 0; }
+.shipping-address-summary { line-height: 1.7; font-size: 13px; overflow-wrap: anywhere; }
+.address-muted { font-size: 12px; color: var(--text-secondary); margin-top: 8px; }
+.shipping-address-dialog { position: fixed; margin: auto; width: min(640px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; border: 0; border-radius: var(--radius); box-shadow: 0 12px 40px rgba(0, 0, 0, .22); background: var(--bg-card); color: var(--text-main); }
+.shipping-address-dialog::backdrop { background: rgba(0, 21, 41, .42); }
+.shipping-address-dialog form { display: flex; flex-direction: column; max-height: calc(100dvh - 32px); }
+.address-dialog-header { padding: 20px 24px 16px; border-bottom: 1px solid var(--border); }
+.address-dialog-header h2 { font-size: 18px; line-height: 1.4; margin: 0 0 6px; }
+.address-dialog-header p { font-size: 13px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.address-dialog-body { overflow-y: auto; padding: 18px 24px 20px; }
+.address-field-help { font-size: 12px; color: var(--text-secondary); line-height: 1.7; margin-bottom: 16px; }
+.address-read-state { color: #237804; font-size: 13px; margin-bottom: 16px; }
+.address-fields { border: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px 18px; padding: 0; margin: 0; }
+.address-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.address-field span { font-size: 13px; color: var(--text-secondary); }
+.address-field-wide { grid-column: 1 / -1; }
+.address-field input { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 4px; color: var(--text-main); background: #fff; font: inherit; caret-color: var(--primary); }
+.address-field input:focus-visible, .shipping-address-dialog button:focus-visible, .shipping-address-heading button:focus-visible { outline: 2px solid #096dd9; outline-offset: 2px; }
+.address-field input:disabled { color: var(--text-secondary); background: #f5f5f5; }
+.address-email { margin-top: 16px; font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.address-feedback { margin-top: 12px; color: var(--text-secondary); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.address-feedback:empty { display: none; }
+.address-feedback-error { color: #a8071a; background: #fff1f0; border: 1px solid #ffccc7; border-radius: 4px; padding: 10px 12px; margin-bottom: 12px; }
+.address-result strong { font-size: 16px; }
+.address-result p { color: var(--text-secondary); font-size: 13px; line-height: 1.7; margin-top: 8px; overflow-wrap: anywhere; }
+.address-result-summary { margin: 20px 0 16px; padding-top: 16px; border-top: 1px solid var(--border-strong); font-size: 14px; line-height: 1.8; overflow-wrap: anywhere; }
+.address-result-summary h3 { margin-bottom: 8px; font-size: 13px; color: var(--text-secondary); }
+.address-dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; padding: 14px 24px; border-top: 1px solid var(--border); }
+.address-dialog-actions button { min-height: 40px; padding: 8px 16px; font-size: 14px; }
+.address-dialog-actions .btn-sm-primary { background: #096dd9; border-color: #096dd9; }
+.address-dialog-actions .btn-sm-primary:hover { background: #0050b3; }
+.address-dialog-actions button:disabled { opacity: .55; cursor: wait; }
+@media (max-width: 480px) { .address-fields { grid-template-columns: 1fr; } .address-dialog-header, .address-dialog-body { padding-left: 16px; padding-right: 16px; } .address-dialog-actions { padding: 12px 16px; } .address-dialog-actions button { flex: 1; } }
+</style>
 <script src="/admin-shell.js"></script>
 
 <script src="/safe-render.js"></script>
@@ -34,8 +72,8 @@ function pagerWindow(page,tp){var set={};set[1]=1;set[tp]=1;for(var i=page-2;i<=
 function pageButtons(total,pageSize,page,goName){var tp=Math.ceil(total/pageSize)||1;if(page>tp)page=tp;var pg='<span class="pager-total">共 '+total+' 条</span><button '+(page<=1?'disabled':'')+' onclick="'+goName+'('+(page-1)+')">上一页</button>';var pages=pagerWindow(page,tp);var prev=0;pages.forEach(function(i){if(prev&&i-prev>1)pg+='<span class="pager-gap">…</span>';pg+='<button class="'+(i===page?'active':'')+'" onclick="'+goName+'('+i+')">'+i+'</button>';prev=i});pg+='<button '+(page>=tp?'disabled':'')+' onclick="'+goName+'('+(page+1)+')">下一页</button>';return pg}
 function goPage(p){currentPage=p;loadTickets()}
 function selectTicket(r,tn){$$('.panel-left tr').forEach(function(r){r.classList.remove('selected')});r.classList.add('selected');loadDetail(tn)}
-async function loadDetail(tn){var p=$('#detailPanel');p.innerHTML='<div class="detail-empty">加载中...</div>';try{var r=await fetch(API+'/tickets/'+encodeURIComponent(tn),{credentials:'same-origin'});var d=await r.json();if(!d.ok){p.innerHTML='<div class="detail-empty">加载失败</div>';return}currentTicket=d.ticket;renderDetail(d)}catch(e){p.innerHTML='<div class="detail-empty">加载失败</div>'}}
-function renderDetail(d){var t=d.ticket,o=d.order||{},ms=d.messages;var pu=ticketPreviewUrl(t.public_ticket_no);var st=t.status==='closed'?'已关闭':(t.status==='waiting'?'等待顾客':'待处理');var ih='';if(Array.isArray(o.items)){ih=o.items.map(function(it){var img=itemImageUrl(it);return'<div style="display:flex;align-items:center;gap:6px;font-size:13px;line-height:1.6;margin-bottom:4px"><span style="color:#262626">'+esc((it.product_title||it.title||it.name||''))+'</span> <span style="color:#8c8c8c">x'+esc((it.quantity||1))+'</span>'+(img?' <a href="'+esc(img)+'" target="_blank" rel="noopener" style="color:#1890ff;font-size:12px;text-decoration:none" title="查看商品图片">图片</a>':'')+'</div>'}).join('')}var mh='';var rl={customer:'顾客',agent:'客服',system:'系统',platform:'平台'};ms.forEach(function(m){mh+='<div class="msg-item '+SupportSafe.role(m.sender_type)+'"><div class="msg-meta"><span class="msg-role '+SupportSafe.role(m.sender_type)+'">'+esc((rl[m.sender_type]||m.sender_type))+'</span><span class="msg-time">'+formatTime(m.created_at)+'</span>'+(m.sender_type==='agent'?'<div class="msg-actions"><button class="btn-sm btn-sm-danger" onclick="recallMsg('+Number(m.id)+')" title="撤回">撤回</button></div>':'')+'</div><div class="msg-content">'+esc(m.content)+'</div>'+renderAdminAttachments(m.attachments)+'</div>'});var rb=t.status==='closed'?'<div class="reply-bar"><div class="reply-actions"><button class="btn btn-primary" style="width:auto;padding:9px 20px" onclick="reopenTicket()">重新打开</button><button class="btn-sm" style="background:#fa8c16;color:#fff;margin-left:8px" onclick="inviteNewTicket()">发起新工单</button></div></div>':'<div class="reply-bar"><div class="image-preview-area" id="adminImagePreview" style="display:none"></div><textarea id="replyBox" placeholder="输入回复内容..."></textarea><div class="reply-actions"><div class="panel-actions"><button class="btn-sm btn-sm-danger" onclick="closeTicketManual()">关闭工单</button><button class="btn-sm" style="background:#fa8c16;color:#fff" onclick="inviteNewTicket()">发起新工单</button><button class="btn-sm" onclick="sendTicketNotifyEmail()">发送通知邮件</button></div><div style="display:flex;align-items:center;gap:6px"><label class="btn-img-upload" title="上传图片">上传图片<input type="file" id="adminImageInput" multiple accept="image/jpeg,image/png,image/webp" style="display:none" onchange="onAdminImagesSelected()"></label><button class="btn btn-primary" style="width:auto;padding:9px 20px" onclick="sendReply()">发送</button></div></div></div>';$('#detailPanel').innerHTML='<div class="detail-content"><div class="detail-header"><h3>#'+esc(t.public_ticket_no)+'</h3><div><span class="tag tag-blue" style="margin-right:6px">'+st+'</span>'+(t.arbitration_requested&&t.status!=='closed'?'<span class="tag tag-red">仲裁</span>':'')+'</div></div><div class="detail-scroll"><div class="info-grid"><div class="info-item"><span class="info-label">店铺</span><span class="info-value">'+esc((t.store_name||''))+'</span></div><div class="info-item"><span class="info-label">店铺域名</span><span class="info-value">'+esc(sd(t.store_subdomain||''))+'</span></div><div class="info-item"><span class="info-label">订单号</span><span class="info-value">'+esc((t.order_id||''))+'</span></div><div class="info-item"><span class="info-label">订单编号</span><span class="info-value">'+esc((t.order_number||''))+'</span></div><div class="info-item"><span class="info-label">客户视角预览</span><span class="info-value"><a href="'+esc(pu)+'" target="_blank" rel="noopener">打开预览页面</a></span></div><div class="info-item"><span class="info-label">顾客邮箱</span><span class="info-value">'+esc((t.customer_email||''))+'</span></div><div class="info-item"><span class="info-label">顾客姓名</span><span class="info-value">'+esc((t.customer_name||o.customer_name||''))+'</span></div><div class="info-item"><span class="info-label">问题类型</span><span class="info-value">'+esc(issueTypeLabel(t.issue_type))+'</span></div><div class="info-item"><span class="info-label">金额</span><span class="info-value">'+esc((o.order_currency||'USD'))+' '+esc((o.order_amount||''))+'</span></div><div class="info-item"><span class="info-label">支付方式</span><span class="info-value">'+esc((o.payment_method||'无'))+'</span></div><div class="info-item"><span class="info-label">卡号后四位</span><span class="info-value">'+esc((o.card_last4||'无'))+'</span></div><div class="info-item"><span class="info-label">运单号</span><span class="info-value">'+SupportSafe.shipments(o,{packageLabel:'包裹',emptyLabel:'暂无运单',currentLabel:'当前'})+'</span></div>'+(ih?'<div class="info-item"><span class="info-label">商品</span><span class="info-value">'+ih+'</span></div>':'')+(o.paid_at?'<div class="info-item"><span class="info-label">下单时间</span><span class="info-value">'+formatTime(o.paid_at)+'</span></div>':'')+'<div class="info-item"><span class="info-label">工单创建时间</span><span class="info-value">'+formatTime(t.created_at)+'</span></div><div class="info-item"><span class="info-label">更新时间</span><span class="info-value">'+formatTime(t.updated_at)+'</span></div></div><div style="font-weight:600;font-size:14px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border)">消息记录</div><div class="msg-list">'+mh+'</div></div>'+rb+'</div>'}
+async function loadDetail(tn){if(shippingAddressEditor){clearTimeout(shippingAddressEditor.pollTimer);shippingAddressEditor.dialog.close();shippingAddressEditor.dialog.remove();shippingAddressEditor=null;}var p=$('#detailPanel');p.innerHTML='<div class="detail-empty">加载中...</div>';try{var r=await fetch(API+'/tickets/'+encodeURIComponent(tn),{credentials:'same-origin'});var d=await r.json();if(!d.ok){p.innerHTML='<div class="detail-empty">加载失败</div>';return}currentTicket=d.ticket;renderDetail(d)}catch(e){p.innerHTML='<div class="detail-empty">加载失败</div>'}}
+function renderDetail(d){var t=d.ticket,o=d.order||{},ms=d.messages;var pu=ticketPreviewUrl(t.public_ticket_no);var st=t.status==='closed'?'已关闭':(t.status==='waiting'?'等待顾客':'待处理');var ih='';if(Array.isArray(o.items)){ih=o.items.map(function(it){var img=itemImageUrl(it);return'<div style="display:flex;align-items:center;gap:6px;font-size:13px;line-height:1.6;margin-bottom:4px"><span style="color:#262626">'+esc((it.product_title||it.title||it.name||''))+'</span> <span style="color:#8c8c8c">x'+esc((it.quantity||1))+'</span>'+(img?' <a href="'+esc(img)+'" target="_blank" rel="noopener" style="color:#1890ff;font-size:12px;text-decoration:none" title="查看商品图片">图片</a>':'')+'</div>'}).join('')}var mh='';var rl={customer:'顾客',agent:'客服',system:'系统',platform:'平台'};ms.forEach(function(m){mh+='<div class="msg-item '+SupportSafe.role(m.sender_type)+'"><div class="msg-meta"><span class="msg-role '+SupportSafe.role(m.sender_type)+'">'+esc((rl[m.sender_type]||m.sender_type))+'</span><span class="msg-time">'+formatTime(m.created_at)+'</span>'+(m.sender_type==='agent'?'<div class="msg-actions"><button class="btn-sm btn-sm-danger" onclick="recallMsg('+Number(m.id)+')" title="撤回">撤回</button></div>':'')+'</div><div class="msg-content">'+esc(m.content)+'</div>'+renderAdminAttachments(m.attachments)+'</div>'});var rb=t.status==='closed'?'<div class="reply-bar"><div class="reply-actions"><button class="btn btn-primary" style="width:auto;padding:9px 20px" onclick="reopenTicket()">重新打开</button><button class="btn-sm" style="background:#fa8c16;color:#fff;margin-left:8px" onclick="inviteNewTicket()">发起新工单</button></div></div>':'<div class="reply-bar"><div class="image-preview-area" id="adminImagePreview" style="display:none"></div><textarea id="replyBox" placeholder="输入回复内容..."></textarea><div class="reply-actions"><div class="panel-actions"><button class="btn-sm btn-sm-danger" onclick="closeTicketManual()">关闭工单</button><button class="btn-sm" style="background:#fa8c16;color:#fff" onclick="inviteNewTicket()">发起新工单</button><button class="btn-sm" onclick="sendTicketNotifyEmail()">发送通知邮件</button></div><div style="display:flex;align-items:center;gap:6px"><label class="btn-img-upload" title="上传图片">上传图片<input type="file" id="adminImageInput" multiple accept="image/jpeg,image/png,image/webp" style="display:none" onchange="onAdminImagesSelected()"></label><button class="btn btn-primary" style="width:auto;padding:9px 20px" onclick="sendReply()">发送</button></div></div></div>';$('#detailPanel').innerHTML='<div class="detail-content"><div class="detail-header"><h3>#'+esc(t.public_ticket_no)+'</h3><div><span class="tag tag-blue" style="margin-right:6px">'+st+'</span>'+(t.arbitration_requested&&t.status!=='closed'?'<span class="tag tag-red">仲裁</span>':'')+'</div></div><div class="detail-scroll"><div class="info-grid"><div class="info-item"><span class="info-label">店铺</span><span class="info-value">'+esc((t.store_name||''))+'</span></div><div class="info-item"><span class="info-label">店铺域名</span><span class="info-value">'+esc(sd(t.store_subdomain||''))+'</span></div><div class="info-item"><span class="info-label">订单号</span><span class="info-value">'+esc((t.order_id||''))+'</span></div><div class="info-item"><span class="info-label">订单编号</span><span class="info-value">'+esc((t.order_number||''))+'</span></div><div class="info-item"><span class="info-label">客户视角预览</span><span class="info-value"><a href="'+esc(pu)+'" target="_blank" rel="noopener">打开预览页面</a></span></div><div class="info-item"><span class="info-label">顾客邮箱</span><span class="info-value">'+esc((t.customer_email||''))+'</span></div><div class="info-item"><span class="info-label">顾客姓名</span><span class="info-value">'+esc((t.customer_name||o.customer_name||''))+'</span></div><div class="info-item"><span class="info-label">问题类型</span><span class="info-value">'+esc(issueTypeLabel(t.issue_type))+'</span></div><div class="info-item"><span class="info-label">金额</span><span class="info-value">'+esc((o.order_currency||'USD'))+' '+esc((o.order_amount||''))+'</span></div><div class="info-item"><span class="info-label">支付方式</span><span class="info-value">'+esc((o.payment_method||'无'))+'</span></div><div class="info-item"><span class="info-label">卡号后四位</span><span class="info-value">'+esc((o.card_last4||'无'))+'</span></div><div class="info-item"><span class="info-label">运单号</span><span class="info-value">'+SupportSafe.shipments(o,{packageLabel:'包裹',emptyLabel:'暂无运单',currentLabel:'当前'})+'</span></div>'+(ih?'<div class="info-item"><span class="info-label">商品</span><span class="info-value">'+ih+'</span></div>':'')+(o.paid_at?'<div class="info-item"><span class="info-label">下单时间</span><span class="info-value">'+formatTime(o.paid_at)+'</span></div>':'')+'<div class="info-item"><span class="info-label">工单创建时间</span><span class="info-value">'+formatTime(t.created_at)+'</span></div><div class="info-item"><span class="info-label">更新时间</span><span class="info-value">'+formatTime(t.updated_at)+'</span></div></div>'+renderShippingAddressCard(o.shipping_address)+'<div style="font-weight:600;font-size:14px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border)">消息记录</div><div class="msg-list">'+mh+'</div></div>'+rb+'</div>'}
 async function sendReply(){if(!currentTicket)return;var b=$('#replyBox');var c=b.value.trim();var hasImages=adminSelectedFiles.length>0;if(!c&&!hasImages)return;try{var fd=new FormData();fd.append('content',c);adminSelectedFiles.forEach(function(f){fd.append('images',f)});var r=await fetch(API+'/tickets/'+encodeURIComponent(currentTicket.public_ticket_no)+'/messages',{method:'POST',credentials:'same-origin',body:fd});var d=await r.json();if(d.ok){b.value='';clearAdminImages();loadDetail(currentTicket.public_ticket_no);loadTickets();loadStats();loadPendingCount()}else alert(d.error||'发送失败')}catch(e){alert('网络错误')}}
 async function closeTicketManual(){if(!currentTicket)return;if(!confirm('确认关闭此工单？'))return;try{var r=await fetch(API+'/tickets/'+encodeURIComponent(currentTicket.public_ticket_no)+'/status',{method:'PATCH',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:'closed'})});var d=await r.json();if(d.ok){loadDetail(currentTicket.public_ticket_no);loadTickets();loadStats()}else alert(d.error||'关闭失败')}catch(e){alert('网络错误')}}
 async function reopenTicket(){if(!currentTicket)return;if(!confirm('确认重新打开此工单？'))return;try{var r=await fetch(API+'/tickets/'+encodeURIComponent(currentTicket.public_ticket_no)+'/reopen',{method:'POST',credentials:'same-origin'});var d=await r.json();if(d.ok){loadDetail(currentTicket.public_ticket_no);loadTickets();loadStats()}else alert(d.error||'重新打开失败')}catch(e){alert('网络错误')}}
@@ -45,6 +83,271 @@ async function recallMsg(id){if(!confirm('确认撤回此消息？'))return;try{
 async function loadPendingCount(){try{var r=await fetch(API+'/email-jobs/pending-count',{credentials:'same-origin'});var d=await r.json();if(!d.ok)return;var b=$('#pendingBadge');if(!b)return;if(d.count>0){b.style.display='inline';b.textContent='📨 '+d.count+' 封提醒邮件待发送'}else{b.style.display='none'}}catch(e){}}
 var adminSelectedFiles=[];function renderAdminAttachments(a){return SupportSafe.images(a)}function viewAdminImage(u){SupportSafe.showImage(u)}function onAdminImagesSelected(){var i=$('#adminImageInput');if(!i||!i.files)return;for(var j=0;j<i.files.length;j++){if(adminSelectedFiles.length>=3)break;adminSelectedFiles.push(i.files[j])}i.value='';renderAdminImagePreviews()}function renderAdminImagePreviews(){var c=$('#adminImagePreview');if(!c)return;if(!adminSelectedFiles.length){c.style.display='none';c.innerHTML='';return}c.style.display='flex';var h='';adminSelectedFiles.forEach(function(f,idx){var u=URL.createObjectURL(f);h+='<div class="image-preview-item"><img src="'+u+'" alt="preview"><button class="remove-btn" onclick="removeAdminImage('+idx+')">×</button></div>'});c.innerHTML=h}function removeAdminImage(idx){adminSelectedFiles.splice(idx,1);renderAdminImagePreviews()}function clearAdminImages(){adminSelectedFiles=[];var c=$('#adminImagePreview');if(c){c.style.display='none';c.innerHTML=''}}
 function itemImageUrl(it){if(!it)return'';var img=it.image;var src=typeof img==='object'&&img?img.src:img;return SupportSafe.url(src||it.product_image||it.image_src||'')}
+// Shipping edits have their own state so a result refresh never discards a drafted reply.
+var shippingAddressEditor = null;
+var shippingAddressSubmissions = window.__shippingAddressSubmissions || (window.__shippingAddressSubmissions = {});
+var shippingAddressFields = [
+  ['first_name', '名'], ['last_name', '姓'], ['phone_area_code', '电话区号'], ['phone', '联系电话'],
+  ['country', '国家 / 地区'], ['country_code', '国家代码（两位 ISO 代码）'],
+  ['province', '州 / 省'], ['province_code', '州 / 省代码'], ['city', '城市'], ['area', '区 / 县'],
+  ['zip', '邮政编码'], ['company', '公司（选填）'], ['address', '街道地址'], ['address1', '公寓、楼层等（选填）']
+];
+function shippingAddressLines(address) {
+  var a = address || {};
+  return [
+    [a.first_name, a.last_name].filter(Boolean).join(' '), a.company,
+    a.address, a.address1,
+    [a.area, a.city, a.province || a.province_code, a.zip].filter(Boolean).join(', '),
+    a.country || a.country_code,
+    [a.phone_area_code, a.phone].filter(Boolean).join(' ')
+  ].filter(Boolean).map(function(value) { return String(value); });
+}
+function shippingAddressSummary(address) {
+  var lines = shippingAddressLines(address);
+  return lines.length ? lines.map(function(line) { return '<div>' + esc(line) + '</div>'; }).join('')
+    : '<span class="address-muted">暂无收货地址记录</span>';
+}
+function renderShippingAddressCard(address) {
+  return '<section class="shipping-address-card" aria-labelledby="shippingAddressTitle">' +
+    '<div class="shipping-address-heading"><h4 id="shippingAddressTitle">收货地址</h4>' +
+    '<button type="button" class="btn-sm" onclick="openShippingAddressEditor()">编辑收货地址</button></div>' +
+    '<div id="shippingAddressSummary" class="shipping-address-summary">' + shippingAddressSummary(address) + '</div>' +
+    '<p id="shippingAddressStatus" class="address-muted" role="status">本地记录 · 编辑时读取店匠最新地址</p></section>';
+}
+function addressEditorActive(editor) {
+  return shippingAddressEditor === editor && editor.dialog.isConnected && editor.epoch === adminEpoch();
+}
+function closeShippingAddressEditor() {
+  var editor = shippingAddressEditor;
+  if (!editor || editor.saving) return;
+  shippingAddressEditor = null;
+  clearTimeout(editor.pollTimer);
+  editor.dialog.close();
+  editor.dialog.remove();
+  if (editor.returnFocus && editor.returnFocus.isConnected) editor.returnFocus.focus();
+}
+function addressEditorMessage(message, error) {
+  var box = document.getElementById('shippingAddressFeedback');
+  if (!box) return;
+  box.textContent = message;
+  box.className = error ? 'address-feedback address-feedback-error' : 'address-feedback';
+}
+async function openShippingAddressEditor() {
+  if (!currentTicket || shippingAddressEditor) return;
+  var ticket = currentTicket;
+  var dialog = document.createElement('dialog');
+  dialog.className = 'shipping-address-dialog';
+  dialog.setAttribute('aria-labelledby', 'shippingAddressDialogTitle');
+  dialog.setAttribute('aria-describedby', 'shippingAddressDialogHelp');
+  var editor = { ticketNo: ticket.public_ticket_no, orderNumber: ticket.order_number || ticket.order_id,
+    email: ticket.customer_email || '', dialog: dialog, epoch: adminEpoch(), returnFocus: document.activeElement,
+    submission: shippingAddressSubmissions[ticket.public_ticket_no] || null, saving: false, pollCount: 0 };
+  shippingAddressEditor = editor;
+  dialog.addEventListener('cancel', function(event) { event.preventDefault(); closeShippingAddressEditor(); });
+  document.getElementById('detailPanel').appendChild(dialog);
+  renderShippingAddressEditor(editor);
+  dialog.showModal();
+  if (editor.submission) {
+    if (editor.submission.requestId) pollShippingAddressRequest(editor);
+  } else await loadShippingAddressEditor(editor);
+}
+function renderShippingAddressEditor(editor) {
+  var submission = editor.submission;
+  var body = '';
+  var buttons = '<button type="button" class="btn-sm" onclick="closeShippingAddressEditor()"' + (editor.saving ? ' disabled' : '') + '>关闭</button>';
+  if (submission) {
+    var request = submission.request || {};
+    var status = request.status || (editor.saving ? 'submitting' : 'submission_unknown');
+    var labels = { submitting: '正在提交修改…', submission_unknown: '尚未确认提交结果', pending: '已提交，等待同步',
+      processing: '正在同步到店匠…', succeeded: '收货地址已同步', failed: '收货地址修改失败', conflict: '地址已发生变化', uncertain: '店匠处理结果待确认' };
+    var message = request.errorMessage || ({ pending: '请求已保存，可以关闭窗口，稍后重新打开查看结果。',
+      processing: '正在核对并更新店匠订单。', succeeded: '店匠订单与本地地址已核对一致。',
+      conflict: '请重新读取最新地址，核对后再修改。', uncertain: '暂时无法确认店匠是否已修改，请先刷新结果。',
+      submission_unknown: '网络响应中断。重试会继续查询或提交同一份修改。' }[status] || '');
+    body = '<div class="address-result" role="status"><strong>' + esc(labels[status] || status) + '</strong><p>' + esc(message) + '</p></div>' +
+      '<div class="address-result-summary"><h3>' + (status === 'succeeded' ? '当前收货地址' : '本次提交的地址') + '</h3>' +
+      shippingAddressSummary(request.afterAddress || request.desiredAddress || Object.assign({}, submission.body.expectedAddress, submission.body.patch)) + '</div>';
+    if (request.id) body += '<p class="address-muted">请求编号：' + esc(request.id) + '</p>';
+    if (status === 'failed' || status === 'conflict') {
+      buttons += '<button type="button" class="btn-sm btn-sm-primary" onclick="reloadShippingAddressEditor()">重新读取并编辑</button>';
+    } else if (!editor.saving && !submission.requestId) {
+      buttons += '<button type="button" class="btn-sm btn-sm-primary" onclick="retryShippingAddressSubmission()">重试同一请求</button>';
+    } else if (['pending', 'processing', 'uncertain'].indexOf(status) !== -1) {
+      buttons += '<button type="button" class="btn-sm" onclick="refreshShippingAddressRequest()">刷新结果</button>';
+    }
+  } else if (editor.view) {
+    var view = editor.view;
+    body = '<p class="address-read-state">已从店匠读取最新地址</p>';
+    if (!view.editable) body += '<div class="address-feedback address-feedback-error">' + esc(view.disabledReason || (!view.hasWriteScope ? '当前店铺授权缺少订单写权限，无法修改收货地址。' : '当前订单不允许修改收货地址。')) + '</div>';
+    body += '<p class="address-field-help">街道地址、城市和国家信息必填；修改国家时，请同时核对两位国家代码（例如 US）。州 / 省代码请填写实际代码。</p>';
+    body += '<fieldset class="address-fields"' + (!view.editable ? ' disabled' : '') + '>';
+    shippingAddressFields.forEach(function(field) {
+      body += '<label class="address-field' + (field[0] === 'address' || field[0] === 'address1' ? ' address-field-wide' : '') + '" for="address_' + field[0] + '">' +
+        '<span>' + esc(field[1]) + '</span><input id="address_' + field[0] + '" name="' + field[0] + '" type="' + (field[0] === 'phone' ? 'tel' : 'text') +
+        '" maxlength="' + (field[0] === 'country_code' ? '2' : '500') + '"' + (field[0] === 'city' || field[0] === 'address' ? ' required' : '') +
+        (field[0] === 'country_code' ? ' pattern="[A-Z]{2}" title="请输入两位大写国家代码，例如 US"' : '') +
+        ' autocomplete="off" value="' + esc(view.address[field[0]] || '') + '"></label>';
+    });
+    body += '</fieldset><p class="address-email">联系邮箱：' + esc(view.address.email || editor.email || '未提供') + '（保留原邮箱）</p>';
+    if (view.editable) buttons += '<button type="submit" class="btn-sm btn-sm-primary">保存并同步到店匠</button>';
+  } else {
+    body = '<p class="address-loading" role="status">' + esc(editor.loadError || '正在读取店匠最新地址…') + '</p>';
+    if (editor.loadError) buttons += '<button type="button" class="btn-sm btn-sm-primary" onclick="reloadShippingAddressEditor()">重新读取</button>';
+  }
+  editor.dialog.innerHTML = '<form onsubmit="saveShippingAddress(event)"><header class="address-dialog-header"><h2 id="shippingAddressDialogTitle">编辑收货地址</h2>' +
+    '<p id="shippingAddressDialogHelp">订单 ' + esc(editor.orderNumber) + ' · 仅支持未发货订单</p></header>' +
+    '<div class="address-dialog-body">' + body + '<div id="shippingAddressFeedback" class="address-feedback" role="alert"></div></div>' +
+    '<footer class="address-dialog-actions">' + buttons + '</footer></form>';
+}
+async function loadShippingAddressEditor(editor) {
+  editor.view = null; editor.loadError = ''; renderShippingAddressEditor(editor);
+  try {
+    var response = await fetch(API + '/tickets/' + encodeURIComponent(editor.ticketNo) + '/shipping-address', { credentials: 'same-origin', cache: 'no-store' });
+    var data = await response.json();
+    if (!addressEditorActive(editor)) return;
+    if (!response.ok || !data.ok) throw new Error(data.error || '读取失败，请稍后重试');
+    editor.view = data;
+    editor.view.address = data.address || {};
+    if (data.activeRequest) {
+      editor.submission = { requestId: String(data.activeRequest.id), request: data.activeRequest,
+        body: { expectedAddress: data.activeRequest.expectedAddress || data.address || {}, patch: data.activeRequest.patch || {} } };
+      shippingAddressSubmissions[editor.ticketNo] = editor.submission;
+      renderShippingAddressEditor(editor);
+      pollShippingAddressRequest(editor);
+      return;
+    }
+    renderShippingAddressEditor(editor);
+    var firstInput = editor.dialog.querySelector('input:not(:disabled)');
+    if (firstInput) firstInput.focus();
+    if (currentTicket && currentTicket.public_ticket_no === editor.ticketNo) {
+      var summary = document.getElementById('shippingAddressSummary');
+      if (summary) summary.innerHTML = shippingAddressSummary(data.address);
+      var status = document.getElementById('shippingAddressStatus');
+      if (status) status.textContent = '已读取店匠最新地址';
+    }
+  } catch (error) {
+    if (!addressEditorActive(editor)) return;
+    editor.loadError = error.message || '网络错误，无法读取最新地址';
+    renderShippingAddressEditor(editor);
+  }
+}
+function reloadShippingAddressEditor() {
+  var editor = shippingAddressEditor;
+  if (!editor || editor.saving) return;
+  if (editor.submission && ['failed', 'conflict'].indexOf((editor.submission.request || {}).status) === -1) return;
+  delete shippingAddressSubmissions[editor.ticketNo];
+  editor.submission = null;
+  loadShippingAddressEditor(editor);
+}
+function newShippingAddressKey() {
+  if (window.crypto.randomUUID) return window.crypto.randomUUID();
+  var bytes = new Uint8Array(16);
+  window.crypto.getRandomValues(bytes);
+  return Array.from(bytes).map(function(value) { return value.toString(16).padStart(2, '0'); }).join('');
+}
+async function saveShippingAddress(event) {
+  if (event) event.preventDefault();
+  var editor = shippingAddressEditor;
+  if (!editor || editor.saving || editor.submission || !editor.view || !editor.view.editable) return;
+  var firstName = document.getElementById('address_first_name').value.trim();
+  var lastName = document.getElementById('address_last_name').value.trim();
+  var country = document.getElementById('address_country').value.trim();
+  var countryCode = document.getElementById('address_country_code').value.trim();
+  if (!firstName && !lastName) { addressEditorMessage('请填写收件人姓名（名或姓至少一项）。', true); return; }
+  if (!document.getElementById('address_city').value.trim() || !document.getElementById('address_address').value.trim() || (!country && !countryCode)) {
+    addressEditorMessage('请填写街道地址、城市和国家信息。', true); return;
+  }
+  if (countryCode && !/^[A-Z]{2}$/.test(countryCode)) { addressEditorMessage('国家代码应为两位大写 ISO 代码，例如 US。', true); return; }
+  var patch = {};
+  shippingAddressFields.forEach(function(field) {
+    var value = document.getElementById('address_' + field[0]).value.trim();
+    if (value !== String(editor.view.address[field[0]] || '').trim()) patch[field[0]] = value;
+  });
+  if (!Object.keys(patch).length) { addressEditorMessage('请先修改需要调整的地址字段。', false); return; }
+  editor.submission = { body: { expectedAddress: editor.view.address, patch: patch, idempotencyKey: newShippingAddressKey() } };
+  shippingAddressSubmissions[editor.ticketNo] = editor.submission;
+  await submitShippingAddressEditor(editor);
+}
+async function retryShippingAddressSubmission() {
+  var editor = shippingAddressEditor;
+  if (!editor || editor.saving || !editor.submission || editor.submission.requestId) return;
+  await submitShippingAddressEditor(editor);
+}
+async function submitShippingAddressEditor(editor) {
+  editor.saving = true; renderShippingAddressEditor(editor);
+  try {
+    var response = await fetch(API + '/tickets/' + encodeURIComponent(editor.ticketNo) + '/shipping-address', {
+      method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editor.submission.body)
+    });
+    var data = await response.json();
+    editor.saving = false;
+    if (!addressEditorActive(editor)) return;
+    if (!response.ok || !data.ok) {
+      if (response.status >= 400 && response.status < 500) {
+        editor.submission.request = { status: 'failed', errorMessage: data.error || '请求未接受，请核对地址后重试' };
+      }
+      renderShippingAddressEditor(editor);
+      addressEditorMessage(data.error || '提交结果尚未确认，请重试同一请求。', true);
+      return;
+    }
+    editor.submission.request = data.request;
+    editor.submission.requestId = String(data.request.id);
+    renderShippingAddressEditor(editor);
+    if (currentTicket && currentTicket.public_ticket_no === editor.ticketNo) {
+      var cardStatus = document.getElementById('shippingAddressStatus');
+      if (cardStatus) cardStatus.textContent = '修改已提交，正在同步到店匠';
+    }
+    pollShippingAddressRequest(editor);
+  } catch (_error) {
+    editor.saving = false;
+    if (!addressEditorActive(editor)) return;
+    renderShippingAddressEditor(editor);
+    addressEditorMessage('网络响应中断，结果尚未确认。请重试同一请求，不会另建修改任务。', true);
+  }
+}
+function refreshShippingAddressRequest() {
+  var editor = shippingAddressEditor;
+  if (!editor || !editor.submission || !editor.submission.requestId) return;
+  editor.pollCount = 0;
+  clearTimeout(editor.pollTimer);
+  pollShippingAddressRequest(editor);
+}
+async function pollShippingAddressRequest(editor) {
+  if (!addressEditorActive(editor) || editor.polling || !editor.submission || !editor.submission.requestId) return;
+  editor.polling = true;
+  var keepPolling = false;
+  try {
+    var response = await fetch(API + '/tickets/' + encodeURIComponent(editor.ticketNo) + '/shipping-address/requests/' + encodeURIComponent(editor.submission.requestId),
+      { credentials: 'same-origin', cache: 'no-store' });
+    var data = await response.json();
+    if (!addressEditorActive(editor)) return;
+    if (!response.ok || !data.ok) throw new Error(data.error || '暂时无法查询结果');
+    editor.submission.request = data.request;
+    renderShippingAddressEditor(editor);
+    keepPolling = ['pending', 'processing', 'uncertain'].indexOf(data.request.status) !== -1;
+    if (currentTicket && currentTicket.public_ticket_no === editor.ticketNo && ['failed', 'conflict', 'uncertain'].indexOf(data.request.status) !== -1) {
+      var failedStatus = document.getElementById('shippingAddressStatus');
+      if (failedStatus) failedStatus.textContent = data.request.errorMessage || '地址修改尚未完成，请打开编辑窗口查看结果';
+    }
+    if (data.request.status === 'succeeded' && currentTicket && currentTicket.public_ticket_no === editor.ticketNo) {
+      var summary = document.getElementById('shippingAddressSummary');
+      if (summary) summary.innerHTML = shippingAddressSummary(data.request.afterAddress || data.request.desiredAddress);
+      var status = document.getElementById('shippingAddressStatus');
+      if (status) status.textContent = '已同步到店匠 · ' + formatTime(data.request.completedAt || data.request.updatedAt);
+      delete shippingAddressSubmissions[editor.ticketNo];
+    }
+  } catch (error) {
+    if (addressEditorActive(editor)) addressEditorMessage(error.message || '结果查询失败，请刷新结果。', true);
+  } finally {
+    editor.polling = false;
+    if (keepPolling && addressEditorActive(editor)) {
+      editor.pollCount++;
+      if (editor.pollCount < 60) editor.pollTimer = setTimeout(function() { pollShippingAddressRequest(editor); }, 3000);
+      else addressEditorMessage('后台仍在处理，可以关闭窗口，稍后重新打开或刷新结果。', false);
+    }
+  }
+}
+
 </script>
 </body>
 </html>

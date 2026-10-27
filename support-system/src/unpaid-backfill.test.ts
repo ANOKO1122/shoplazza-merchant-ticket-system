@@ -157,7 +157,7 @@ function backfillHarness(
   const logs: any[] = [];
   const failWrites = new Set<string>();
   const forbidden = () => { throw new Error('Unpaid sync attempted a paid/API/email operation'); };
-  const jobs = loadModule<typeof import('./backfill-jobs')>('backfill-jobs.ts', {
+  const dependencies: Record<string, any> = {
     './store-service': { getEnabledStores: async () => [{ subdomain: STORE.subdomain, store_name: STORE.storeName, access_token: STORE.accessToken }] },
     './shoplazza-client': {
       listWaitingOrdersUpdatedSince: async (_store: unknown, min: string, max: string) => list(min, max),
@@ -194,7 +194,9 @@ function backfillHarness(
         throw new Error(`Unexpected database operation: ${sql}`);
       },
     },
-  });
+  };
+  dependencies['./shipping-address-guard'] = { withSnapshotShippingAddressGuard: async (order: any, _fetch: unknown, write: any) => write(dependencies['./pg'], order) };
+  const jobs = loadModule<typeof import('./backfill-jobs')>('backfill-jobs.ts', dependencies);
   return { run: () => jobs.runUnpaidBackfillOnly(STORE.subdomain), cursorWrites, snapshotWrites, snapshots, logs, failWrites };
 }
 

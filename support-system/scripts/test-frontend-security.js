@@ -11,12 +11,13 @@ const quoteUrl = "https://cdn.example.test/photo');globalThis.__xss=1;//.png";
 
 function element(tag = 'div') {
   return {
-    tagName: tag, innerHTML: '', textContent: '', style: {}, children: [], attributes: {}, value: '',
+    tagName: tag, innerHTML: '', textContent: '', style: {}, children: [], attributes: {}, value: '', isConnected: true,
     appendChild(child) { this.children.push(child); return child; },
     setAttribute(name, value) { this.attributes[name] = String(value); },
     getAttribute(name) { return this.attributes[name] ?? null; },
-    querySelectorAll() { return []; },
-    addEventListener() {}, remove() { this.removed = true; },
+    querySelectorAll() { return []; }, querySelector() { return null; },
+    focus() {}, showModal() { this.open = true; }, close() { this.open = false; },
+    addEventListener() {}, remove() { this.removed = true; this.isConnected = false; },
     classList: { add() {}, remove() {}, toggle() {} },
   };
 }
@@ -33,7 +34,7 @@ function page(name, options = {}) {
     document, URL, URLSearchParams, FormData,
     location: { origin: 'https://support.example.test', search: options.search || '', pathname: '/ticket', replace() {} },
     fetch: options.fetch || (() => new Promise(() => {})),
-    setTimeout() {}, setInterval() {}, clearInterval() {},
+    setTimeout() {}, clearTimeout() {}, setInterval() {}, clearInterval() {}, crypto: require('node:crypto').webcrypto,
     adminEpoch: () => 0, adminFrame() {}, console, alert() {}, confirm: () => false,
     history: { replaceState() {} },
   });
@@ -145,6 +146,79 @@ async function main() {
   const count = admin.document.body.children.length;
   safe.showImage('javascript:globalThis.__xss=1');
   assert.equal(admin.document.body.children.length, count);
+
+  const addressPage = page('admin.html');
+  const fixtureAddress = { first_name: 'Fixture', last_name: 'Buyer', address: '12 Example Road', address1: 'Unit 2', city: 'Old City', country_code: 'US', email: 'fixture@example.invalid' };
+  assertSafe(addressPage.context.renderShippingAddressCard({ first_name: payload, address: payload, address1: payload, phone: payload }));
+  addressPage.context.currentTicket = { public_ticket_no: 'T-OFFLINE', order_number: 'ORDER-OFFLINE', customer_email: 'fixture@example.invalid' };
+  addressPage.get('#replyBox').value = 'unsent reply must survive address updates';
+  const addressCalls = [];
+  let firstSubmission = true;
+  addressPage.context.fetch = async (url, options = {}) => {
+    addressCalls.push({ url, options });
+    if (options.method === 'PATCH') {
+      if (firstSubmission) { firstSubmission = false; throw new Error('offline timeout after possible receipt'); }
+      return { ok: true, status: 202, json: async () => ({ ok: true, request: { id: '42', status: 'pending' } }) };
+    }
+    if (url.endsWith('/requests/42')) return { ok: true, status: 200, json: async () => ({ ok: true, request: { id: '42', status: 'succeeded', afterAddress: { ...fixtureAddress, city: 'New City' } } }) };
+    return { ok: true, status: 200, json: async () => ({ ok: true, address: fixtureAddress, editable: true, hasWriteScope: true }) };
+  };
+  await addressPage.context.openShippingAddressEditor();
+  let addressEditor = addressPage.context.shippingAddressEditor;
+  assertSafe(addressEditor.dialog.innerHTML);
+  assert.ok(addressEditor.dialog.innerHTML.includes('address_address1'));
+  assert.ok(!addressEditor.dialog.innerHTML.includes('address_address2'));
+  assert.ok(!/name="email"/.test(addressEditor.dialog.innerHTML));
+  addressPage.context.shippingAddressFields.forEach(field => { addressPage.get('#address_' + field[0]).value = String(fixtureAddress[field[0]] || ''); });
+  addressPage.get('#address_city').value = 'New City';
+  await addressPage.context.saveShippingAddress({ preventDefault() {} });
+  assert.ok(addressEditor.dialog.innerHTML.includes('重试同一请求'));
+  const firstBody = JSON.parse(addressCalls.find(call => call.options.method === 'PATCH').options.body);
+  assert.deepEqual(firstBody.patch, { city: 'New City' });
+  assert.deepEqual(firstBody.expectedAddress, fixtureAddress);
+  assert.ok(firstBody.idempotencyKey);
+  addressPage.context.closeShippingAddressEditor();
+  await addressPage.context.openShippingAddressEditor();
+  addressEditor = addressPage.context.shippingAddressEditor;
+  await addressPage.context.retryShippingAddressSubmission();
+  await new Promise(resolve => setImmediate(resolve));
+  const submittedBodies = addressCalls.filter(call => call.options.method === 'PATCH').map(call => JSON.parse(call.options.body));
+  assert.equal(submittedBodies.length, 2);
+  assert.deepEqual(submittedBodies[1], submittedBodies[0], 'network retry and reopen retain the exact request key/body');
+  assert.equal(addressPage.get('#replyBox').value, 'unsent reply must survive address updates');
+  assert.ok(addressPage.get('#shippingAddressSummary').innerHTML.includes('New City'));
+  assert.equal(addressPage.context.shippingAddressSubmissions['T-OFFLINE'], undefined);
+  assert.ok(addressCalls.every(call => call.url.includes('/shipping-address')), 'address changes must not call ticket messages or email APIs');
+  addressEditor.submission = null;
+  addressEditor.view = { address: fixtureAddress, editable: false, hasWriteScope: false, disabledReason: '缺少订单写权限 ' + payload };
+  addressPage.context.renderShippingAddressEditor(addressEditor);
+  assertSafe(addressEditor.dialog.innerHTML);
+  assert.ok(addressEditor.dialog.innerHTML.includes('<fieldset class="address-fields" disabled>'));
+  assert.ok(!addressEditor.dialog.innerHTML.includes('保存并同步到店匠'));
+  addressEditor.submission = { body: firstBody, requestId: '43', request: { id: '43', status: 'uncertain', errorMessage: payload } };
+  addressPage.context.renderShippingAddressEditor(addressEditor);
+  assertSafe(addressEditor.dialog.innerHTML);
+  assert.ok(addressEditor.dialog.innerHTML.includes('刷新结果'));
+  assert.ok(!addressEditor.dialog.innerHTML.includes('重新读取并编辑'));
+  addressEditor.submission.request.status = 'conflict';
+  addressPage.context.renderShippingAddressEditor(addressEditor);
+  assert.ok(addressEditor.dialog.innerHTML.includes('重新读取并编辑'));
+
+  const restoredPage = page('admin.html');
+  restoredPage.context.currentTicket = { public_ticket_no: 'T-RESTORED', order_number: 'ORDER-RESTORED' };
+  const activeRequest = { id: '55', status: 'uncertain', expectedAddress: fixtureAddress, patch: { city: 'Pending City' }, errorMessage: '正在核对上次修改结果' };
+  restoredPage.context.fetch = async url => ({ ok: true, status: 200, json: async () => url.includes('/requests/')
+    ? { ok: true, request: activeRequest }
+    : { ok: true, address: fixtureAddress, editable: false, hasWriteScope: true, activeRequest } });
+  await restoredPage.context.openShippingAddressEditor();
+  await new Promise(resolve => setImmediate(resolve));
+  const restoredEditor = restoredPage.context.shippingAddressEditor;
+  assert.equal(restoredEditor.submission.requestId, '55', 'fresh page recovers the active request from the server');
+  assert.ok(restoredEditor.dialog.innerHTML.includes('店匠处理结果待确认'));
+  assert.ok(!restoredEditor.dialog.innerHTML.includes('保存并同步到店匠'));
+  assert.equal(restoredPage.context.shippingAddressSubmissions['T-RESTORED'].requestId, '55');
+  assert.ok(restoredPage.html.includes('editor.pollCount < 60'));
+  assert.ok(restoredPage.html.includes('}, 3000)'));
 
   const customer = page('ticket.html');
   customer.context.renderNewTicket(data.order);

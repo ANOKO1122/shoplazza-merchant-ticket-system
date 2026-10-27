@@ -14,6 +14,7 @@ import { registerWebhook, updateWebhookAddress, deleteWebhook, listWebhooks, STO
 import { buildWebhookCallbackUrl, redactWebhookAddress } from './webhook-security';
 import { mapPaymentMethodDisplay } from './normalize-order';
 import { uploadAttachments, processAttachments, getStorageProvider } from './storage-service';
+import { getOrderShippingAddress, submitShippingAddressRequest, getShippingAddressRequest, processShippingAddressRequest, ShippingAddressError } from './order-address-service';
 
 function webhookTopicsFromList(webhooks: ShoplazzaWebhook[], expectedAddress: string) {
   return STORE_WEBHOOK_TOPICS.map((topic) => {
@@ -577,6 +578,7 @@ export function createAdminRouter(): express.Router {
         ...buildTrackingDetails(snapshot),
         customer_name: snapshot.customer_name || '',
         items: snapshot.items_json || [],
+        shipping_address: snapshot.shipping_address_json || {},
       } : null;
 
       res.json({
@@ -609,6 +611,68 @@ export function createAdminRouter(): express.Router {
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e.message });
     }
+  });
+
+  function addressError(res: express.Response, error: unknown) {
+    if (error instanceof ShippingAddressError) {
+      res.status(error.statusCode).json({ ok: false, code: error.code, error: error.message });
+    } else {
+      console.error('[shipping-address] admin request failed');
+      res.status(500).json({ ok: false, code: 'INTERNAL_ERROR', error: '暂时无法处理收货地址，请稍后重试' });
+    }
+  }
+
+  // Resolve the upstream order exclusively from the authenticated ticket.
+  router.get('/tickets/:publicTicketNo/shipping-address', async (req, res) => {
+    try {
+      const ticket = await getTicketByPublicNo(req.params.publicTicketNo);
+      if (!ticket) {
+        res.status(404).json({ ok: false, error: '工单不存在' });
+        return;
+      }
+      const result = await getOrderShippingAddress({ storeSubdomain: ticket.store_subdomain, orderId: ticket.order_id });
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({ ok: true, ...result });
+    } catch (error) { addressError(res, error); }
+  });
+
+  router.patch('/tickets/:publicTicketNo/shipping-address', async (req, res) => {
+    try {
+      const ticket = await getTicketByPublicNo(req.params.publicTicketNo);
+      if (!ticket) {
+        res.status(404).json({ ok: false, error: '工单不存在' });
+        return;
+      }
+      const agent = (req as any).agent;
+      const { patch, expectedAddress, idempotencyKey } = req.body || {};
+      const request = await submitShippingAddressRequest({
+        storeSubdomain: ticket.store_subdomain, orderId: ticket.order_id,
+        patch, expectedAddress, idempotencyKey,
+        source: 'admin',
+        actor: JSON.stringify({ agentId: agent.agentId, name: agent.name, publicTicketNo: ticket.public_ticket_no }),
+      });
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(202).json({ ok: true, request });
+      // Durable request is already saved; remote processing outlives this HTTP response.
+      processShippingAddressRequest(request.id).catch(() => console.error('[shipping-address] worker wake failed; scheduled retry remains enabled'));
+    } catch (error) { addressError(res, error); }
+  });
+
+  router.get('/tickets/:publicTicketNo/shipping-address/requests/:requestId', async (req, res) => {
+    try {
+      const ticket = await getTicketByPublicNo(req.params.publicTicketNo);
+      if (!ticket) {
+        res.status(404).json({ ok: false, error: '工单不存在' });
+        return;
+      }
+      const request = await getShippingAddressRequest(req.params.requestId);
+      if (!request || request.storeSubdomain !== ticket.store_subdomain || request.orderId !== ticket.order_id) {
+        res.status(404).json({ ok: false, error: '地址修改记录不存在' });
+        return;
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({ ok: true, request });
+    } catch (error) { addressError(res, error); }
   });
 
   // GET /api/admin/tickets/:publicTicketNo/customer-preview

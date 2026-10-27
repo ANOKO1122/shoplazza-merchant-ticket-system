@@ -16,6 +16,7 @@ import { processDueEmailJobs, cleanupEmailJobs } from './email-service';
 import { getAutoBackfillEnabled, runBackfillForAllStores } from './backfill-jobs';
 import { processPendingFulfillmentWebhooks } from './fulfillment-webhook';
 import { processPendingPaidWebhooks } from './paid-webhook';
+import { processPendingShippingAddressRequests } from './order-address-service';
 import { createApiLimiter, createWebhookIngressRouter, isShoplazzaWebhookRequest } from './api-rate-limits';
 import { logWebhookRejection } from './webhook-security';
 import { runFulfillmentReconciliation } from './fulfillment-reconcile';
@@ -299,6 +300,7 @@ async function startup() {
   let backfillTimer: ReturnType<typeof setInterval> | null = null;
   let fulfillmentTimer: ReturnType<typeof setInterval> | null = null;
   let paidWebhookTimer: ReturnType<typeof setInterval> | null = null;
+  let shippingAddressTimer: ReturnType<typeof setInterval> | null = null;
   let fulfillmentReconcileTimer: ReturnType<typeof setInterval> | null = null;
 
   // 优雅退出：关闭定时器、释放数据库连接池
@@ -308,6 +310,7 @@ async function startup() {
     if (backfillTimer) clearInterval(backfillTimer);
     if (fulfillmentTimer) clearInterval(fulfillmentTimer);
     if (paidWebhookTimer) clearInterval(paidWebhookTimer);
+    if (shippingAddressTimer) clearInterval(shippingAddressTimer);
     if (fulfillmentReconcileTimer) clearInterval(fulfillmentReconcileTimer);
     try {
       await closeDatabasePools();
@@ -328,6 +331,12 @@ async function startup() {
   }
 
   if (!backgroundJobsDisabled) {
+    const processShippingAddresses = () => {
+      processPendingShippingAddressRequests().catch(() => console.error('[shipping-address-worker] failed; will recheck'));
+    };
+    processShippingAddresses();
+    shippingAddressTimer = setInterval(processShippingAddresses, 3000);
+    shippingAddressTimer.unref();
     const processFulfillments = () => {
       processPendingFulfillmentWebhooks().catch(() => console.error('[fulfillment-worker] failed; will retry'));
     };
