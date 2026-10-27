@@ -8,9 +8,8 @@ const { Pool } = require('pg');
 async function main() {
   const credentialFile = process.env.ADDRESS_WRITER_CREDENTIAL_FILE;
   const publicHost = process.env.ADDRESS_WRITER_PUBLIC_HOST;
-  const caFile = process.env.ADDRESS_WRITER_CA_FILE;
-  if (!credentialFile || !path.isAbsolute(credentialFile) || !publicHost || !caFile) {
-    throw new Error('Set ADDRESS_WRITER_CREDENTIAL_FILE (absolute path), ADDRESS_WRITER_PUBLIC_HOST and ADDRESS_WRITER_CA_FILE');
+  if (!credentialFile || !path.isAbsolute(credentialFile) || !publicHost) {
+    throw new Error('Set ADDRESS_WRITER_CREDENTIAL_FILE (absolute path) and ADDRESS_WRITER_PUBLIC_HOST');
   }
   const ownerUrl = new URL(process.env.SUPPORT_DATABASE_URL);
   if (process.env.ADDRESS_WRITER_DATABASE_HOST) ownerUrl.hostname = process.env.ADDRESS_WRITER_DATABASE_HOST;
@@ -41,11 +40,15 @@ async function main() {
     const publicUrl = new URL(`postgresql://${publicHost}:${ownerUrl.port || '5432'}/${encodeURIComponent(database)}`);
     publicUrl.username = role;
     publicUrl.password = password;
-    publicUrl.searchParams.set('sslmode', 'verify-full');
-    publicUrl.searchParams.set('sslrootcert', caFile);
+    publicUrl.searchParams.set('sslmode', 'require');
     publicUrl.searchParams.set('application_name', 'maildesk-order-address-writer');
+    // node-postgres distinguishes no-verify from require in newer releases.
+    // Keep the standard libpq URI separate from the pg-specific TLS URI.
+    const nodeUrl = new URL(publicUrl);
+    nodeUrl.searchParams.set('sslmode', 'no-verify');
     credentials = { host: publicHost, port: Number(ownerUrl.port || 5432), database,
-      user: role, password, sslmode: 'verify-full', caFile, connectionString: publicUrl.toString() };
+      user: role, password, sslmode: 'require', connectionString: publicUrl.toString(),
+      nodeConnectionString: nodeUrl.toString() };
     const grantDb = await client.query("SELECT format('GRANT CONNECT ON DATABASE %I TO order_address_writer', current_database()) AS ddl");
     await client.query(grantDb.rows[0].ddl);
     await client.query(`
