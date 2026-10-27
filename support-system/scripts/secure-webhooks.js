@@ -3,7 +3,7 @@ require('dotenv').config({ quiet: true });
 const { getEnabledStores } = require('../dist/store-service');
 const { getPool } = require('../dist/pg');
 const { getEffectivePublicBaseUrl } = require('../dist/email-service');
-const { listWebhooks, registerWebhook, updateWebhookAddress, STORE_WEBHOOK_TOPICS } = require('../dist/shoplazza-client');
+const { listWebhooks, registerWebhook, updateWebhookAddress, deleteWebhook, STORE_WEBHOOK_TOPICS, RETIRED_WEBHOOK_TOPICS } = require('../dist/shoplazza-client');
 const { buildWebhookCallbackUrl, redactWebhookAddress } = require('../dist/webhook-security');
 
 async function main() {
@@ -15,8 +15,16 @@ async function main() {
     const store = { subdomain: row.subdomain, storeName: row.store_name, accessToken: row.access_token };
     const expected = buildWebhookCallbackUrl(base, row.subdomain);
     const ownAddress = redactWebhookAddress(expected);
+    const isOwnedRetired = webhook => RETIRED_WEBHOOK_TOPICS.includes(webhook.topic)
+      && redactWebhookAddress(webhook.address) === ownAddress;
     const listed = await listWebhooks(store);
     if (!listed.ok) throw new Error(`${row.subdomain}: could not list subscriptions`);
+    for (const webhook of listed.webhooks.filter(isOwnedRetired)) {
+      if (mode !== '--apply') throw new Error(`${row.subdomain}: retired owned subscription ${webhook.topic}`);
+      if (!webhook.id) throw new Error(`${row.subdomain}: retired subscription has no ID: ${webhook.topic}`);
+      const result = await deleteWebhook(store, webhook.id);
+      if (!result.ok) throw new Error(`${row.subdomain}: could not delete retired subscription ${webhook.topic}`);
+    }
     for (const topic of STORE_WEBHOOK_TOPICS) {
       const subscriptions = listed.webhooks.filter(w => w.topic === topic && redactWebhookAddress(w.address) === ownAddress);
       if (!subscriptions.length) {
@@ -33,7 +41,8 @@ async function main() {
       }
     }
     const after = await listWebhooks(store);
-    if (!after.ok || STORE_WEBHOOK_TOPICS.some(topic => !after.webhooks.some(w => w.topic === topic && w.address === expected))) {
+    if (!after.ok || after.webhooks.some(isOwnedRetired)
+      || STORE_WEBHOOK_TOPICS.some(topic => !after.webhooks.some(w => w.topic === topic && w.address === expected))) {
       throw new Error(`${row.subdomain}: subscription verification failed`);
     }
     verified += STORE_WEBHOOK_TOPICS.length;

@@ -364,7 +364,7 @@ async function main() {
   for (const action of ['order_unpaid', 'unpaid_summary', 'fulfillment_update', 'fulfillment_reconcile_summary', 'order_status_update']) assert.ok(filters.includes('data-value="' + action + '"'));
 
   const orderStatusLog = { id: 14, action: 'order_status_update', source: 'webhook', status: 'success', detail_json: {
-    topic: 'orders/updated', reason: 'applied', matchedRows: 2, changedRows: 2,
+    topic: 'orders/partially_refunded', reason: 'applied', matchedRows: 2, changedRows: 2,
     before: { orderStatus: 'placed', paymentStatus: 'paid', fulfillmentStatus: 'waiting', refundStatus: null, refundAmount: null },
     after: { orderStatus: 'cancelled', paymentStatus: 'partially_refunded', fulfillmentStatus: 'partially_shipped', refundStatus: 'finished', refundAmount: '12.50' },
   } };

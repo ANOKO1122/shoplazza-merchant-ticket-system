@@ -103,7 +103,7 @@ async function fetchWebhookStatus(id){
 
 // 生成单行 HTML（不含 <tr>），供 loadStores / saveStore 复用
 function webhookTopicName(topic){
-  var names={'orders/paid':'支付','orders/create':'下单','orders/fulfilled':'已发货','orders/partially_fulfilled':'部分发货','fulfillments/create':'新增物流','fulfillments/update':'更新物流','orders/update':'订单更新','orders/partially_refunded':'部分退款','orders/refunded':'全额退款','orders/cancelled':'订单取消','orders/finished':'订单完成'};
+  var names={'orders/paid':'支付','orders/create':'下单','orders/fulfilled':'已发货','orders/partially_fulfilled':'部分发货','fulfillments/create':'新增物流','fulfillments/update':'更新物流','orders/partially_refunded':'部分退款','orders/refunded':'全额退款','orders/cancelled':'订单取消','orders/finished':'订单完成'};
   return names[topic]||topic;
 }
 

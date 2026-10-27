@@ -89,6 +89,13 @@ export function createShoplazzaWebhookRouter(): express.Router {
     const payload = req.body;
     const topic = String(req.headers['x-shoplazza-topic'] || payload?.topic || '').trim();
 
+    // The generic update topic belongs to analytics. Acknowledge late deliveries
+    // without persisting them or dispatching any order work.
+    if (topic === 'orders/update') {
+      res.status(200).json({ ok: true, ignored: true });
+      return;
+    }
+
     if (FULFILLMENT_WEBHOOK_TOPICS.includes(topic)) {
       try {
         parseFulfillmentWebhook(topic, payload);

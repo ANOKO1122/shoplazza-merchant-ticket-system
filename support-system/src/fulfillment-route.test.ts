@@ -291,7 +291,7 @@ test('HTTP durable routes bound store lookup time and share one in-flight lookup
     const responses = await Promise.all([
       subject.post('orders/paid', { order: { id: 'order-a' } }),
       subject.post('fulfillments/update', { fulfillment: PARCEL }),
-      subject.post('orders/update', { order: { id: 'order-a' } }),
+      subject.post('orders/refunded', { order: { id: 'order-a' } }),
     ]);
     assert.deepEqual(responses.map(response => response.status), [503, 503, 503]);
     assert.equal(subject.calls.storeLookups, 1);
@@ -302,7 +302,7 @@ test('HTTP durable routes bound store lookup time and share one in-flight lookup
 test('HTTP status receipt is durable before ACK and every status topic avoids paid/email processing', { timeout: 5000 }, async t => {
   const started = gate(); const commit = gate();
   const subject = await harness(t, async () => { started.resolve(); await commit.promise; });
-  const pending = subject.post('orders/update', { order: { id: 'order-a', financial_status: 'partially_refunded' } });
+  const pending = subject.post('orders/partially_refunded', { order: { id: 'order-a', financial_status: 'partially_refunded' } });
   await started.promise;
   try {
     await new Promise<void>(resolve => setImmediate(resolve));
@@ -310,11 +310,11 @@ test('HTTP status receipt is durable before ACK and every status topic avoids pa
     assert.equal(subject.calls.statusWorker, 0);
   } finally { commit.resolve(); }
   assert.equal((await pending).status, 200);
-  for (const topic of ['orders/partially_refunded', 'orders/refunded', 'orders/cancelled', 'orders/finished']) {
+  for (const topic of ['orders/refunded', 'orders/cancelled', 'orders/finished']) {
     assert.equal((await subject.post(topic, { order: { id: 'order-a' } })).status, 200);
   }
-  assert.equal(subject.calls.statusEvents.length, 5);
-  assert.equal(subject.calls.statusWorker, 5);
+  assert.equal(subject.calls.statusEvents.length, 4);
+  assert.equal(subject.calls.statusWorker, 4);
   assert.ok(subject.finished.every(Boolean));
   assert.equal(subject.calls.paidEvents.length + subject.calls.queued.length + subject.calls.snapshots.length + subject.calls.invites.length, 0);
 });
@@ -327,10 +327,24 @@ test('HTTP status failures stay retryable and invalid/auth-failed/disabled event
   assert.equal(failing.calls.statusWorker, 0);
   const subject = await harness(t);
   for (const payload of [{}, { order: [] }, { order: { number: 'number-without-id' } }, { order: { id: 0 } }]) {
-    assert.equal((await subject.post('orders/update', payload)).status, 400);
+    assert.equal((await subject.post('orders/refunded', payload)).status, 400);
   }
-  assert.equal((await subject.post('orders/update', { order: { id: 'a' } }, { key: 'wrong' })).status, 401);
-  assert.equal((await subject.post('orders/update', { order: { id: 'a' } }, { domain: 'other.myshoplaza.com' })).status, 403);
-  assert.equal((await subject.post('orders/update', { order: { id: 'a' } }, { subdomain: 'disabled' })).status, 404);
+  assert.equal((await subject.post('orders/refunded', { order: { id: 'a' } }, { key: 'wrong' })).status, 401);
+  assert.equal((await subject.post('orders/refunded', { order: { id: 'a' } }, { domain: 'other.myshoplaza.com' })).status, 403);
+  assert.equal((await subject.post('orders/refunded', { order: { id: 'a' } }, { subdomain: 'disabled' })).status, 404);
   assert.equal(subject.calls.statusEvents.length + subject.calls.statusWorker + subject.calls.invites.length, 0);
+});
+
+test('HTTP retired order updates are authenticated then ignored without persistence or dispatch', { timeout: 5000 }, async t => {
+  const subject = await harness(t);
+  for (const payload of [{ order: { id: 'order-a', financial_status: 'refunded' } }, {}]) {
+    const response = await subject.post('orders/update', payload);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.ignored, true);
+  }
+  assert.equal((await subject.post('orders/update', {}, { key: 'wrong' })).status, 401);
+  assert.equal((await subject.post('orders/update', {}, { domain: 'other.myshoplaza.com' })).status, 403);
+  assert.equal(subject.calls.storeLookups, 0);
+  assert.equal(subject.calls.statusEvents.length + subject.calls.paidEvents.length + subject.calls.queued.length
+    + subject.calls.statusWorker + subject.calls.worker + subject.calls.snapshots.length + subject.calls.invites.length, 0);
 });

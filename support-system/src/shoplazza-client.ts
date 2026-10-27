@@ -435,7 +435,6 @@ export const STORE_WEBHOOK_TOPICS = [
   'orders/partially_fulfilled',
   'fulfillments/create',
   'fulfillments/update',
-  'orders/update',
   'orders/partially_refunded',
   'orders/refunded',
   'orders/cancelled',
@@ -443,7 +442,7 @@ export const STORE_WEBHOOK_TOPICS = [
 ] as const;
 
 /** 以前注册过、现在要删掉的事件。 */
-export const RETIRED_WEBHOOK_TOPICS = ['orders/create'] as const;
+export const RETIRED_WEBHOOK_TOPICS = ['orders/create', 'orders/update'] as const;
 
 export async function registerWebhook(
   store: ShoplazzaStoreConfig,

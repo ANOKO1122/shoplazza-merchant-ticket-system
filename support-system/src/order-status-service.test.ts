@@ -80,7 +80,7 @@ function database(t: TestContext, rows: any[], state?: any, failure?: 'log' | 'r
   t.mock.method(Pool.prototype, 'query', () => { throw new Error('Unscoped query forbidden'); });
   return { client, calls, get released() { return released; } };
 }
-const apply = (value: any) => applyOrderStatusUpdate({ storeSubdomain: 'fixture', storeName: 'Fixture', order: value, topic: 'orders/update' });
+const apply = (value: any) => applyOrderStatusUpdate({ storeSubdomain: 'fixture', storeName: 'Fixture', order: value, topic: 'orders/partially_refunded' });
 
 test('unknown orders and invalid/missing provider versions never insert/update an order or status state', async t => {
   for (const missing of [true, false]) {

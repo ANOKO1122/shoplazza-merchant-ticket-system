@@ -82,7 +82,7 @@ test('order status updates and legacy writers remain safe in real PostgreSQL', {
     './normalize-order': { normalizeRefundAmount, refundStatusFromFinancialStatus },
     'node:util': { isDeepStrictEqual },
   });
-  const apply = (incoming: ShoplazzaOrderDetail, topic = 'orders/update') => status.applyOrderStatusUpdate({
+  const apply = (incoming: ShoplazzaOrderDetail, topic = 'orders/partially_refunded') => status.applyOrderStatusUpdate({
     storeSubdomain: store.subdomain, storeName: store.storeName, order: incoming, topic,
   });
   const rows = async (id: string) => (await pool.query(
@@ -295,7 +295,7 @@ test('order status updates and legacy writers remain safe in real PostgreSQL', {
       const first = { order: refunded(id) };
       const second = { order: refunded(id, true, secondTime) };
       const enqueue = (payload: unknown) => queue.enqueueOrderStatusWebhook({
-        storeSubdomain: store.subdomain, topic: 'orders/update', payload,
+        storeSubdomain: store.subdomain, topic: 'orders/partially_refunded', payload,
         headers: { 'x-shoplazza-deduplication-id': 'same-fixture-delivery', 'authorization': 'must-not-be-persisted' },
       });
       await enqueue(first); await enqueue(second); await enqueue(first);
@@ -309,6 +309,32 @@ test('order status updates and legacy writers remain safe in real PostgreSQL', {
       assert.equal((await queue.processPendingOrderStatusWebhooks({ limit: 1 })).processed, 1);
       assert.ok((await rows(id)).every(row => row.payment_status === 'refunded'));
       assert.equal(reads, 2);
+      assert.deepEqual(await notifications(), { jobs: 0, tokens: 0 });
+    });
+
+    await t.test('retired generic updates leave orders unchanged and terminate all retryable queue states', async () => {
+      const id = 'STATUS-RETIRED';
+      await seed(id);
+      const before = plain(await rows(id));
+      const queue = loadModule('order-status-webhook.ts', {
+        crypto, './pg': pg, './order-status-service': { applyOrderStatusUpdate: forbidden },
+        './log-service': { logSync: forbidden }, './store-service': { getStoreBySubdomain: forbidden },
+        './shoplazza-client': { getOrderForStatusUpdate: forbidden },
+      });
+      for (const initialStatus of ['received', 'failed', 'processing']) {
+        await pool.query(`INSERT INTO shoplazza_webhook_events
+          (event_key,store_subdomain,topic,order_id,payload_json,status,processing_started_at)
+          VALUES ($1,$2,'orders/update',$3,'{}'::jsonb,$4,now()-interval '11 minutes')`,
+        [`order-status:retired:${initialStatus}`, store.subdomain, id, initialStatus]);
+      }
+      assert.deepEqual(plain(await queue.processPendingOrderStatusWebhooks()), { processed: 3, failed: 0 });
+      const retired = (await pool.query(`SELECT status,next_attempt_at,processing_started_at,processed_at
+        FROM shoplazza_webhook_events WHERE store_subdomain=$1 AND order_id=$2`, [store.subdomain, id])).rows;
+      assert.equal(retired.length, 3);
+      assert.ok(retired.every(event => event.status === 'ignored' && event.processed_at
+        && event.next_attempt_at === null && event.processing_started_at === null));
+      assert.deepEqual(plain(await queue.processPendingOrderStatusWebhooks()), { processed: 0, failed: 0 });
+      assert.deepEqual(plain(await rows(id)), before);
       assert.deepEqual(await notifications(), { jobs: 0, tokens: 0 });
     });
 

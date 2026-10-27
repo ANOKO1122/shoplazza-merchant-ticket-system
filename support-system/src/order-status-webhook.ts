@@ -6,7 +6,7 @@ import { applyOrderStatusUpdate } from './order-status-service';
 import { logSync } from './log-service';
 
 export const ORDER_STATUS_WEBHOOK_TOPICS: readonly string[] = [
-  'orders/update', 'orders/partially_refunded', 'orders/refunded', 'orders/cancelled', 'orders/finished',
+  'orders/partially_refunded', 'orders/refunded', 'orders/cancelled', 'orders/finished',
 ];
 
 function identifier(value: unknown): string {
@@ -86,6 +86,18 @@ export function processPendingOrderStatusWebhooks(options: { limit?: number } = 
       if (!event) break;
       const startedAt = Date.now();
       try {
+        // Keep already-received history, but retire queued generic updates before
+        // any store lookup, provider request or order mutation (including retries).
+        if (event.topic === 'orders/update') {
+          const ignored = await query(
+            `UPDATE shoplazza_webhook_events SET status = 'ignored', processed_at = now(),
+               processing_started_at = NULL, next_attempt_at = NULL, error_message = NULL, updated_at = now()
+             WHERE id = $1 AND status = 'processing' AND attempts = $2`,
+            [event.id, event.attempts],
+          );
+          if ((ignored.rowCount ?? 0) > 0) processed++;
+          continue;
+        }
         const store = await getStoreBySubdomain(event.store_subdomain);
         if (!store?.enabled) throw new Error('Store is not enabled');
         const parsed = parseOrderStatusWebhook(event.topic, event.payload_json);
