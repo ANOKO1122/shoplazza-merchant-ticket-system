@@ -107,7 +107,7 @@ function fakeDatabase(t: TestContext, options: {
       return {
         rows: [{
           subject_template: 'Support for {{order_number}}',
-          body_template: '<p>{{order_number}}</p><a href="{{client_link}}">Support</a><a href="{{complaint_link}}">Complaint</a>',
+          body_template: '<p>Dear {{customer_name}},</p><p>{{order_number}}</p><a href="{{client_link}}">Support</a><a href="{{complaint_link}}">Complaint</a>',
         }],
         rowCount: 1,
       };
@@ -234,6 +234,21 @@ test('reply job retries preserve a previously sent valid customer link', async t
   assert.ok(String(db.inserts[1][12]).includes(link));
   assert.deepEqual(db.inserts[0].slice(1), db.inserts[1].slice(1));
 });
+
+for (const [name, greeting] of [
+  ['  Jane & <Smith>  ', 'Dear Jane &amp; &lt;Smith&gt;,'],
+  ['   ', 'Dear Customer,'],
+  [undefined, 'Dear Customer,'],
+] as const) {
+  test(`reply notice renders an escaped name or a generic greeting (${name === undefined ? 'missing' : name})`, async t => {
+    const db = fakeDatabase(t, {
+      insert: () => ({ rows: [{ id: 100 }], rowCount: 1 }),
+    });
+    await createAgentReplyNoticeEmailJob({ ...fixture, customerName: name });
+    assert.ok(String(db.inserts[0][12]).includes(`<p>${greeting}</p>`));
+    assert.doesNotMatch(String(db.inserts[0][12]), /Dear\s*,|<Smith>/);
+  });
+}
 
 test('recovered order suppresses paid invites before token/template creation across recipient changes', async t => {
   const db = fakeDatabase(t, {

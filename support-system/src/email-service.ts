@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { loadConfig, buildStoreDomain } from './config';
 import { query } from './pg';
 import { sendSupportEmail } from './mailer';
+import { emailHtmlToText } from './email-text';
 import { createBootstrapToken, createTicketAccessToken, hashToken } from './token';
 import { logOperation } from './log-service';
 
@@ -265,7 +266,7 @@ export async function createPaidSupportInviteEmailJob(params: PaidSupportInviteS
     store_domain: params.storeDomain || buildStoreDomain(params.storeSubdomain),
     order_id: params.orderId,
     order_number: params.orderNumber || params.orderId,
-    customer_name: params.customerName || '',
+    customer_name: params.customerName?.trim() || 'Customer',
     customer_email: params.customerEmail.trim().toLowerCase(),
     public_ticket_no: '',
     client_link: clientLink,
@@ -370,7 +371,7 @@ export async function createAgentReplyNoticeEmailJob(params: AgentReplyNoticeSna
     store_domain: params.storeDomain || buildStoreDomain(params.storeSubdomain),
     order_id: params.orderId,
     order_number: params.orderNumber || params.orderId,
-    customer_name: '',
+    customer_name: params.customerName?.trim() || 'Customer',
     customer_email: params.customerEmail.trim().toLowerCase(),
     public_ticket_no: params.publicTicketNo,
     client_link: clientLink,
@@ -537,7 +538,7 @@ export async function createCustomerComplaintInviteJob(
     store_link: storeLink,
     order_id: params.orderId,
     order_number: params.orderNumber || params.orderId,
-    customer_name: params.customerName || '',
+    customer_name: params.customerName?.trim() || 'Customer',
     customer_email: params.customerEmail.trim().toLowerCase(),
     public_ticket_no: '',     // 新工单尚无 ticket_no
     client_link: clientLink,
@@ -789,13 +790,11 @@ async function sendEmailJob(id: number): Promise<boolean> {
   try {
     const config = loadConfig();
     let html = '';
-    let text = '';
 
     // 如果已有快照 → 直接复用发送（不重新生成 token）
     if (subject && snapshotBody) {
       // body_snapshot 已是完整 HTML，直接作为邮件正文
       html = snapshotBody;
-      text = snapshotBody.replace(/<[^>]+>/g, '');
     } else {
       // 无快照 → 生成新 token 并渲染（使用数据库模板）
       if (job.email_type === 'agent_reply_notice') {
@@ -818,13 +817,19 @@ async function sendEmailJob(id: number): Promise<boolean> {
       const clientLink = `${publicBaseUrl}/ticket?t=${token}`;
       const complaintLink = `${publicBaseUrl}/ticket?t=${token}&mode=complaint`;
       const storeLinkFallback = job.store_domain ? (job.store_domain.startsWith('http') ? job.store_domain : `https://${job.store_domain}`) : '';
+      const customerSnapshot = await query(
+        `SELECT customer_name FROM support_order_snapshots
+         WHERE store_subdomain = $1 AND order_id = $2 AND customer_email = $3
+         ORDER BY updated_at DESC LIMIT 1`,
+        [job.store_subdomain, job.order_id, job.customer_email],
+      );
       const rendered = await renderEmailFromTemplate(job.email_type, {
         store_name: job.store_name || '',
         store_domain: job.store_domain || '',
         store_link: storeLinkFallback,
         order_id: job.order_id || '',
         order_number: job.order_number || job.order_id || '',
-        customer_name: '',
+        customer_name: customerSnapshot.rows[0]?.customer_name?.trim() || 'Customer',
         customer_email: job.customer_email,
         public_ticket_no: job.public_ticket_no || '',
         client_link: clientLink,
@@ -840,7 +845,6 @@ async function sendEmailJob(id: number): Promise<boolean> {
       });
       subject = rendered.subject;
       html = rendered.html;
-      text = html.replace(/<[^>]+>/g, '');
       maskedLink = maskClientLink(clientLink);
       snapshotBody = rendered.html;
 
@@ -883,7 +887,7 @@ async function sendEmailJob(id: number): Promise<boolean> {
       to: job.customer_email,
       subject,
       html,
-      text,
+      text: emailHtmlToText(html),
     });
 
     await query(

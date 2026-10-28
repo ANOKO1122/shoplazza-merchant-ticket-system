@@ -15,7 +15,7 @@
 
 ## 技术栈
 
-- **后端**：Node.js 18+ / TypeScript / Express
+- **后端**：Node.js 20.19+ / TypeScript / Express（Docker 使用 Node.js 24）
 - **数据库**：PostgreSQL 16
 - **邮件**：Nodemailer（支持 Mailpit 测试）
 - **部署**：Docker / Docker Compose
@@ -75,6 +75,11 @@ npm start
 3. 在 Shoplazza 注册 Webhook 或开启 API 兜底
 4. **订单邮件管理** → 开启自动发送
 5. 测试完整流程：下单 → 收邮件 → 创建工单 → 客服回复
+
+## 邮件格式与称呼
+
+- 邮件同时包含 HTML 和纯文本版本。纯文本从本次发送的 HTML 生成，保留段落、换行和按钮的完整链接，并解码 HTML 实体；HTML 模板样式保持不变。
+- 客服回复通知优先使用对应订单的顾客姓名，缺失时使用工单姓名；姓名为空时显示 `Dear Customer,`。已有邮件正文快照保持不变，不因此重发历史邮件。
 
 ## 物流同步
 

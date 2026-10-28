@@ -5,6 +5,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import crypto from 'node:crypto';
 import ts from 'typescript';
+import * as emailText from './email-text';
 
 const plain = (value: any) => JSON.parse(JSON.stringify(value));
 function load<T>(filename: string, dependencies: Record<string, unknown>): T {
@@ -22,12 +23,17 @@ function load<T>(filename: string, dependencies: Record<string, unknown>): T {
   return module.exports as T;
 }
 
-function harness(options: { type?: string; status?: string; suppressed?: boolean; suppressDuringPreparation?: boolean; lookupFails?: boolean } = {}) {
+function harness(options: {
+  type?: string; status?: string; suppressed?: boolean; suppressDuringPreparation?: boolean; lookupFails?: boolean;
+  snapshotHtml?: string; withoutSnapshot?: boolean; customerName?: string;
+} = {}) {
   let suppressed = options.suppressed ?? true;
   const job: any = { id: 1, email_job_no: 'OFFLINE', event_key: 'offline-key', store_subdomain: 'offline', order_id: 'ORDER',
     customer_email: 'fixture@example.invalid', email_type: options.type || 'paid_support_invite', status: options.status || 'pending',
-    subject_snapshot: 'Fixture', body_snapshot: '<p>Fixture body</p>', ordered_at: '2020-01-01T00:00:00Z', token_id: 1 };
-  const calls = { sent: 0, suppressionReads: 0, tokens: 0, sentEvents: 0, snapshots: 0, logs: [] as any[] };
+    subject_snapshot: options.withoutSnapshot ? '' : 'Fixture',
+    body_snapshot: options.withoutSnapshot ? '' : options.snapshotHtml || '<p>Fixture body</p>',
+    ordered_at: '2020-01-01T00:00:00Z', token_id: 1 };
+  const calls = { sent: 0, suppressionReads: 0, tokens: 0, sentEvents: 0, snapshots: 0, logs: [] as any[], mails: [] as any[], nameLookups: 0 };
   const pg = { query: async (text: string, values: any[] = []): Promise<any> => {
     const sql = text.replace(/\s+/g, ' ').trim();
     if (sql.startsWith('SELECT reason FROM support_order_notification_suppressions')) {
@@ -42,6 +48,19 @@ function harness(options: { type?: string; status?: string; suppressed?: boolean
     if (sql.startsWith('SELECT status FROM support_email_jobs')) return { rows: [{ status: job.status }], rowCount: 1 };
     if (sql.startsWith('SELECT count(*)::int AS cnt')) return { rows: [{ cnt: job.status === 'pending' ? 1 : 0 }], rowCount: 1 };
     if (sql.startsWith('SELECT customer_name,')) return { rows: [], rowCount: 0 };
+    if (sql.startsWith('SELECT customer_name FROM support_order_snapshots')) {
+      assert.match(sql, /store_subdomain = \$1 AND order_id = \$2 AND customer_email = \$3/);
+      assert.deepEqual(plain(values), [job.store_subdomain, job.order_id, job.customer_email]);
+      calls.nameLookups++;
+      return { rows: options.customerName === undefined ? [] : [{ customer_name: options.customerName }] };
+    }
+    if (sql.startsWith('SELECT value FROM support_system_settings')) return { rows: [{ value: 'https://support.example.invalid' }] };
+    if (sql.startsWith('SELECT id FROM support_access_tokens')) return { rows: [{ id: 2 }] };
+    if (sql.includes('FROM support_email_templates WHERE email_type = $1')) return { rows: [{
+      subject_template: 'Reply notice',
+      body_template: '<p>Dear {{customer_name}},</p><p>Reply &amp; history</p><a href="{{client_link}}">View Reply</a>',
+    }] };
+    if (sql.startsWith('UPDATE support_email_jobs SET raw_client_link')) return { rows: [], rowCount: 1 };
     if (sql.startsWith('UPDATE support_email_jobs SET status')) {
       const status = /SET status = '([^']+)'/.exec(sql)![1];
       if (status === 'sending' && job.status !== 'pending') return { rows: [], rowCount: 0 };
@@ -61,10 +80,15 @@ function harness(options: { type?: string; status?: string; suppressed?: boolean
     throw new Error(`Unexpected fixture SQL: ${sql}`);
   } };
   const subject = load<typeof import('./email-service')>('email-service.ts', {
+    './email-text': emailText,
     crypto, './pg': pg, './config': { loadConfig: () => ({}), buildStoreDomain: () => 'offline.invalid' },
-    './mailer': { sendSupportEmail: async () => { calls.sent++; return { messageId: 'OFFLINE-SMTP-MOCK' }; } },
+    './mailer': { sendSupportEmail: async (mail: any) => { calls.sent++; calls.mails.push(mail); return { messageId: 'OFFLINE-SMTP-MOCK' }; } },
     './token': { createBootstrapToken: () => { calls.tokens++; throw new Error('Unexpected token creation'); },
-      createTicketAccessToken: () => { calls.tokens++; throw new Error('Unexpected token creation'); } },
+      createTicketAccessToken: () => {
+        calls.tokens++;
+        if (!options.withoutSnapshot) throw new Error('Unexpected token creation');
+        return 'ta_offline-fixture-token';
+      }, hashToken: () => 'fixture-token-hash' },
     './log-service': { logOperation: async (entry: any) => { calls.logs.push(entry); } },
   });
   return { subject, job, calls, pg };
@@ -104,6 +128,32 @@ test('unmarked paid invitation keeps the normal automatic send path without a gl
   assert.deepEqual(plain(await h.subject.processDueEmailJobs()), { picked: 1, sent: 1, failed: 0 });
   assert.equal(h.job.status, 'sent'); assert.equal(h.calls.sent, 1); assert.equal(h.calls.sentEvents, 1);
 });
+
+test('sending an existing snapshot preserves its exact HTML and exposes usable links in plain text', async () => {
+  const url = 'https://support.example.invalid/ticket?t=ta_fixture-token&mode=complaint';
+  const html = `<html><head><style>p { color: #123456; }</style></head><body><p style="color:#123456">Dear Jane,</p><p>Reply &amp; history</p><a href="${url.replace('&', '&amp;')}">View Reply</a></body></html>`;
+  const h = harness({ type: 'agent_reply_notice', snapshotHtml: html });
+  assert.equal((await h.subject.processDueEmailJobs({ onlyJobId: 1 })).sent, 1);
+  assert.equal(h.calls.mails[0].html, html);
+  assert.match(h.calls.mails[0].text, /Dear Jane,\n+Reply & history/);
+  assert.ok(h.calls.mails[0].text.includes(url));
+  assert.doesNotMatch(h.calls.mails[0].text, /color:|&amp;|<p/);
+  assert.equal(h.calls.tokens, 0);
+  assert.equal(h.calls.nameLookups, 0);
+});
+
+for (const customerName of ['  Jane & Smith  ', '   ', undefined]) {
+  test(`snapshot-free reply uses the matching order name or a generic greeting (${String(customerName)})`, async () => {
+    const h = harness({ type: 'agent_reply_notice', withoutSnapshot: true, customerName });
+    assert.equal((await h.subject.processDueEmailJobs({ onlyJobId: 1 })).sent, 1);
+    const greeting = customerName?.trim() || 'Customer';
+    assert.ok(h.calls.mails[0].html.includes(`Dear ${greeting.replace('&', '&amp;')},`));
+    assert.ok(h.calls.mails[0].text.includes(`Dear ${greeting},`));
+    assert.ok(h.calls.mails[0].text.includes('https://support.example.invalid/ticket?t=ta_offline-fixture-token'));
+    assert.equal(h.calls.tokens, 1);
+    assert.equal(h.calls.nameLookups, 1);
+  });
+}
 
 for (const type of ['agent_reply_notice', 'customer_complaint_invite', 'ticket_closed_notice']) {
   test(`${type} still sends when the same order has paid-invite suppression`, async () => {

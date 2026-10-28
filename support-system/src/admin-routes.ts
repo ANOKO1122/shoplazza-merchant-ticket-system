@@ -799,6 +799,7 @@ export function createAdminRouter(): express.Router {
         orderId: ticket.order_id,
         orderNumber: ticket.order_number,
         customerEmail: ticket.customer_email,
+        customerName: snapForDomain?.customer_name?.trim() || ticket.customer_name?.trim() || undefined,
         publicTicketNo: ticket.public_ticket_no,
       });
 
@@ -840,6 +841,7 @@ export function createAdminRouter(): express.Router {
         orderId: ticket.order_id,
         orderNumber: ticket.order_number,
         customerEmail: ticket.customer_email,
+        customerName: snapForNotify?.customer_name?.trim() || ticket.customer_name?.trim() || undefined,
         publicTicketNo: ticket.public_ticket_no,
       });
 
