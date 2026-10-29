@@ -34,7 +34,7 @@
 - [x] Run the integration tests and confirm missing behavior fails before implementation.
 - [x] Implement transactional creation, row locking, exact expiry copy and bound-ticket precedence in both routes.
 - [x] Rerun the integration tests, npm run build and npm test; address failures and request independent review.
-- [ ] Commit reviewed files as ANOKO1122; push main. Build the tracked source only, deploy support-bridge and verify health and deployed file hashes.
+- [x] Commit reviewed files as ANOKO1122; push main. Build the tracked source only, deploy support-bridge and verify health and deployed file hashes.
 
 ## Execution record
 
@@ -44,3 +44,4 @@
 - Verified RED: expiry mismatch, wrong closed-ticket destination, duplicate creation, and partial-write retention before implementation.
 - Independent review identified a route-level activation race; a real PostgreSQL HTTP test reproduced 409 before the fix, then passed with the conflict-branch binding recheck.
 - Final validation: TypeScript build passed; full suite 397 passed, 6 unrelated opt-in tests skipped, 0 failed; frontend security checks passed. All 11 invitation scenarios passed against disposable PostgreSQL. Final independent review found no remaining blockers.
+- Deployed implementation commit 8d3ae5f from tracked source only. Public health passed for 12 stores; running source, compiled modules, and the previously restored store page match the reviewed workspace. Invalid invitation smoke request returned HTTP 401. No historical invitation renewal was run.
