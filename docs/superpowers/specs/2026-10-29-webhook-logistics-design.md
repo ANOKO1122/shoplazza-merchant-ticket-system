@@ -21,7 +21,7 @@
 ## 边界与验证
 
 - 不使用本地 snapshot.created_at 充当下单时间；优先 raw_order_json.placed_at，再用上游 created_at，缺失时用已有 paid_at；不把本地新建的老订单重新纳入 30 天。
-- 批量 API 必须实测 ids 参数及完整物流；错误、游标循环、无关订单、缺失 fulfillments 不能记成功。
+- 批量 API 必须实测 ids 参数及完整物流；错误、游标循环、无关订单、缺失 fulfillments 不能记成功；唯一已实测的合法例外是返回订单 fulfillment_status=waiting 且省略 fulfillments 字段，此时按空数组处理，显式 null 及其他状态仍失败。
 - 选择 SQL 在隔离测试数据库验证多店、重复快照、工单有效期、订单年龄和到期公平性；生产只读 EXPLAIN/候选统计。
 - 保留用户已有 admin-stores.html 修改及 support-system/tmp，不纳入提交或部署。
 - 本次不自动补跑已发现的 50 个缺失历史订单，不创建延后发送通知。
