@@ -110,6 +110,71 @@ function assertPackages(html, currentLabel = 'Current') {
 }
 
 async function main() {
+  // Persistent webhook controls must serialize each store through the final status read.
+  function webhookFixture() {
+    const view = page('admin-stores.html');
+    const requests = [];
+    const notices = [];
+    const buttons = new Map();
+    for (const id of [1, 2]) {
+      buttons.set(id, Array.from({ length: 3 }, () => ({ disabled: false })));
+      view.get('#wh_actions_' + id).querySelectorAll = () => buttons.get(id);
+    }
+    view.context.confirm = () => true;
+    view.context.showToast = (message, type) => notices.push({ message, type });
+    view.context.fetch = (url, options = {}) => new Promise((resolve, reject) => {
+      requests.push({ url, options, succeed: data => resolve({ json: async () => data }), reject });
+    });
+    return { ...view, requests, notices, buttons };
+  }
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  for (const operation of ['checkSingleWebhook', 'registerWebhook', 'unregisterWebhook']) {
+    for (const fails of [false, true]) {
+      const view = webhookFixture();
+      const running = view.context[operation](1);
+      const duplicate = view.context.checkSingleWebhook(1);
+      const register = view.context.registerWebhook(1);
+      const unregister = view.context.unregisterWebhook(1);
+      assert.equal(view.requests.length, 1, operation + ' must block overlapping refresh and mutations');
+      assert.ok(view.buttons.get(1).every(button => button.disabled), operation + ' disables all row actions');
+      assert.ok(view.buttons.get(2).every(button => !button.disabled), 'other stores remain usable');
+      if (fails) view.requests[0].reject(new Error('offline failure'));
+      else {
+        view.requests[0].succeed({ ok: true, registered: true });
+        await flush();
+        if (operation !== 'checkSingleWebhook') {
+          assert.equal(view.requests.length, 2, 'mutation fetches its final status');
+          assert.ok(view.buttons.get(1).every(button => button.disabled), 'guard covers final status fetch');
+          view.requests[1].succeed({ ok: true, topics: [{ topic: 'orders/paid', registered: true }] });
+        }
+      }
+      await Promise.all([running, duplicate, register, unregister]);
+      assert.ok(view.buttons.get(1).every(button => !button.disabled), operation + ' reenables after success or failure');
+      assert.ok(!view.get('#wh_status_1').innerHTML.includes('中...'), 'failed operations must not leave loading status');
+      const retry = view.context.checkSingleWebhook(1);
+      view.requests.at(-1).succeed({ ok: true, registered: false });
+      await retry;
+      assert.ok(view.buttons.get(1).every(button => !button.disabled), 'released guard allows retry');
+    }
+  }
+  const bulk = webhookFixture();
+  bulk.document.querySelectorAll = () => [{ id: 'storeRow_1' }, { id: 'storeRow_2' }];
+  const busyRefresh = bulk.context.checkSingleWebhook(1);
+  const bulkCheck = bulk.context.checkAllWebhooks();
+  assert.equal(bulk.requests.length, 2, 'bulk skips the busy row and checks the available row');
+  assert.ok(bulk.requests[1].url.includes('/stores/2/'), 'bulk must not duplicate the busy request');
+  assert.ok(bulk.buttons.get(2).every(button => button.disabled), 'bulk disables the current row');
+  const overlappingBulkRow = bulk.context.registerWebhook(2);
+  assert.equal(bulk.requests.length, 2, 'bulk row cannot mutate while checking');
+  bulk.requests[1].succeed({ ok: true, registered: false });
+  await Promise.all([bulkCheck, overlappingBulkRow]);
+  assert.ok(bulk.notices.some(notice => /跳过.*1/.test(notice.message) && notice.type === 'warning'), 'bulk reports the skipped busy row');
+  assert.ok(bulk.buttons.get(1).every(button => button.disabled), 'bulk cannot release another operation guard');
+  assert.ok(bulk.buttons.get(2).every(button => !button.disabled));
+  assert.equal(bulk.get('#mainArea .btn-outline').disabled, false);
+  bulk.requests[0].succeed({ ok: true, registered: true });
+  await busyRefresh;
+
   // Parse every inline script, including pages reached through soft navigation.
   for (const name of fs.readdirSync(publicDir).filter(name => name.endsWith('.html'))) {
     const html = fs.readFileSync(path.join(publicDir, name), 'utf8');

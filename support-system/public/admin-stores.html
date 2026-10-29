@@ -8,23 +8,36 @@
 <script src="/admin-shell.js"></script>
 
 <style>
-.store-table { table-layout: auto; }
+.store-table { table-layout: auto; min-width: 960px; }
+.stores-topbar { height: auto; min-height: 56px; flex-wrap: wrap; gap: 12px; padding: 12px 20px; }
+.stores-topbar .topbar-right { flex-wrap: wrap; gap: 8px; }
+.stores-content { padding: 20px 24px; overflow: auto; display: block; }
+.store-table-wrap { background: var(--bg-card); border-radius: 8px; box-shadow: var(--shadow); overflow-x: auto; }
 .store-table th, .store-table td { padding: 14px 18px; vertical-align: middle; }
-.store-table .col-id { width: 64px; }
+.store-table .col-id { width: 64px; text-align: center; }
 .store-table .col-domain { min-width: 240px; text-align: left; }
 .store-table .col-name { min-width: 140px; text-align: left; }
-.store-table .col-toggle { width: 88px; }
-.store-table .col-wh { min-width: 260px; }
+.store-table .col-toggle { width: 88px; text-align: center; }
+.store-table .col-wh { min-width: 276px; }
 .store-table .col-ops { width: 168px; white-space: nowrap; }
-.wh-grid { display: grid; grid-template-columns: max-content max-content; column-gap: 28px; row-gap: 4px; justify-content: center; text-align: left; margin: 0 auto; }
-.wh-item { font-size: 12px; line-height: 1.5; white-space: nowrap; }
-.wh-refresh { margin-top: 6px; }
-.wh-actions { display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
-.wh-actions .btn-sm { padding: 3px 10px; font-size: 12px; }
+.wh-panel { width: 240px; max-width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+.wh-status { font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; text-align: center; }
+.wh-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 16px; row-gap: 4px; text-align: left; }
+.wh-item { font-size: 12px; line-height: 1.5; }
+.wh-actions { display: flex; gap: 8px; justify-content: center; }
+.wh-actions .btn-sm { min-height: 32px; padding: 4px 10px; font-size: 12px; }
+.wh-btn-refresh { color: var(--text-secondary); }
+.wh-btn-refresh:hover { color: var(--primary); border-color: var(--primary); }
+.wh-actions .btn-sm:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.wh-actions .btn-sm:disabled { opacity: 0.55; cursor: wait; }
 .wh-btn-reg { background: var(--primary); color: #fff; border: none; }
 .wh-btn-unreg { background: var(--danger); color: #fff; border: none; }
 .row-actions { display: flex; gap: 8px; justify-content: center; align-items: center; }
 .row-actions .btn-sm { padding: 4px 10px; font-size: 12px; }
+@media (max-width: 760px) {
+  .stores-topbar { padding: 12px; }
+  .stores-content { padding: 16px 12px; }
+}
 </style>
 <script src="/safe-render.js"></script>
 </head>
@@ -39,7 +52,7 @@ function showToast(m,t){var d=document.createElement('div');d.className='toast '
 
 function renderMain(){adminFrame('/thinkpro-admin/stores');buildLayout();loadStores()}
 
-function buildLayout(){$('#mainArea').innerHTML='<header class="topbar"><div class="breadcrumb">首页 / <strong>店铺管理</strong></div><div class="topbar-right"><button class="btn btn-primary" style="padding:6px 14px;width:auto" onclick="showStoreModal()">+ 新增店铺</button><button class="btn btn-outline" style="padding:6px 14px;width:auto;margin-left:8px;background:#fff;color:var(--primary);border:1px solid var(--primary);border-radius:6px;cursor:pointer;font-size:13px" onclick="checkAllWebhooks()">🔄 检查全部Webhook</button><button class="btn-logout" onclick="doLogout()">退出</button></div></header><div class="content" style="padding:20px 24px;overflow:auto;display:block"><div style="background:var(--bg-card);border-radius:8px;box-shadow:var(--shadow);overflow:auto"><table class="store-table"><thead><tr><th class="col-id">ID</th><th class="col-domain">店铺域名</th><th class="col-name">店铺名称</th><th class="col-toggle">启停</th><th class="col-wh">Webhook 状态</th><th class="col-ops">操作</th></tr></thead><tbody id="storeTbody"></tbody></table></div></div>'}
+function buildLayout(){$('#mainArea').innerHTML='<header class="topbar stores-topbar"><div class="breadcrumb">首页 / <strong>店铺管理</strong></div><div class="topbar-right"><button class="btn btn-primary" style="padding:6px 14px;width:auto" onclick="showStoreModal()">+ 新增店铺</button><button class="btn btn-outline" style="padding:6px 14px;width:auto;background:#fff;color:var(--primary);border:1px solid var(--primary);border-radius:6px;cursor:pointer;font-size:13px" onclick="checkAllWebhooks()">🔄 检查全部Webhook</button><button class="btn-logout" onclick="doLogout()">退出</button></div></header><div class="content stores-content"><div class="store-table-wrap"><table class="store-table"><thead><tr><th class="col-id">ID</th><th class="col-domain">店铺域名</th><th class="col-name">店铺名称</th><th class="col-toggle">启停</th><th class="col-wh">Webhook 状态</th><th class="col-ops">操作</th></tr></thead><tbody id="storeTbody"></tbody></table></div></div>'}
 
 var webhookCache = {};
 var WH_CACHE_KEY = 'support_webhook_cache';
@@ -110,10 +123,11 @@ function webhookTopicName(topic){
 function buildStoreRowHTML(s){
   var t='<label class="toggle"><input type="checkbox" '+(s.enabled?'checked':'')+' onchange="toggleStore('+Number(s.id)+',this.checked)"><span class="slider"></span></label>';
   var n='<span id="sname_display_'+Number(s.id)+'">'+(s.store_name?escapeHtml(s.store_name):'<span style="color:#8c8c8c">-</span>')+'</span>';
-  var w='<div id="wh_status_'+Number(s.id)+'" style="font-size:12px;color:var(--text-muted)">未检查 <a href="javascript:void(0)" style="color:var(--primary)" onclick="checkSingleWebhook('+Number(s.id)+')">[检查]</a></div>'+
+  var w='<div class="wh-panel"><div class="wh-status" id="wh_status_'+Number(s.id)+'" aria-live="polite">未检查</div>'+
     '<div class="wh-actions" id="wh_actions_'+Number(s.id)+'">'+
+    '<button type="button" class="btn-sm wh-btn-refresh" onclick="checkSingleWebhook('+Number(s.id)+')">刷新</button>'+
     '<button class="btn-sm wh-btn-reg" onclick="registerWebhook('+Number(s.id)+')">注册</button>'+
-    '<button class="btn-sm wh-btn-unreg" onclick="unregisterWebhook('+Number(s.id)+')">注销</button></div>';
+    '<button class="btn-sm wh-btn-unreg" onclick="unregisterWebhook('+Number(s.id)+')">注销</button></div></div>';
   var ops='<div class="row-actions"><button class="btn-sm" style="background:var(--primary);color:#fff;border:none" data-store-id="'+Number(s.id)+'" data-subdomain="'+escapeHtml(s.subdomain)+'" data-store-name="'+escapeHtml(s.store_name||'')+'" onclick="showEditStoreModal(Number(this.getAttribute(\'data-store-id\')),this.getAttribute(\'data-subdomain\'),this.getAttribute(\'data-store-name\'))">编辑</button><button class="btn-sm btn-sm-danger" onclick="delStore('+Number(s.id)+')">删除</button></div>';
   return '<td class="col-id">'+Number(s.id)+'</td><td class="col-domain">'+escapeHtml(s.subdomain)+'</td><td class="col-name">'+n+'</td><td class="col-toggle">'+t+'</td><td class="col-wh">'+w+'</td><td class="col-ops">'+ops+'</td>';
 }
@@ -192,16 +206,34 @@ function updateWebhookCell(storeId, cached){
   } else {
     html = '<div style="color:var(--warning);font-size:12px">⚠️ 未注册</div>';
   }
-  html += '<div class="wh-refresh"><a href="javascript:void(0)" style="color:var(--primary);font-size:12px" onclick="checkSingleWebhook('+storeId+')">[刷新]</a></div>';
   cell.innerHTML = html;
 }
 
 // 手动检查单个店铺 webhook 状态
+var webhookBusy = {};
+function beginWebhookAction(storeId){
+  if(webhookBusy[storeId]) return false;
+  webhookBusy[storeId] = true;
+  setWebhookActionsDisabled(storeId, true);
+  return true;
+}
+function setWebhookActionsDisabled(storeId, disabled){
+  var actions = document.getElementById('wh_actions_'+storeId);
+  if(actions) actions.querySelectorAll('button').forEach(function(button){ button.disabled = disabled; });
+}
+function endWebhookAction(storeId){
+  delete webhookBusy[storeId];
+  setWebhookActionsDisabled(storeId, false);
+}
 async function checkSingleWebhook(storeId){
-  var cell = document.getElementById('wh_status_'+storeId);
-  if(cell) cell.innerHTML = '<span style="font-size:12px;color:var(--text-muted)">⏳ 检查中...</span>';
-  var status = await fetchWebhookStatus(storeId);
-  updateWebhookCell(storeId, status);
+  if(!beginWebhookAction(storeId)) return;
+  try{
+    var cell = document.getElementById('wh_status_'+storeId);
+    if(cell) cell.innerHTML = '<span style="font-size:12px;color:var(--text-muted)">⏳ 检查中...</span>';
+    var status = await fetchWebhookStatus(storeId);
+    updateWebhookCell(storeId, status);
+  }catch(e){ updateWebhookCell(storeId, {ok:false,error:'检查失败，请重试'}); }
+  finally{ endWebhookAction(storeId); }
 }
 
 // 手动检查全部店铺 webhook 状态（串行，避免触发频率限制）
@@ -216,17 +248,25 @@ async function checkAllWebhooks(){
     if(rows.length === 0){ showToast('暂无店铺','warning'); return; }
     var total = rows.length;
     var failed = 0;
+    var checked = 0;
+    var skipped = 0;
     for(var i = 0; i < rows.length; i++){
       var idMatch = rows[i].id.match(/^storeRow_(\d+)$/);
       if(!idMatch) continue;
       var storeId = Number(idMatch[1]);
-      var cell = document.getElementById('wh_status_'+storeId);
-      if(cell) cell.innerHTML = '<span style="font-size:12px;color:var(--text-muted)">⏳ 检查中 ('+(i+1)+'/'+total+')...</span>';
-      var status = await fetchWebhookStatus(storeId);
-      if(!status || status.ok === false) failed++;
-      updateWebhookCell(storeId, status);
+      if(!beginWebhookAction(storeId)){ skipped++; continue; }
+      checked++;
+      try{
+        var cell = document.getElementById('wh_status_'+storeId);
+        if(cell) cell.innerHTML = '<span style="font-size:12px;color:var(--text-muted)">⏳ 检查中 ('+(i+1)+'/'+total+')...</span>';
+        var status = await fetchWebhookStatus(storeId);
+        if(!status || status.ok === false) failed++;
+        updateWebhookCell(storeId, status);
+      }finally{ endWebhookAction(storeId); }
     }
-    showToast(failed ? ('检查完成，'+failed+' 个店铺失败') : ('全部 Webhook 状态已刷新 ('+total+' 个店铺)'), failed ? 'warning' : 'success');
+    showToast(failed || skipped
+      ? ('检查完成：已刷新 '+(checked-failed)+' 个店铺，'+failed+' 个失败，跳过 '+skipped+' 个忙碌店铺')
+      : ('全部 Webhook 状态已刷新 ('+checked+' 个店铺)'), failed || skipped ? 'warning' : 'success');
   }catch(e){ showToast('检查过程出错','error'); }
   finally{
     checkAllRunning = false;
@@ -237,6 +277,7 @@ async function checkAllWebhooks(){
 function escapeHtml(s){return SupportSafe.escape(s)}
 
 async function registerWebhook(storeId){
+  if(!beginWebhookAction(storeId)) return;
   var cell=document.getElementById('wh_status_'+storeId);
   if(cell)cell.innerHTML='<span style="font-size:12px;color:var(--text-muted)">⏳ 注册中...</span>';
   try{
@@ -250,11 +291,14 @@ async function registerWebhook(storeId){
     // 刷新状态
     var status=await fetchWebhookStatus(storeId);
     updateWebhookCell(storeId, status);
-  }catch(e){showToast('网络错误','error')}
+  }catch(e){showToast('网络错误','error');updateWebhookCell(storeId,{ok:false,error:'注册结果未确认，请刷新状态'});}
+  finally{ endWebhookAction(storeId); }
 }
 
 async function unregisterWebhook(storeId){
+  if(webhookBusy[storeId]) return;
   if(!confirm('确认注销该店铺的支付和发货 Webhook？'))return;
+  if(!beginWebhookAction(storeId)) return;
   var cell=document.getElementById('wh_status_'+storeId);
   if(cell)cell.innerHTML='<span style="font-size:12px;color:var(--text-muted)">⏳ 注销中...</span>';
   try{
@@ -267,7 +311,8 @@ async function unregisterWebhook(storeId){
     }
     var status=await fetchWebhookStatus(storeId);
     updateWebhookCell(storeId, status);
-  }catch(e){showToast('网络错误','error')}
+  }catch(e){showToast('网络错误','error');updateWebhookCell(storeId,{ok:false,error:'注销结果未确认，请刷新状态'});}
+  finally{ endWebhookAction(storeId); }
 }
 
 function showStoreModal(){var m=document.createElement('div');m.id='storeModal';m.innerHTML='<div style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.45);z-index:200;display:flex;align-items:center;justify-content:center" onclick="if(event.target===this)closeModal()"><div style="background:#fff;border-radius:8px;padding:24px;width:420px;box-shadow:0 4px 16px rgba(0,0,0,0.15)"><h3 style="margin-bottom:16px">新增店铺</h3><div class="form-group"><label>店铺域名</label><input type="text" id="sSubdomain" placeholder="例如 store-a.myshoplaza.com" style="border:1px solid #d9d9d9;border-radius:6px;padding:9px 12px;width:100%;font-size:14px"></div><div class="form-group"><label>店铺名称</label><input type="text" id="sName" placeholder="可为空" style="border:1px solid #d9d9d9;border-radius:6px;padding:9px 12px;width:100%;font-size:14px"></div><div class="form-group"><label>Access Token</label><input type="text" id="sToken" style="border:1px solid #d9d9d9;border-radius:6px;padding:9px 12px;width:100%;font-size:14px"></div><div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px"><button class="btn btn-primary" style="width:auto" onclick="saveStore()">保存</button><button class="btn-sm" onclick="closeModal()">取消</button></div></div></div>';document.body.appendChild(m)}
