@@ -15,6 +15,7 @@ import { buildWebhookCallbackUrl, redactWebhookAddress } from './webhook-securit
 import { mapPaymentMethodDisplay } from './normalize-order';
 import { uploadAttachments, processAttachments, getStorageProvider } from './storage-service';
 import { getOrderShippingAddress, submitShippingAddressRequest, getShippingAddressRequest, processShippingAddressRequest, ShippingAddressError } from './order-address-service';
+import { listQuickReplies, createQuickReply, updateQuickReply, deleteQuickReply, validateQuickReplyInput } from './quick-reply-service';
 
 function webhookTopicsFromList(webhooks: ShoplazzaWebhook[], expectedAddress: string) {
   return STORE_WEBHOOK_TOPICS.map((topic) => {
@@ -185,6 +186,95 @@ export function createAdminRouter(): express.Router {
     }
     (req as any).agent = agent;
     next();
+  });
+
+  // 全客服共享的快捷回复；仅保存文案，不发送工单消息或邮件。
+  router.get('/quick-replies', async (_req, res) => {
+    try {
+      const quickReplies = await listQuickReplies();
+      res.json({ ok: true, quick_replies: quickReplies });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  router.post('/quick-replies', async (req, res) => {
+    try {
+      const error = validateQuickReplyInput(req.body);
+      if (error) {
+        res.status(400).json({ ok: false, error });
+        return;
+      }
+      const quickReply = await createQuickReply(req.body);
+      await logOperation({
+        category: 'config',
+        action: 'quick_reply_create',
+        actor: (req as any).agent?.name || 'unknown',
+        target: String(quickReply.id),
+        summary: `新增快捷回复: ${quickReply.title}`,
+        status: 'success',
+      });
+      res.json({ ok: true, quick_reply: quickReply });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  router.put('/quick-replies/:id', async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isSafeInteger(id) || id <= 0 || !/^\d+$/.test(req.params.id)) {
+        res.status(400).json({ ok: false, error: '无效的快捷回复 ID' });
+        return;
+      }
+      const error = validateQuickReplyInput(req.body);
+      if (error) {
+        res.status(400).json({ ok: false, error });
+        return;
+      }
+      const quickReply = await updateQuickReply(id, req.body);
+      if (!quickReply) {
+        res.status(404).json({ ok: false, error: '快捷回复不存在' });
+        return;
+      }
+      await logOperation({
+        category: 'config',
+        action: 'quick_reply_update',
+        actor: (req as any).agent?.name || 'unknown',
+        target: String(quickReply.id),
+        summary: `修改快捷回复: ${quickReply.title}`,
+        status: 'success',
+      });
+      res.json({ ok: true, quick_reply: quickReply });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  router.delete('/quick-replies/:id', async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isSafeInteger(id) || id <= 0 || !/^\d+$/.test(req.params.id)) {
+        res.status(400).json({ ok: false, error: '无效的快捷回复 ID' });
+        return;
+      }
+      const quickReply = await deleteQuickReply(id);
+      if (!quickReply) {
+        res.status(404).json({ ok: false, error: '快捷回复不存在' });
+        return;
+      }
+      await logOperation({
+        category: 'config',
+        action: 'quick_reply_delete',
+        actor: (req as any).agent?.name || 'unknown',
+        target: String(quickReply.id),
+        summary: `删除快捷回复: ${quickReply.title}`,
+        status: 'success',
+      });
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
   });
 
   // GET /api/admin/email-jobs

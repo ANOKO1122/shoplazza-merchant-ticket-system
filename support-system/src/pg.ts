@@ -480,6 +480,16 @@ export async function ensureTables(): Promise<void> {
   await p.query(`ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS reopen_count INTEGER NOT NULL DEFAULT 0`);
 
   await p.query(`
+    CREATE TABLE IF NOT EXISTS support_quick_replies (
+      id BIGSERIAL PRIMARY KEY,
+      title VARCHAR(80) NOT NULL CHECK (length(trim(title)) > 0),
+      content TEXT NOT NULL CHECK (length(trim(content)) BETWEEN 1 AND 20000),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+
+  await p.query(`
     CREATE TABLE IF NOT EXISTS support_agents (
       id BIGSERIAL PRIMARY KEY,
       username TEXT UNIQUE NOT NULL,

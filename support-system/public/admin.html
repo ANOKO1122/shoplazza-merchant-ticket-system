@@ -6,6 +6,58 @@
 <title>客服后台 - 工单管理</title>
 <link rel="stylesheet" href="/admin-base.css">
 <style>
+.ticket-workspace, .ticket-workspace .panel-left, .ticket-workspace .panel-right, .ticket-workspace .detail-content, .ticket-workspace .detail-scroll { min-height: 0; min-width: 0; }
+.ticket-workspace .split-view { display: grid; grid-template-columns: minmax(0, 1fr) minmax(420px, 34%); min-height: 0; }
+.ticket-workspace .panel-left { width: auto; display: flex; flex-direction: column; overflow: hidden; }
+.ticket-workspace .panel-right { width: auto; }
+.ticket-workspace .stats-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 12px 16px; }
+.ticket-workspace .stat-card { min-width: 0; gap: 8px; padding: 10px 12px; border: 1px solid transparent; font: inherit; text-align: left; }
+.ticket-workspace .stat-card.sel { border-color: var(--primary); box-shadow: none; }
+.ticket-workspace .stat-num { font-size: 20px; }
+.ticket-workspace .stat-label { color: var(--text-secondary); }
+.ticket-workspace .table-header, .ticket-workspace .table-title { flex-wrap: wrap; gap: 8px; }
+.ticket-workspace .table-scroll { min-height: 0; }
+.ticket-workspace .table-scroll table { min-width: 960px; }
+.ticket-workspace .reply-bar { max-height: calc(100% - 56px); overflow-y: auto; padding: 12px 16px; }
+.ticket-workspace #replyBox { flex: none; width: 100%; height: 64px; min-height: 64px; max-height: 50vh; line-height: 1.6; overflow-y: auto; font-family: inherit; }
+.ticket-workspace .reply-actions, .ticket-workspace .panel-actions { flex-wrap: wrap; }
+.ticket-workspace .info-value { overflow-wrap: anywhere; }
+.quick-reply-bar { display: flex; gap: 8px; align-items: center; }
+.quick-reply-bar label { flex-shrink: 0; font-size: 12px; color: var(--text-secondary); }
+.quick-reply-bar select { flex: 1; min-width: 0; height: 32px; padding: 4px 8px; border: 1px solid var(--border-strong); border-radius: 4px; background: #fff; color: var(--text-main); font: inherit; font-size: 12px; }
+.quick-reply-bar button { min-height: 32px; flex-shrink: 0; }
+.quick-reply-dialog { position: fixed; margin: auto; width: min(680px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; border: 0; border-radius: var(--radius); background: var(--bg-card); color: var(--text-main); box-shadow: 0 12px 40px rgba(0, 0, 0, .22); }
+.quick-reply-dialog::backdrop { background: rgba(0, 21, 41, .42); }
+.quick-reply-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.quick-reply-dialog h2 { font-size: 18px; }
+.quick-reply-dialog p { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+.quick-reply-body { padding: 16px 20px; }
+.quick-reply-list { max-height: 48vh; overflow-y: auto; }
+.quick-reply-item { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.quick-reply-item-text { flex: 1; min-width: 0; }
+.quick-reply-item-text strong { display: block; font-size: 14px; overflow-wrap: anywhere; }
+.quick-reply-item-text p { white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.quick-reply-item-actions, .quick-reply-footer { display: flex; flex-wrap: wrap; gap: 8px; }
+.quick-reply-footer { justify-content: flex-end; margin-top: 16px; }
+.quick-reply-dialog button { min-height: 32px; }
+.quick-reply-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; font-size: 13px; }
+.quick-reply-field input, .quick-reply-field textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 4px; font: inherit; color: var(--text-main); }
+.quick-reply-field textarea { min-height: 180px; max-height: 40vh; resize: vertical; line-height: 1.6; }
+.quick-reply-error { color: #a8071a; font-size: 13px; overflow-wrap: anywhere; }
+.quick-reply-error:empty { display: none; }
+.quick-reply-dialog :focus-visible, .quick-reply-bar :focus-visible, .ticket-workspace .stat-card:focus-visible { outline: 2px solid #096dd9; outline-offset: 2px; }
+@media (max-width: 1150px) {
+  .ticket-workspace .split-view { grid-template-columns: minmax(0, 1fr) minmax(360px, 42%); }
+  .ticket-workspace .stat-card { flex-direction: column; align-items: flex-start; gap: 0; padding: 8px; }
+}
+@media (max-width: 800px) {
+  .ticket-workspace .split-view { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(220px, 34%) minmax(0, 1fr); }
+  .ticket-workspace .panel-left { border-right: 0; border-bottom: 1px solid var(--border-strong); }
+  .ticket-workspace .stats-row { padding: 8px; gap: 4px; }
+  .ticket-workspace .table-header { padding: 8px; }
+  .ticket-workspace .reply-bar { padding: 8px; }
+  .quick-reply-item { align-items: flex-start; flex-wrap: wrap; }
+}
 .shipping-address-card { padding: 16px 0; margin-bottom: 16px; border-top: 1px solid var(--border-strong); border-bottom: 1px solid var(--border-strong); }
 .shipping-address-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .shipping-address-heading h4 { font-size: 14px; font-weight: 600; }
@@ -51,6 +103,7 @@
 <div id="app"><div class="login-page"><div class="login-card" style="text-align:center;color:var(--text-muted);padding:60px 36px">加载中...</div></div></div>
 <script>
 var API='/api/admin';var currentStatus='all';var currentPage=1;var currentTicket=null;var me=null;var timeField='created_at';var timeRange='';var complaintTypes=['Fraud','Unauthorized Transaction','Counterfeit / Fake Products','Misleading or False Advertising','Refusal to Honor Refund / Return Policy','Privacy or Data Misuse','Unsafe or Harmful Products','Discrimination or Unfair Treatment','Intellectual Property Violation'];
+var quickReplies=[],quickRepliesLoaded=false,quickRepliesError='',quickRepliesRequest=0,quickReplyManager=null;
 function sd(s){return s&&s.indexOf('.')!==-1?s:s+'.myshoplaza.com'}
 function $(s){return document.querySelector(s)}function $$(s){return document.querySelectorAll(s)}
 function formatTime(i){if(!i)return'';var d=new Date(i);if(isNaN(d.getTime()))return'';var y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),dy=String(d.getDate()).padStart(2,'0'),h=String(d.getHours()).padStart(2,'0'),mi=String(d.getMinutes()).padStart(2,'0'),s=String(d.getSeconds()).padStart(2,'0');return y+'-'+m+'-'+dy+' '+h+':'+mi+':'+s}
@@ -81,11 +134,11 @@ function showToast(m,t){var d=document.createElement('div');d.className='toast '
 function setTimeField(v){timeField=v;currentPage=1;loadTickets()}function setTimeRange(v){timeRange=v;currentPage=1;loadTickets()}
 function statusLabelRow(t){var g=[];if(t.status==='open')g.push('<span class="tag tag-blue">待处理</span>');else if(t.status==='waiting')g.push('<span class="tag tag-orange">等待顾客</span>');else if(t.status==='closed')g.push('<span class="tag tag-gray">已关闭</span>');if(t.arbitration_requested&&t.status!=='closed')g.push('<span class="tag tag-red">仲裁</span>');if(complaintTypes.indexOf(t.issue_type||'')!==-1)g.push('<span class="tag tag-red">投诉</span>');return'<div class="status-tags">'+g.join('')+'</div>'}function issueTypeLabel(v){var m={Unknow:'未知',Fraud:'欺诈',Unauthorized:'未授权','Products Discrepancies':'商品不符','Product Not Received':'未收到商品','Defective Merchandise':'商品瑕疵','Incorrect Transaction':'交易错误','Wrong address':'地址错误','Credit Not Processed':'退款未处理','Other / General Inquiry':'其他/一般咨询','Unauthorized Transaction':'未授权交易','Counterfeit / Fake Products':'假冒/仿冒产品','Misleading or False Advertising':'误导或虚假广告','Refusal to Honor Refund / Return Policy':'拒绝履行退款/退货政策','Privacy or Data Misuse':'隐私或数据滥用','Unsafe or Harmful Products':'不安全或有害产品','Discrimination or Unfair Treatment':'歧视或不公平对待','Intellectual Property Violation':'知识产权侵权'};return v?(v+' ('+(m[v]||'')+')'):''}
 (async function init(){var bootEpoch=adminEpoch();try{if(window.__adminAgent){me=window.__adminAgent;if(bootEpoch!==adminEpoch())return;renderMain();return;}var r=await fetch(API+'/me',{credentials:'same-origin'});var d=await r.json();if(bootEpoch!==adminEpoch())return;if(d.ok){me=d.agent;window.__adminAgent=me;renderMain()}else{location.replace('/login?redirect='+encodeURIComponent(location.pathname))}}catch(e){location.replace('/login?redirect='+encodeURIComponent(location.pathname))}})();async function doLogout(){await fetch(API+'/logout',{method:'POST',credentials:'same-origin'});location.replace('/login')}
-function renderMain(){adminFrame('/thinkpro-admin');buildTicketLayout();loadStats();loadTickets();loadPendingCount();setInterval(loadPendingCount,30000)}
-function buildTicketLayout(){var s=function(s){return currentStatus===s?' sel':''};var to='<select id="timeFieldSel" onchange="setTimeField(this.value)" style="padding:4px 8px;border:1px solid #d9d9d9;border-radius:4px;font-size:12px;background:#fff"><option value="created_at"'+(timeField==='created_at'?' selected':'')+'>创建时间</option><option value="updated_at"'+(timeField==='updated_at'?' selected':'')+'>最后更新</option></select>';var ro='<select id="timeRangeSel" onchange="setTimeRange(this.value)" style="padding:4px 8px;border:1px solid #d9d9d9;border-radius:4px;font-size:12px;background:#fff"><option value=""'+(timeRange===''?' selected':'')+'>全部时间</option><option value="24h"'+(timeRange==='24h'?' selected':'')+'>24小时</option><option value="2d"'+(timeRange==='2d'?' selected':'')+'>2天</option><option value="7d"'+(timeRange==='7d'?' selected':'')+'>一周</option></select>';var tf='<div style="display:flex;gap:6px;align-items:center;margin-left:12px">'+to+ro+'</div>';$('#mainArea').innerHTML='<header class="topbar"><div class="breadcrumb">首页 / <strong>工单处理</strong></div><div class="topbar-right"><span id="pendingBadge" style="display:none;background:#fff2f0;border:1px solid #ffccc7;border-radius:4px;padding:4px 10px;font-size:12px;color:#ff4d4f;margin-right:8px;cursor:pointer" onclick="adminGo(\'/thinkpro-admin/emails?status=pending&email_type=agent_reply_notice\')" title="点击查看待发送邮件"></span><button class="btn-logout" onclick="doLogout()">退出</button></div></header><div class="content"><div class="stats-row"><div class="stat-card'+s('all')+'" onclick="filterByStatus(\'all\',this)"><span class="stat-num" id="statAll">-</span><span class="stat-label">全部工单</span></div><div class="stat-card'+s('open')+'" onclick="filterByStatus(\'open\',this)"><span class="stat-num" id="statOpen">-</span><span class="stat-label">待处理</span></div><div class="stat-card'+s('waiting')+'" onclick="filterByStatus(\'waiting\',this)"><span class="stat-num" id="statWait">-</span><span class="stat-label">等待顾客</span></div><div class="stat-card'+s('closed')+'" onclick="filterByStatus(\'closed\',this)"><span class="stat-num" id="statClosed">-</span><span class="stat-label">已关闭</span></div></div><div class="split-view"><div class="panel-left"><div class="table-header"><span class="table-title">工单列表<div class="search-box"><span class="sicon">🔍</span><input type="text" id="searchInput" placeholder="搜索工单号/订单号/邮箱" onkeydown="if(event.key==\'Enter\')loadTickets()"></div></span>'+tf+'</div><div class="table-scroll"><table><thead><tr><th style="width:120px">工单号</th><th>店铺</th><th>店铺域名</th><th>订单号</th><th>顾客邮箱</th><th>问题类型</th><th style="width:140px">工单状态</th><th style="width:140px">创建时间</th><th style="width:140px">最后更新</th></tr></thead><tbody id="ticketTbody"></tbody></table></div><div class="pagination" id="pagination"></div></div><div class="panel-right" id="detailPanel"><div class="detail-empty">← 点击左侧工单查看详情</div></div></div></div>'}
+function renderMain(){adminFrame('/thinkpro-admin');buildTicketLayout();loadStats();loadTickets();loadPendingCount();loadQuickReplies();setInterval(loadPendingCount,30000)}
+function buildTicketLayout(){var s=function(s){return currentStatus===s?' sel':''};var to='<select id="timeFieldSel" onchange="setTimeField(this.value)" style="padding:4px 8px;border:1px solid #d9d9d9;border-radius:4px;font-size:12px;background:#fff"><option value="created_at"'+(timeField==='created_at'?' selected':'')+'>创建时间</option><option value="updated_at"'+(timeField==='updated_at'?' selected':'')+'>最后更新</option></select>';var ro='<select id="timeRangeSel" onchange="setTimeRange(this.value)" style="padding:4px 8px;border:1px solid #d9d9d9;border-radius:4px;font-size:12px;background:#fff"><option value=""'+(timeRange===''?' selected':'')+'>全部时间</option><option value="24h"'+(timeRange==='24h'?' selected':'')+'>24小时</option><option value="2d"'+(timeRange==='2d'?' selected':'')+'>2天</option><option value="7d"'+(timeRange==='7d'?' selected':'')+'>一周</option></select>';var tf='<div style="display:flex;gap:6px;align-items:center;margin-left:12px">'+to+ro+'</div>';$('#mainArea').innerHTML='<header class="topbar"><div class="breadcrumb">首页 / <strong>工单处理</strong></div><div class="topbar-right"><span id="pendingBadge" style="display:none;background:#fff2f0;border:1px solid #ffccc7;border-radius:4px;padding:4px 10px;font-size:12px;color:#ff4d4f;margin-right:8px;cursor:pointer" onclick="adminGo(\'/thinkpro-admin/emails?status=pending&email_type=agent_reply_notice\')" title="点击查看待发送邮件"></span><button class="btn-logout" onclick="doLogout()">退出</button></div></header><div class="content ticket-workspace"><div class="split-view"><div class="panel-left"><div class="stats-row"><button type="button" class="stat-card'+s('all')+'" onclick="filterByStatus(\'all\',this)"><span class="stat-num" id="statAll">-</span><span class="stat-label">全部工单</span></button><button type="button" class="stat-card'+s('open')+'" onclick="filterByStatus(\'open\',this)"><span class="stat-num" id="statOpen">-</span><span class="stat-label">待处理</span></button><button type="button" class="stat-card'+s('waiting')+'" onclick="filterByStatus(\'waiting\',this)"><span class="stat-num" id="statWait">-</span><span class="stat-label">等待顾客</span></button><button type="button" class="stat-card'+s('closed')+'" onclick="filterByStatus(\'closed\',this)"><span class="stat-num" id="statClosed">-</span><span class="stat-label">已关闭</span></button></div><div class="table-header"><span class="table-title">工单列表<div class="search-box"><span class="sicon">🔍</span><input type="text" id="searchInput" placeholder="搜索工单号/订单号/邮箱" onkeydown="if(event.key==\'Enter\')loadTickets()"></div></span>'+tf+'</div><div class="table-scroll"><table><thead><tr><th style="width:120px">工单号</th><th>店铺</th><th>店铺域名</th><th>订单号</th><th>顾客邮箱</th><th>问题类型</th><th style="width:140px">工单状态</th><th style="width:140px">创建时间</th><th style="width:140px">最后更新</th></tr></thead><tbody id="ticketTbody"></tbody></table></div><div class="pagination" id="pagination"></div></div><div class="panel-right" id="detailPanel"><div class="detail-empty">← 点击左侧工单查看详情</div></div></div></div>'}
 async function loadStats(){try{var r=await fetch(API+'/tickets?page_size=1&status=all',{credentials:'same-origin'});var d=await r.json();if(!d.ok)return;updateStat('statAll',d.total||0);var r2=await fetch(API+'/tickets?page_size=1&status=open',{credentials:'same-origin'});var o=(await r2.json()).total||0;updateStat('statOpen',o);var r3=await fetch(API+'/tickets?page_size=1&status=waiting',{credentials:'same-origin'});var w=(await r3.json()).total||0;updateStat('statWait',w);var r4=await fetch(API+'/tickets?page_size=1&status=closed',{credentials:'same-origin'});var c=(await r4.json()).total||0;updateStat('statClosed',c)}catch(e){}}
 function updateStat(i,v){var e=document.getElementById(i);if(e)e.textContent=v}
-function filterByStatus(s,c){currentStatus=s;currentPage=1;buildTicketLayout();loadTickets();loadStats();loadPendingCount()}
+function filterByStatus(s,c){currentStatus=s;currentPage=1;$$('.stat-card').forEach(function(card){card.classList.toggle('sel',card===c)});loadTickets();loadStats();loadPendingCount()}
 async function loadTickets(){var q=($('#searchInput')||{}).value||'';var p=new URLSearchParams();if(currentStatus!=='all')p.set('status',currentStatus);if(q)p.set('q',q);if(timeField)p.set('time_field',timeField);if(timeRange)p.set('time_range',timeRange);p.set('page',String(currentPage));p.set('page_size','30');try{var r=await fetch(API+'/tickets?'+p.toString(),{credentials:'same-origin'});var d=await r.json();if(!d.ok)return;renderTable(d.tickets,d.total)}catch(e){}}
 function renderTable(tk,to){var tb=$('#ticketTbody');if(!tb)return;var h='';tk.forEach(function(t){h+='<tr onclick="selectTicket(this,this.getAttribute(\'data-tno\'))" data-tno="'+esc(t.public_ticket_no)+'"><td style="text-align:center;font-weight:600">'+esc(t.public_ticket_no)+'</td><td style="text-align:center">'+esc((t.store_name||''))+'</td><td style="text-align:center">'+esc(sd(t.store_subdomain||''))+'</td><td style="text-align:center">'+esc((t.order_id||''))+'</td><td style="text-align:center">'+esc((t.customer_email||''))+'</td><td style="text-align:center">'+esc((t.issue_type||''))+'</td><td style="text-align:center">'+statusLabelRow(t)+'</td><td style="text-align:center;white-space:nowrap">'+formatTime(t.created_at)+'</td><td style="text-align:center;white-space:nowrap">'+formatTime(t.updated_at)+'</td></tr>'});tb.innerHTML=h;var pe=$('#pagination');if(pe)pe.innerHTML=pageButtons(to,30,currentPage,'goPage')}
 function pagerWindow(page,tp){var set={};set[1]=1;set[tp]=1;for(var i=page-2;i<=page+2;i++){if(i>=1&&i<=tp)set[i]=1}return Object.keys(set).map(Number).sort(function(a,b){return a-b})}
@@ -93,7 +146,7 @@ function pageButtons(total,pageSize,page,goName){var tp=Math.ceil(total/pageSize
 function goPage(p){currentPage=p;loadTickets()}
 function selectTicket(r,tn){$$('.panel-left tr').forEach(function(r){r.classList.remove('selected')});r.classList.add('selected');loadDetail(tn)}
 async function loadDetail(tn){if(shippingAddressEditor){clearTimeout(shippingAddressEditor.pollTimer);shippingAddressEditor.dialog.close();shippingAddressEditor.dialog.remove();shippingAddressEditor=null;}var p=$('#detailPanel');p.innerHTML='<div class="detail-empty">加载中...</div>';try{var r=await fetch(API+'/tickets/'+encodeURIComponent(tn),{credentials:'same-origin'});var d=await r.json();if(!d.ok){p.innerHTML='<div class="detail-empty">加载失败</div>';return}currentTicket=d.ticket;renderDetail(d)}catch(e){p.innerHTML='<div class="detail-empty">加载失败</div>'}}
-function renderDetail(d){var t=d.ticket,o=d.order||{},ms=d.messages;var pu=ticketPreviewUrl(t.public_ticket_no);var st=t.status==='closed'?'已关闭':(t.status==='waiting'?'等待顾客':'待处理');var ih='';if(Array.isArray(o.items)){ih=o.items.map(function(it){var img=itemImageUrl(it);return'<div style="display:flex;align-items:center;gap:6px;font-size:13px;line-height:1.6;margin-bottom:4px"><span style="color:#262626">'+esc((it.product_title||it.title||it.name||''))+'</span> <span style="color:#8c8c8c">x'+esc((it.quantity||1))+'</span>'+(img?' <a href="'+esc(img)+'" target="_blank" rel="noopener" style="color:#1890ff;font-size:12px;text-decoration:none" title="查看商品图片">图片</a>':'')+'</div>'}).join('')}var mh='';var rl={customer:'顾客',agent:'客服',system:'系统',platform:'平台'};ms.forEach(function(m){mh+='<div class="msg-item '+SupportSafe.role(m.sender_type)+'"><div class="msg-meta"><span class="msg-role '+SupportSafe.role(m.sender_type)+'">'+esc((rl[m.sender_type]||m.sender_type))+'</span><span class="msg-time">'+formatTime(m.created_at)+'</span>'+(m.sender_type==='agent'?'<div class="msg-actions"><button class="btn-sm btn-sm-danger" onclick="recallMsg('+Number(m.id)+')" title="撤回">撤回</button></div>':'')+'</div><div class="msg-content">'+esc(m.content)+'</div>'+renderAdminAttachments(m.attachments)+'</div>'});var rb=t.status==='closed'?'<div class="reply-bar"><div class="reply-actions"><button class="btn btn-primary" style="width:auto;padding:9px 20px" onclick="reopenTicket()">重新打开</button><button class="btn-sm" style="background:#fa8c16;color:#fff;margin-left:8px" onclick="inviteNewTicket()">发起新工单</button></div></div>':'<div class="reply-bar"><div class="image-preview-area" id="adminImagePreview" style="display:none"></div><textarea id="replyBox" placeholder="输入回复内容..."></textarea><div class="reply-actions"><div class="panel-actions"><button class="btn-sm btn-sm-danger" onclick="closeTicketManual()">关闭工单</button><button class="btn-sm" style="background:#fa8c16;color:#fff" onclick="inviteNewTicket()">发起新工单</button><button class="btn-sm" onclick="sendTicketNotifyEmail()">发送通知邮件</button></div><div style="display:flex;align-items:center;gap:6px"><label class="btn-img-upload" title="上传图片">上传图片<input type="file" id="adminImageInput" multiple accept="image/jpeg,image/png,image/webp" style="display:none" onchange="onAdminImagesSelected()"></label><button class="btn btn-primary" style="width:auto;padding:9px 20px" onclick="sendReply()">发送</button></div></div></div>';$('#detailPanel').innerHTML='<div class="detail-content"><div class="detail-header"><h3>#'+esc(t.public_ticket_no)+'</h3><div><span class="tag tag-blue" style="margin-right:6px">工单：'+st+'</span>'+(t.arbitration_requested&&t.status!=='closed'?'<span class="tag tag-red">仲裁</span>':'')+'</div></div><div class="detail-scroll"><div class="info-grid"><div class="info-item"><span class="info-label">店铺</span><span class="info-value">'+esc((t.store_name||''))+'</span></div><div class="info-item"><span class="info-label">店铺域名</span><span class="info-value">'+esc(sd(t.store_subdomain||''))+'</span></div><div class="info-item"><span class="info-label">订单号</span><span class="info-value">'+esc((t.order_id||''))+'</span></div><div class="info-item"><span class="info-label">订单编号</span><span class="info-value">'+esc((t.order_number||''))+'</span></div>'+renderOrderStatusFields(o)+'<div class="info-item"><span class="info-label">客户视角预览</span><span class="info-value"><a href="'+esc(pu)+'" target="_blank" rel="noopener">打开预览页面</a></span></div><div class="info-item"><span class="info-label">顾客邮箱</span><span class="info-value">'+esc((t.customer_email||''))+'</span></div><div class="info-item"><span class="info-label">顾客姓名</span><span class="info-value">'+esc((t.customer_name||o.customer_name||''))+'</span></div><div class="info-item"><span class="info-label">问题类型</span><span class="info-value">'+esc(issueTypeLabel(t.issue_type))+'</span></div><div class="info-item"><span class="info-label">金额</span><span class="info-value">'+esc((o.order_currency||'USD'))+' '+esc((o.order_amount||''))+'</span></div><div class="info-item"><span class="info-label">支付方式</span><span class="info-value">'+esc((o.payment_method||'无'))+'</span></div><div class="info-item"><span class="info-label">卡号后四位</span><span class="info-value">'+esc((o.card_last4||'无'))+'</span></div><div class="info-item"><span class="info-label">运单号</span><span class="info-value">'+SupportSafe.shipments(o,{packageLabel:'包裹',emptyLabel:'暂无运单',currentLabel:'当前'})+'</span></div>'+(ih?'<div class="info-item"><span class="info-label">商品</span><span class="info-value">'+ih+'</span></div>':'')+(o.paid_at?'<div class="info-item"><span class="info-label">下单时间</span><span class="info-value">'+formatTime(o.paid_at)+'</span></div>':'')+'<div class="info-item"><span class="info-label">工单创建时间</span><span class="info-value">'+formatTime(t.created_at)+'</span></div><div class="info-item"><span class="info-label">更新时间</span><span class="info-value">'+formatTime(t.updated_at)+'</span></div></div>'+renderShippingAddressCard(o.shipping_address)+'<div style="font-weight:600;font-size:14px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border)">消息记录</div><div class="msg-list">'+mh+'</div></div>'+rb+'</div>'}
+function renderDetail(d){var t=d.ticket,o=d.order||{},ms=d.messages;var pu=ticketPreviewUrl(t.public_ticket_no);var st=t.status==='closed'?'已关闭':(t.status==='waiting'?'等待顾客':'待处理');var ih='';if(Array.isArray(o.items)){ih=o.items.map(function(it){var img=itemImageUrl(it);return'<div style="display:flex;align-items:center;gap:6px;font-size:13px;line-height:1.6;margin-bottom:4px"><span style="color:#262626">'+esc((it.product_title||it.title||it.name||''))+'</span> <span style="color:#8c8c8c">x'+esc((it.quantity||1))+'</span>'+(img?' <a href="'+esc(img)+'" target="_blank" rel="noopener" style="color:#1890ff;font-size:12px;text-decoration:none" title="查看商品图片">图片</a>':'')+'</div>'}).join('')}var mh='';var rl={customer:'顾客',agent:'客服',system:'系统',platform:'平台'};ms.forEach(function(m){mh+='<div class="msg-item '+SupportSafe.role(m.sender_type)+'"><div class="msg-meta"><span class="msg-role '+SupportSafe.role(m.sender_type)+'">'+esc((rl[m.sender_type]||m.sender_type))+'</span><span class="msg-time">'+formatTime(m.created_at)+'</span>'+(m.sender_type==='agent'?'<div class="msg-actions"><button class="btn-sm btn-sm-danger" onclick="recallMsg('+Number(m.id)+')" title="撤回">撤回</button></div>':'')+'</div><div class="msg-content">'+esc(m.content)+'</div>'+renderAdminAttachments(m.attachments)+'</div>'});var rb=t.status==='closed'?'<div class="reply-bar"><div class="reply-actions"><button class="btn btn-primary" style="width:auto;padding:9px 20px" onclick="reopenTicket()">重新打开</button><button class="btn-sm" style="background:#fa8c16;color:#fff;margin-left:8px" onclick="inviteNewTicket()">发起新工单</button></div></div>':'<div class="reply-bar"><div class="image-preview-area" id="adminImagePreview" style="display:none"></div><div class="quick-reply-bar"><label for="quickReplySelect">快捷回复</label><select id="quickReplySelect" onchange="insertQuickReply(this.value)"><option value="">加载中...</option></select><button type="button" class="btn-sm" onclick="openQuickReplyManager()">管理</button></div><textarea id="replyBox" aria-label="回复内容" placeholder="输入回复内容..." oninput="resizeAdminReply()"></textarea><div class="reply-actions"><div class="panel-actions"><button class="btn-sm btn-sm-danger" onclick="closeTicketManual()">关闭工单</button><button class="btn-sm" style="background:#fa8c16;color:#fff" onclick="inviteNewTicket()">发起新工单</button><button class="btn-sm" onclick="sendTicketNotifyEmail()">发送通知邮件</button></div><div style="display:flex;align-items:center;gap:6px"><label class="btn-img-upload" title="上传图片">上传图片<input type="file" id="adminImageInput" multiple accept="image/jpeg,image/png,image/webp" style="display:none" onchange="onAdminImagesSelected()"></label><button class="btn btn-primary" style="width:auto;padding:9px 20px" onclick="sendReply()">发送</button></div></div></div>';$('#detailPanel').innerHTML='<div class="detail-content"><div class="detail-header"><h3>#'+esc(t.public_ticket_no)+'</h3><div><span class="tag tag-blue" style="margin-right:6px">工单：'+st+'</span>'+(t.arbitration_requested&&t.status!=='closed'?'<span class="tag tag-red">仲裁</span>':'')+'</div></div><div class="detail-scroll"><div class="info-grid"><div class="info-item"><span class="info-label">店铺</span><span class="info-value">'+esc((t.store_name||''))+'</span></div><div class="info-item"><span class="info-label">店铺域名</span><span class="info-value">'+esc(sd(t.store_subdomain||''))+'</span></div><div class="info-item"><span class="info-label">订单号</span><span class="info-value">'+esc((t.order_id||''))+'</span></div><div class="info-item"><span class="info-label">订单编号</span><span class="info-value">'+esc((t.order_number||''))+'</span></div>'+renderOrderStatusFields(o)+'<div class="info-item"><span class="info-label">客户视角预览</span><span class="info-value"><a href="'+esc(pu)+'" target="_blank" rel="noopener">打开预览页面</a></span></div><div class="info-item"><span class="info-label">顾客邮箱</span><span class="info-value">'+esc((t.customer_email||''))+'</span></div><div class="info-item"><span class="info-label">顾客姓名</span><span class="info-value">'+esc((t.customer_name||o.customer_name||''))+'</span></div><div class="info-item"><span class="info-label">问题类型</span><span class="info-value">'+esc(issueTypeLabel(t.issue_type))+'</span></div><div class="info-item"><span class="info-label">金额</span><span class="info-value">'+esc((o.order_currency||'USD'))+' '+esc((o.order_amount||''))+'</span></div><div class="info-item"><span class="info-label">支付方式</span><span class="info-value">'+esc((o.payment_method||'无'))+'</span></div><div class="info-item"><span class="info-label">卡号后四位</span><span class="info-value">'+esc((o.card_last4||'无'))+'</span></div><div class="info-item"><span class="info-label">运单号</span><span class="info-value">'+SupportSafe.shipments(o,{packageLabel:'包裹',emptyLabel:'暂无运单',currentLabel:'当前'})+'</span></div>'+(ih?'<div class="info-item"><span class="info-label">商品</span><span class="info-value">'+ih+'</span></div>':'')+(o.paid_at?'<div class="info-item"><span class="info-label">下单时间</span><span class="info-value">'+formatTime(o.paid_at)+'</span></div>':'')+'<div class="info-item"><span class="info-label">工单创建时间</span><span class="info-value">'+formatTime(t.created_at)+'</span></div><div class="info-item"><span class="info-label">更新时间</span><span class="info-value">'+formatTime(t.updated_at)+'</span></div></div>'+renderShippingAddressCard(o.shipping_address)+'<div style="font-weight:600;font-size:14px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border)">消息记录</div><div class="msg-list">'+mh+'</div></div>'+rb+'</div>';renderQuickReplyOptions();resizeAdminReply()}
 async function sendReply(){if(!currentTicket)return;var b=$('#replyBox');var c=b.value.trim();var hasImages=adminSelectedFiles.length>0;if(!c&&!hasImages)return;try{var fd=new FormData();fd.append('content',c);adminSelectedFiles.forEach(function(f){fd.append('images',f)});var r=await fetch(API+'/tickets/'+encodeURIComponent(currentTicket.public_ticket_no)+'/messages',{method:'POST',credentials:'same-origin',body:fd});var d=await r.json();if(d.ok){b.value='';clearAdminImages();loadDetail(currentTicket.public_ticket_no);loadTickets();loadStats();loadPendingCount()}else alert(d.error||'发送失败')}catch(e){alert('网络错误')}}
 async function closeTicketManual(){if(!currentTicket)return;if(!confirm('确认关闭此工单？'))return;try{var r=await fetch(API+'/tickets/'+encodeURIComponent(currentTicket.public_ticket_no)+'/status',{method:'PATCH',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:'closed'})});var d=await r.json();if(d.ok){loadDetail(currentTicket.public_ticket_no);loadTickets();loadStats()}else alert(d.error||'关闭失败')}catch(e){alert('网络错误')}}
 async function reopenTicket(){if(!currentTicket)return;if(!confirm('确认重新打开此工单？'))return;try{var r=await fetch(API+'/tickets/'+encodeURIComponent(currentTicket.public_ticket_no)+'/reopen',{method:'POST',credentials:'same-origin'});var d=await r.json();if(d.ok){loadDetail(currentTicket.public_ticket_no);loadTickets();loadStats()}else alert(d.error||'重新打开失败')}catch(e){alert('网络错误')}}
@@ -104,6 +157,172 @@ async function loadPendingCount(){try{var r=await fetch(API+'/email-jobs/pending
 var adminSelectedFiles=[];function renderAdminAttachments(a){return SupportSafe.images(a)}function viewAdminImage(u){SupportSafe.showImage(u)}function onAdminImagesSelected(){var i=$('#adminImageInput');if(!i||!i.files)return;for(var j=0;j<i.files.length;j++){if(adminSelectedFiles.length>=3)break;adminSelectedFiles.push(i.files[j])}i.value='';renderAdminImagePreviews()}function renderAdminImagePreviews(){var c=$('#adminImagePreview');if(!c)return;if(!adminSelectedFiles.length){c.style.display='none';c.innerHTML='';return}c.style.display='flex';var h='';adminSelectedFiles.forEach(function(f,idx){var u=URL.createObjectURL(f);h+='<div class="image-preview-item"><img src="'+u+'" alt="preview"><button class="remove-btn" onclick="removeAdminImage('+idx+')">×</button></div>'});c.innerHTML=h}function removeAdminImage(idx){adminSelectedFiles.splice(idx,1);renderAdminImagePreviews()}function clearAdminImages(){adminSelectedFiles=[];var c=$('#adminImagePreview');if(c){c.style.display='none';c.innerHTML=''}}
 function itemImageUrl(it){if(!it)return'';var img=it.image;var src=typeof img==='object'&&img?img.src:img;return SupportSafe.url(src||it.product_image||it.image_src||'')}
 // Shipping edits have their own state so a result refresh never discards a drafted reply.
+function resizeAdminReply() {
+  var box = document.getElementById('replyBox');
+  if (!box) return;
+  box.style.height = 'auto';
+  var limit = Math.max(64, Math.floor(window.innerHeight / 2));
+  var height = Math.min(Math.max(64, box.scrollHeight + 2), limit);
+  box.style.height = height + 'px';
+  box.style.overflowY = box.scrollHeight + 2 > limit ? 'auto' : 'hidden';
+}
+if (window.addEventListener) {
+  if (window.__adminReplyResize) window.removeEventListener('resize', window.__adminReplyResize);
+  window.__adminReplyResize = resizeAdminReply;
+  window.addEventListener('resize', window.__adminReplyResize);
+}
+
+async function loadQuickReplies() {
+  var epoch = adminEpoch();
+  var request = ++quickRepliesRequest;
+  try {
+    var response = await fetch(API + '/quick-replies', { credentials: 'same-origin', cache: 'no-store' });
+    var data = await response.json();
+    if (epoch !== adminEpoch() || request !== quickRepliesRequest) return false;
+    if (!response.ok || !data.ok) throw new Error(data.error || '快捷回复加载失败');
+    quickReplies = data.quick_replies || [];
+    quickRepliesLoaded = true;
+    quickRepliesError = '';
+    renderQuickReplyOptions();
+    return true;
+  } catch (error) {
+    if (epoch !== adminEpoch() || request !== quickRepliesRequest) return false;
+    quickRepliesError = error.message || '快捷回复加载失败';
+    renderQuickReplyOptions();
+    return false;
+  }
+}
+function renderQuickReplyOptions() {
+  var select = document.getElementById('quickReplySelect');
+  if (!select) return;
+  var label = quickRepliesError ? '加载失败，请打开管理重试' : !quickRepliesLoaded ? '加载中...' : quickReplies.length ? '选择文案，插入回复框' : '暂无快捷回复，点击管理添加';
+  select.innerHTML = '<option value="">' + esc(label) + '</option>' + quickReplies.map(function(reply) {
+    return '<option value="' + esc(reply.id) + '">' + esc(reply.title) + '</option>';
+  }).join('');
+}
+function insertQuickReply(id) {
+  var reply = quickReplies.find(function(item) { return String(item.id) === String(id); });
+  var box = document.getElementById('replyBox');
+  if (!reply || !box) return;
+  box.setRangeText(reply.content, box.selectionStart, box.selectionEnd, 'end');
+  document.getElementById('quickReplySelect').value = '';
+  box.focus();
+  resizeAdminReply();
+}
+function quickReplyManagerActive(manager) {
+  return manager && manager === quickReplyManager && manager.dialog.isConnected && manager.epoch === adminEpoch();
+}
+async function openQuickReplyManager() {
+  if (quickReplyManagerActive(quickReplyManager)) return;
+  var dialog = document.createElement('dialog');
+  dialog.className = 'quick-reply-dialog';
+  dialog.setAttribute('aria-labelledby', 'quickReplyHeading');
+  dialog.innerHTML = '<header><div><h2 id="quickReplyHeading">快捷回复</h2><p>所有客服共用，插入回复框后可继续修改。</p></div><button type="button" class="btn-sm" onclick="closeQuickReplyManager()">关闭</button></header><div class="quick-reply-body" id="quickReplyManagerBody">加载中...</div>';
+  document.getElementById('mainArea').appendChild(dialog);
+  var manager = { dialog: dialog, epoch: adminEpoch(), busy: false, editingId: null };
+  quickReplyManager = manager;
+  dialog.addEventListener('cancel', function(event) { event.preventDefault(); closeQuickReplyManager(); });
+  dialog.showModal();
+  await loadQuickReplies();
+  if (quickReplyManagerActive(manager)) renderQuickReplyManager();
+}
+function closeQuickReplyManager() {
+  if (!quickReplyManager || quickReplyManager.busy) return;
+  quickReplyManager.dialog.close();
+  quickReplyManager.dialog.remove();
+  quickReplyManager = null;
+}
+function renderQuickReplyManager() {
+  if (!quickReplyManagerActive(quickReplyManager)) return;
+  quickReplyManager.editingId = null;
+  var rows = quickReplies.map(function(reply) {
+    return '<div class="quick-reply-item"><div class="quick-reply-item-text"><strong>' + esc(reply.title) + '</strong><p>' + esc(reply.content) + '</p></div><div class="quick-reply-item-actions">' +
+      '<button type="button" class="btn-sm" data-id="' + esc(reply.id) + '" onclick="editQuickReply(this.dataset.id)">编辑</button>' +
+      '<button type="button" class="btn-sm btn-sm-danger" data-id="' + esc(reply.id) + '" onclick="removeQuickReply(this.dataset.id)">删除</button></div></div>';
+  }).join('');
+  document.getElementById('quickReplyManagerBody').innerHTML = '<div class="quick-reply-error" id="quickReplyError" role="alert">' + esc(quickRepliesError) + '</div>' +
+    (quickRepliesError ? '<button type="button" class="btn-sm" onclick="retryQuickReplies()">重试加载</button>' : '') +
+    '<div class="quick-reply-list">' + (rows || '<p>还没有快捷回复，添加常用文案后即可在回复栏选择。</p>') + '</div>' +
+    '<div class="quick-reply-footer"><button type="button" class="btn-sm btn-sm-primary" onclick="editQuickReply()">新增快捷回复</button></div>';
+}
+async function retryQuickReplies() {
+  var manager = quickReplyManager;
+  if (!quickReplyManagerActive(manager) || manager.busy) return;
+  quickReplyBusy(manager, true);
+  await loadQuickReplies();
+  if (quickReplyManagerActive(manager)) {
+    renderQuickReplyManager();
+    quickReplyBusy(manager, false);
+  }
+}
+function editQuickReply(id) {
+  var manager = quickReplyManager;
+  if (!quickReplyManagerActive(manager) || manager.busy) return;
+  var reply = id ? quickReplies.find(function(item) { return String(item.id) === String(id); }) : null;
+  if (id && !reply) return;
+  manager.editingId = reply ? reply.id : null;
+  document.getElementById('quickReplyManagerBody').innerHTML = '<form onsubmit="event.preventDefault();saveQuickReply()">' +
+    '<label class="quick-reply-field">标题<input id="quickReplyTitle" maxlength="80" required placeholder="例如：物流查询" value="' + esc(reply ? reply.title : '') + '"></label>' +
+    '<label class="quick-reply-field">回复正文<textarea id="quickReplyContent" maxlength="20000" required placeholder="填写要发送给顾客的常用回复">' + esc(reply ? reply.content : '') + '</textarea></label>' +
+    '<div class="quick-reply-error" id="quickReplyError" role="alert"></div>' +
+    '<div class="quick-reply-footer"><button type="button" class="btn-sm" onclick="renderQuickReplyManager()">取消</button><button type="submit" class="btn-sm btn-sm-primary">保存</button></div></form>';
+  document.getElementById('quickReplyTitle').focus();
+}
+function quickReplyBusy(manager, busy) {
+  manager.busy = busy;
+  manager.dialog.querySelectorAll('button, input, textarea').forEach(function(element) { element.disabled = busy; });
+}
+async function saveQuickReply() {
+  var manager = quickReplyManager;
+  if (!quickReplyManagerActive(manager) || manager.busy) return;
+  var title = document.getElementById('quickReplyTitle').value.trim();
+  var content = document.getElementById('quickReplyContent').value.trim();
+  var errorBox = document.getElementById('quickReplyError');
+  if (!title || !content) { errorBox.textContent = '请填写标题和回复正文'; return; }
+  errorBox.textContent = '';
+  quickReplyBusy(manager, true);
+  try {
+    var response = await fetch(API + '/quick-replies' + (manager.editingId ? '/' + encodeURIComponent(manager.editingId) : ''), {
+      method: manager.editingId ? 'PUT' : 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: title, content: content })
+    });
+    var data = await response.json();
+    if (!quickReplyManagerActive(manager)) return;
+    if (!response.ok || !data.ok) throw new Error(data.error || '保存失败');
+    quickRepliesRequest++;
+    quickReplies = [data.quick_reply].concat(quickReplies.filter(function(item) { return String(item.id) !== String(data.quick_reply.id); }));
+    quickRepliesLoaded = true;
+    quickRepliesError = '';
+    renderQuickReplyOptions();
+    renderQuickReplyManager();
+    showToast('快捷回复已保存');
+  } catch (error) {
+    if (quickReplyManagerActive(manager)) errorBox.textContent = error.message || '保存失败，请重试';
+  } finally {
+    if (quickReplyManagerActive(manager)) quickReplyBusy(manager, false);
+  }
+}
+async function removeQuickReply(id) {
+  var manager = quickReplyManager;
+  if (!quickReplyManagerActive(manager) || manager.busy) return;
+  if (!confirm('删除这条快捷回复？所有客服将无法再选择它，已发送的消息不受影响。')) return;
+  quickReplyBusy(manager, true);
+  try {
+    var response = await fetch(API + '/quick-replies/' + encodeURIComponent(id), { method: 'DELETE', credentials: 'same-origin' });
+    var data = await response.json();
+    if (!quickReplyManagerActive(manager)) return;
+    if (!response.ok || !data.ok) throw new Error(data.error || '删除失败');
+    quickRepliesRequest++;
+    quickReplies = quickReplies.filter(function(item) { return String(item.id) !== String(id); });
+    renderQuickReplyOptions();
+    renderQuickReplyManager();
+    showToast('快捷回复已删除');
+  } catch (error) {
+    if (quickReplyManagerActive(manager)) document.getElementById('quickReplyError').textContent = error.message || '删除失败，请重试';
+  } finally {
+    if (quickReplyManagerActive(manager)) quickReplyBusy(manager, false);
+  }
+}
+
 var shippingAddressEditor = null;
 var shippingAddressSubmissions = window.__shippingAddressSubmissions || (window.__shippingAddressSubmissions = {});
 var shippingAddressFields = [
