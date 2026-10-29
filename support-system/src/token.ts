@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import type { PoolClient } from 'pg';
 import { query } from './pg';
 
 export type AccessTokenPurpose = 'support_bootstrap' | 'ticket_access';
@@ -43,9 +44,9 @@ async function storeToken(params: {
   publicTicketNo?: string;
   customerEmail: string;
   forceNewTicket?: boolean;
-}): Promise<string> {
+}, client?: PoolClient): Promise<string> {
   const days = getExpiryDays(params.purpose);
-  await query(
+  await (client || { query }).query(
     `INSERT INTO support_access_tokens
       (token_hash, purpose, store_subdomain, order_id, public_ticket_no, customer_email, expires_at, force_new_ticket)
      VALUES ($1, $2, $3, $4, $5, $6, now() + ($7 || ' days')::interval, $8)`,
@@ -85,7 +86,7 @@ export async function createBootstrapToken(params: {
 export async function createTicketAccessToken(params: {
   publicTicketNo: string;
   customerEmail: string;
-}): Promise<string> {
+}, client?: PoolClient): Promise<string> {
   const token = generateOpaqueToken('ta');
   const th = hashToken(token);
   await storeToken({
@@ -93,7 +94,7 @@ export async function createTicketAccessToken(params: {
     purpose: 'ticket_access',
     publicTicketNo: params.publicTicketNo,
     customerEmail: params.customerEmail,
-  });
+  }, client);
   return token;
 }
 

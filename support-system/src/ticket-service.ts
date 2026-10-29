@@ -1,4 +1,5 @@
-import { query } from './pg';
+import type { PoolClient } from 'pg';
+import { query, getClient } from './pg';
 import { createTicketAccessToken, hashToken } from './token';
 import { formatEasternTime } from './email-service';
 
@@ -90,58 +91,105 @@ export async function createTicket(params: {
     throw new Error('Invalid dispute type');
   }
 
-  const publicTicketNo = generatePublicTicketNo();
-  const accessToken = await createTicketAccessToken({
-    publicTicketNo,
-    customerEmail: params.customerEmail,
-  });
-  const accessTokenHash = hashToken(accessToken);
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    if (params.bootstrapTokenHash) {
+      // Serialize activation of the same invitation, including simultaneous submissions.
+      const locked = await client.query(
+        `SELECT purpose, store_subdomain, order_id, customer_email, expires_at, revoked_at
+         FROM support_access_tokens WHERE token_hash = $1 FOR UPDATE`,
+        [params.bootstrapTokenHash],
+      );
+      const invitation = locked.rows[0];
+      if (!invitation || invitation.purpose !== 'support_bootstrap' || invitation.revoked_at ||
+          new Date(invitation.expires_at).getTime() <= Date.now() ||
+          invitation.store_subdomain !== params.storeSubdomain || invitation.order_id !== params.orderId ||
+          invitation.customer_email !== params.customerEmail) {
+        throw new Error('Invalid or expired token');
+      }
+      const existingTicket = await findTicketByBootstrapTokenHash(params.bootstrapTokenHash, client);
+      if (existingTicket) {
+        const accessToken = await createTicketAccessToken({
+          publicTicketNo: existingTicket.public_ticket_no,
+          customerEmail: params.customerEmail,
+        }, client);
+        await client.query('COMMIT');
+        return { publicTicketNo: existingTicket.public_ticket_no, accessToken };
+      }
+    }
 
-  const result = await query(
-    `INSERT INTO support_tickets
-      (public_ticket_no, store_subdomain, store_name, order_id, order_number,
-       customer_email, customer_name, issue_type, status,
-       customer_access_token_hash, bootstrap_token_hash)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-     RETURNING public_ticket_no`,
-    [
+    const publicTicketNo = generatePublicTicketNo();
+    const accessToken = await createTicketAccessToken({
       publicTicketNo,
-      params.storeSubdomain,
-      params.storeName,
-      params.orderId,
-      params.orderNumber,
-      params.customerEmail,
-      params.customerName || null,
-      sanitizedIssueType,
-      'open',
-      accessTokenHash,
-      params.bootstrapTokenHash || null,
-    ],
-  );
+      customerEmail: params.customerEmail,
+    }, client);
+    const accessTokenHash = hashToken(accessToken);
 
-  const ticketNo = result.rows[0].public_ticket_no;
+    const result = await client.query(
+      `INSERT INTO support_tickets
+        (public_ticket_no, store_subdomain, store_name, order_id, order_number,
+         customer_email, customer_name, issue_type, status,
+         customer_access_token_hash, bootstrap_token_hash)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       RETURNING public_ticket_no`,
+      [
+        publicTicketNo,
+        params.storeSubdomain,
+        params.storeName,
+        params.orderId,
+        params.orderNumber,
+        params.customerEmail,
+        params.customerName || null,
+        sanitizedIssueType,
+        'open',
+        accessTokenHash,
+        params.bootstrapTokenHash || null,
+      ],
+    );
 
-  // System message first, then customer message (投诉工单用投诉专用文案)
-  const now = new Date().toISOString();
-  const isComplaint = isComplaintIssueType(sanitizedIssueType);
-  const createMsg = isComplaint
-    ? `Customer filed a formal complaint at ${now}`
-    : `Customer opened a support ticket at ${now}`;
-  await query(
-    `INSERT INTO support_ticket_messages
-      (public_ticket_no, sender_type, content)
-     VALUES ($1, 'system', $2)`,
-    [ticketNo, createMsg],
-  );
+    const ticketNo = result.rows[0].public_ticket_no;
 
-  await query(
-    `INSERT INTO support_ticket_messages
-      (public_ticket_no, sender_type, sender_email, sender_name, content, attachments)
-     VALUES ($1, 'customer', $2, $3, $4, $5)`,
-    [ticketNo, params.customerEmail, params.customerName || null, params.description, JSON.stringify(params.attachments || [])],
-  );
+    // System message first, then customer message (投诉工单用投诉专用文案)
+    const now = new Date().toISOString();
+    const isComplaint = isComplaintIssueType(sanitizedIssueType);
+    const createMsg = isComplaint
+      ? `Customer filed a formal complaint at ${now}`
+      : `Customer opened a support ticket at ${now}`;
+    await client.query(
+      `INSERT INTO support_ticket_messages
+        (public_ticket_no, sender_type, content)
+       VALUES ($1, 'system', $2)`,
+      [ticketNo, createMsg],
+    );
 
-  return { publicTicketNo: ticketNo, accessToken };
+    await client.query(
+      `INSERT INTO support_ticket_messages
+        (public_ticket_no, sender_type, sender_email, sender_name, content, attachments)
+       VALUES ($1, 'customer', $2, $3, $4, $5)`,
+      [ticketNo, params.customerEmail, params.customerName || null, params.description, JSON.stringify(params.attachments || [])],
+    );
+
+    // Copy the first access link's exact expiry only after the complete ticket exists.
+    // Reads, replies and duplicate submissions never enter this activation update.
+    if (params.bootstrapTokenHash) {
+      await client.query(
+        `UPDATE support_access_tokens invitation
+         SET expires_at = access.expires_at
+         FROM support_access_tokens access
+         WHERE invitation.token_hash = $1 AND access.token_hash = $2
+           AND access.purpose = 'ticket_access'`,
+        [params.bootstrapTokenHash, accessTokenHash],
+      );
+    }
+    await client.query('COMMIT');
+    return { publicTicketNo: ticketNo, accessToken };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function getTicketByPublicNo(publicTicketNo: string) {
@@ -310,8 +358,8 @@ export async function listExistingTickets(params: {
 }
 
 /** 通过 bootstrap token hash 查找由其创建的工单（一个 bt 链接对应一个工单） */
-export async function findTicketByBootstrapTokenHash(tokenHash: string) {
-  const r = await query(
+export async function findTicketByBootstrapTokenHash(tokenHash: string, client?: PoolClient) {
+  const r = await (client || { query }).query(
     `SELECT public_ticket_no, status FROM support_tickets
      WHERE bootstrap_token_hash = $1
      ORDER BY created_at DESC

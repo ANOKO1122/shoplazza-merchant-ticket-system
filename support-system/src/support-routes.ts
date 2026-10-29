@@ -136,30 +136,29 @@ export function createSupportRouter(): express.Router {
         items: enrichItemsWithThumbnails(snapshot.items_json || []),
       } : null;
 
-      // 手动邀请场景：检查此 bt 链接是否已生成过工单（一个bt链接对应一个工单）
+      // 已激活的邀请优先进入它创建的工单，包含已关闭工单，避免跳到同订单的其他工单。
+      const ticketFromToken = await findTicketByBootstrapTokenHash(hashToken(rawToken));
+
+      if (ticketFromToken) {
+        const taToken = await createTicketAccessToken({
+          publicTicketNo: ticketFromToken.public_ticket_no,
+          customerEmail: customer_email,
+        });
+        res.json({
+          ok: true,
+          mode: 'existing_ticket',
+          order,
+          ticket: {
+            public_ticket_no: ticketFromToken.public_ticket_no,
+            status: ticketFromToken.status,
+          },
+          accessToken: taToken,
+        });
+        return;
+      }
+
       if (payload.force_new_ticket) {
-        const tokenHash = hashToken(rawToken);
-        const ticketFromToken = await findTicketByBootstrapTokenHash(tokenHash);
-
-        if (ticketFromToken) {
-          const taToken = await createTicketAccessToken({
-            publicTicketNo: ticketFromToken.public_ticket_no,
-            customerEmail: customer_email,
-          });
-          res.json({
-            ok: true,
-            mode: 'existing_ticket',
-            order,
-            ticket: {
-              public_ticket_no: ticketFromToken.public_ticket_no,
-              status: ticketFromToken.status,
-            },
-            accessToken: taToken,
-          });
-          return;
-        }
-
-        // 尚未生成工单，返回新建模式
+        // 手动邀请尚未生成工单，返回新建模式
         res.json({ ok: true, mode: 'new_ticket', order, ticket: null });
         return;
       }
@@ -224,7 +223,18 @@ export function createSupportRouter(): express.Router {
         return;
       }
 
-      // 仅当 token 非 force_new_ticket 时才检测已有工单冲突
+      // 重复提交已激活的邀请只进入原工单，不创建或再次延长邀请期限。
+      const ticketFromToken = await findTicketByBootstrapTokenHash(hashToken(token));
+      if (ticketFromToken) {
+        const taToken = await createTicketAccessToken({
+          publicTicketNo: ticketFromToken.public_ticket_no,
+          customerEmail: customer_email,
+        });
+        res.json({ ok: true, publicTicketNo: ticketFromToken.public_ticket_no, accessToken: taToken });
+        return;
+      }
+
+      // 未激活的普通邀请保留已有工单冲突检查。
       if (!payload.force_new_ticket) {
         const existingTicket = await findExistingTicket({
           storeSubdomain: store_subdomain,
@@ -233,30 +243,20 @@ export function createSupportRouter(): express.Router {
         });
 
         if (existingTicket) {
+          // Another submission may have activated this invitation after the first hash lookup.
+          const activatedTicket = await findTicketByBootstrapTokenHash(hashToken(token));
+          if (activatedTicket) {
+            const taToken = await createTicketAccessToken({
+              publicTicketNo: activatedTicket.public_ticket_no,
+              customerEmail: customer_email,
+            });
+            res.json({ ok: true, publicTicketNo: activatedTicket.public_ticket_no, accessToken: taToken });
+            return;
+          }
           res.status(409).json({
             ok: false,
             error: 'A dispute already exists for this order',
             public_ticket_no: existingTicket.public_ticket_no,
-          });
-          return;
-        }
-      }
-
-      // force_new_ticket：检查此 bt 链接是否已生成过工单（一个bt链接对应一个工单）
-      if (payload.force_new_ticket) {
-        const tokenHash = hashToken(token);
-        const ticketFromToken = await findTicketByBootstrapTokenHash(tokenHash);
-
-        if (ticketFromToken) {
-          // 已有工单，生成 ta_ 令牌返回
-          const taToken = await createTicketAccessToken({
-            publicTicketNo: ticketFromToken.public_ticket_no,
-            customerEmail: customer_email,
-          });
-          res.json({
-            ok: true,
-            publicTicketNo: ticketFromToken.public_ticket_no,
-            accessToken: taToken,
           });
           return;
         }
@@ -293,6 +293,10 @@ export function createSupportRouter(): express.Router {
 
       res.json({ ok: true, ...result });
     } catch (e: any) {
+      if (e.message === 'Invalid or expired token') {
+        res.status(401).json({ ok: false, error: e.message });
+        return;
+      }
       if (e.message && (e.message.includes('Invalid dispute type') || e.message.includes('Description must be under'))) {
         res.status(400).json({ ok: false, error: e.message });
         return;
