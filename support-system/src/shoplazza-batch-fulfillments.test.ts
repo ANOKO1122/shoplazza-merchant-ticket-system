@@ -78,15 +78,18 @@ test('empty input makes no request and missing upstream IDs never become empty f
   assert.equal(requests, 1);
 });
 
-test('confirmed waiting orders may omit fulfillments without failing shipped orders in the batch', async () => {
+test('confirmed waiting and cancelled orders may omit fulfillments without failing shipped orders in the batch', async () => {
   const packages = [{ id: 'package-1', order_id: 'shipped', tracking_number: 'TRACK-1' }];
   const api = client(async () => response(page([
     { id: 'waiting', status: 'placed', financial_status: 'paid', fulfillment_status: 'waiting' },
+    { id: 'cancelled', status: 'finished', financial_status: 'refunded', fulfillment_status: 'cancelled' },
     { id: 'shipped', fulfillment_status: 'shipped', fulfillments: packages },
   ])));
-  const result = await api.listOrderFulfillmentsBatch(STORE, ['waiting', 'shipped', 'missing']);
+  const result = await api.listOrderFulfillmentsBatch(STORE, ['waiting', 'cancelled', 'shipped', 'missing']);
   assert.equal(result.has('waiting'), true);
   assert.equal(result.get('waiting')?.length, 0);
+  assert.equal(result.has('cancelled'), true);
+  assert.equal(result.get('cancelled')?.length, 0);
   assert.deepEqual(JSON.parse(JSON.stringify(result.get('shipped'))), packages);
   assert.equal(result.has('missing'), false);
 });
@@ -146,6 +149,7 @@ test('malformed or unrelated results reject the batch instead of yielding succes
     { name: 'shipped order without fulfillments', body: page([{ id: 'order-1', fulfillment_status: 'shipped' }]) },
     { name: 'unknown status without fulfillments', body: page([{ id: 'order-1', fulfillment_status: 'unknown' }]) },
     { name: 'waiting order with explicit null fulfillments', body: page([{ id: 'order-1', fulfillment_status: 'waiting', fulfillments: null }]) },
+    { name: 'cancelled order with explicit null fulfillments', body: page([{ id: 'order-1', fulfillment_status: 'cancelled', fulfillments: null }]) },
     { name: 'null fulfillments', body: page([{ id: 'order-1', fulfillments: null }]) },
     { name: 'non-array fulfillments', body: page([{ id: 'order-1', fulfillments: {} }]) },
     { name: 'null fulfillment', body: page([{ id: 'order-1', fulfillments: [null] }]) },

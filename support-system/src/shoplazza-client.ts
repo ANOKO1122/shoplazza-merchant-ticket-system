@@ -670,9 +670,10 @@ export async function listOrderFulfillmentsBatch(
           || typeof order.id !== 'string' || !requested.has(order.id)) {
           throw new FulfillmentBatchError('contains an invalid or unexpected order ID');
         }
-        // Verified against the per-order endpoint: unshipped waiting orders omit this field.
+        // Verified against the per-order endpoint: waiting/cancelled empty orders omit this field.
         // Other missing/null shapes remain errors so incomplete shipped orders cannot pass as empty.
-        const items: unknown = order.fulfillments === undefined && order.fulfillment_status === 'waiting'
+        const items: unknown = order.fulfillments === undefined
+          && (order.fulfillment_status === 'waiting' || order.fulfillment_status === 'cancelled')
           ? [] : order.fulfillments;
         if (!Array.isArray(items) || items.some(item => !item || typeof item !== 'object' || Array.isArray(item))) {
           throw new FulfillmentBatchError('response has no valid fulfillments array');

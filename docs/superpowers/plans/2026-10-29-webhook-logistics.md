@@ -76,5 +76,7 @@ Files: fulfillment-reconcile.ts/test, new selection SQL module and DB integratio
 
 - First deployed full batch revealed that the provider omits fulfillments for waiting orders; the strict parser rejected their mixed batches. Existing package IDs and 2,145 stored tracking numbers were preserved, and no email jobs were created.
 - Read-only probes compared two waiting orders with their individual fulfillment endpoints and one shipped control. A 50-ID response returned exactly 50 IDs: 11 waiting orders with omitted fulfillments, 38 shipped and one finished order with nonempty arrays.
-- Normalize only an omitted field with explicit waiting status. Preserve errors for null, unknown/shipped status without arrays, missing requested IDs, and malformed packages.
+- Normalize only an omitted field with explicit waiting/cancelled status. Preserve errors for null, unknown/shipped status without arrays, missing requested IDs, and malformed packages.
 - Added a mixed-batch regression (observed RED then GREEN) plus rejection cases. Independent narrow review: no findings, 44 focused tests passed. Full suite and build passed again; selection SQL and merger are unchanged.
+
+- A second 50-ID live probe identified one cancelled/refunded order with omitted fulfillments; its individual endpoint also returned exact Success/data {}. Added this narrow valid-empty case and an explicit null rejection regression. Empty incoming lists preserve existing package and tracking history. Independent batch/merge verification: 82 tests passed.
