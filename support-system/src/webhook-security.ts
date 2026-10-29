@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import type { Request, RequestHandler } from 'express';
 import { buildStoreDomain } from './config';
+import type { OperationLogParams } from './log-service';
 
 // 独立于店匠应用的 HMAC 签名：通过 HTTPS 回调地址携带每店密钥。
 // 当前部署没有店匠 Client Secret，不能把 Access Token 当作签名密钥。
@@ -40,6 +41,14 @@ const REJECTION_REASONS = [
 
 export type WebhookRejectionReason = typeof REJECTION_REASONS[number];
 
+type WebhookRejectionSink = (entry: OperationLogParams) => Promise<void>;
+let rejectionSink: WebhookRejectionSink | undefined;
+
+/** Wire the application audit service at startup without importing its database dependencies here. */
+export function configureWebhookRejectionLogging(sink?: WebhookRejectionSink): void {
+  rejectionSink = sink;
+}
+
 function safeShop(value: unknown): string | undefined {
   if (typeof value !== 'string' || !value) return undefined;
   // Header/path values are untrusted: reject URLs, emails, control characters and credential-like tokens.
@@ -47,17 +56,37 @@ function safeShop(value: unknown): string | undefined {
     ? value.toLowerCase() : '[invalid]';
 }
 
+function warnRejection(prefix: string, json: string): void {
+  try {
+    console.warn(prefix, json);
+  } catch {
+    // A failed log destination must never alter webhook authentication or create an unhandled rejection.
+  }
+}
+
 /** Deliberately accepts no URL/query/body/error fields; delivery identifiers are only logged as hashes. */
 export function logWebhookRejection(req: Pick<Request, 'params' | 'get'>, reason: WebhookRejectionReason): void {
   const topic = req.get('X-Shoplazza-Topic');
   const deliveryId = req.get('X-Shoplazza-Deduplication-Id');
-  console.warn('[webhook-rejected]', JSON.stringify({
+  const details = {
     reason: REJECTION_REASONS.includes(reason) ? reason : 'unknown_rejection',
+    receivedAt: new Date().toISOString(),
     shop: safeShop(req.params.storeSubdomain),
     headerShop: safeShop(req.get('X-Shoplazza-Shop-Domain')),
     topic: topic ? (/^[a-z_]{1,24}\/[a-z_]{1,32}$/.test(topic) ? topic : '[invalid]') : undefined,
     deliveryIdHash: deliveryId ? crypto.createHash('sha256').update(deliveryId).digest('hex').slice(0, 16) : undefined,
-  }));
+  };
+  const json = JSON.stringify(details);
+  warnRejection('[webhook-rejected]', json);
+  const sink = rejectionSink;
+  if (!sink) return;
+  // Snapshot only redacted metadata, then leave the response path before starting any audit I/O.
+  void Promise.resolve().then(() => sink({
+    category: 'webhook', action: 'rejected', actor: 'system',
+    storeSubdomain: details.shop === '[invalid]' ? undefined : details.shop,
+    summary: `Webhook rejected: ${details.reason}`, status: 'failed', failedAtStep: 'ingress',
+    detailJson: details,
+  })).catch(() => warnRejection('[webhook-rejection-audit-failed]', json));
 }
 
 export const requireWebhookAuth: RequestHandler = (req, res, next) => {

@@ -60,11 +60,11 @@ test('a webhook burst sharing the admin IP does not consume the interactive API 
   assert.equal(h.accepted(), 236);
 });
 
-test('authenticated stores have separate budgets and overload gets a retryable 503', async t => {
+test('authenticated webhook bursts above 600 per store are accepted while invalid credentials remain rejected', async t => {
   const h = await harness(t);
   for (let i = 0; i < 20; i++) assert.equal(await h.request('a.myshoplaza.com', false), 401);
-  for (let i = 0; i < 600; i++) assert.equal(await h.request('a.myshoplaza.com'), 200);
-  assert.equal(await h.request('a.myshoplaza.com'), 503);
+  for (let i = 0; i < 650; i++) assert.equal(await h.request('a.myshoplaza.com'), 200);
+  assert.equal(await h.request('a.myshoplaza.com', false), 401);
   assert.equal(await h.request('b.myshoplaza.com'), 200);
-  assert.equal(h.accepted(), 601);
+  assert.equal(h.accepted(), 651);
 });

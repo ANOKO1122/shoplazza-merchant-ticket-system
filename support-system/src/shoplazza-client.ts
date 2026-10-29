@@ -595,3 +595,117 @@ export async function listOrderFulfillments(
   }
   throw new Error('Fulfillment list exceeded 200 pages');
 }
+
+class FulfillmentBatchError extends Error {
+  constructor(reason: string) { super(`Fulfillment batch ${reason}`); }
+}
+
+// Compare JSON objects independently of key insertion order, retaining array order and every field.
+function fulfillmentFingerprint(value: unknown): string {
+  return JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item)
+    ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
+}
+
+/** Missing IDs stay absent; callers must not treat them as successful empty fulfillment lists. */
+export async function listOrderFulfillmentsBatch(
+  store: ShoplazzaStoreConfig,
+  orderIds: string[],
+): Promise<Map<string, Record<string, unknown>[]>> {
+  if (!Array.isArray(orderIds) || orderIds.some(id => typeof id !== 'string' || !id.trim())) {
+    throw new FulfillmentBatchError('requires nonempty string order IDs');
+  }
+  const ids = [...new Set(orderIds.map(id => id.trim()))];
+  if (ids.length > 50) throw new FulfillmentBatchError('exceeds the 50 unique order IDs limit');
+  const results = new Map<string, Record<string, unknown>[]>();
+  if (ids.length === 0) return results;
+  const requested = new Set(ids);
+  const fingerprints = new Map<string, string>();
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+
+  try {
+    for (let page = 0; page < 200; page++) {
+      const params = new URLSearchParams({ page_size: '250' });
+      for (const id of ids) params.append('ids', id);
+      if (cursor) params.set('cursor', cursor);
+      await waitForRateLimit();
+      const controller = new AbortController();
+      // Keep the absolute deadline alive through body consumption, not just headers.
+      const timeout = setTimeout(() => controller.abort(), 18000);
+      let body: any;
+      try {
+        const response = await fetch(`https://${buildApiHost(store.subdomain)}/openapi/2025-06/orders?${params}`, {
+          method: 'GET',
+          headers: { 'Access-Token': store.accessToken, 'Content-Type': 'application/json' },
+          signal: controller.signal as any,
+          timeout: 18000,
+        });
+        if (!response.ok) {
+          (response.body as any)?.destroy?.();
+          throw new FulfillmentBatchError(`HTTP ${response.status}`);
+        }
+        body = JSON.parse(await response.text());
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        throw new FulfillmentBatchError('response is not an object');
+      }
+      if (body.code !== undefined && body.code !== 'Success') {
+        throw new FulfillmentBatchError('API returned an unsuccessful code');
+      }
+      const data = body.data === undefined ? body : body.data;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        throw new FulfillmentBatchError('response has no valid orders array');
+      }
+      // Live list pagination can end with exactly { code: 'Success', data: {} }.
+      if (body.code === 'Success' && data === body.data && Object.keys(data).length === 0
+        && Object.keys(body).every(key => key === 'code' || key === 'data')) return results;
+      if (!Array.isArray(data.orders)) throw new FulfillmentBatchError('response has no valid orders array');
+      const hasMore = data.has_more === undefined ? false : data.has_more;
+      if (typeof hasMore !== 'boolean') throw new FulfillmentBatchError('has an invalid pagination flag');
+
+      for (const order of data.orders) {
+        if (!order || typeof order !== 'object' || Array.isArray(order)
+          || typeof order.id !== 'string' || !requested.has(order.id)) {
+          throw new FulfillmentBatchError('contains an invalid or unexpected order ID');
+        }
+        const items: unknown = order.fulfillments;
+        if (!Array.isArray(items) || items.some(item => !item || typeof item !== 'object' || Array.isArray(item))) {
+          throw new FulfillmentBatchError('response has no valid fulfillments array');
+        }
+        const packageFingerprints = new Map<string, string>();
+        for (const item of items) {
+          if (item.order_id !== undefined && item.order_id !== order.id) {
+            throw new FulfillmentBatchError('contains a fulfillment for a different order');
+          }
+          if (typeof item.id === 'string' && item.id) {
+            const fingerprint = fulfillmentFingerprint(item);
+            if (packageFingerprints.has(item.id) && packageFingerprints.get(item.id) !== fingerprint) {
+              throw new FulfillmentBatchError('contains a conflicting duplicate fulfillment ID');
+            }
+            packageFingerprints.set(item.id, fingerprint);
+          }
+        }
+        const fingerprint = fulfillmentFingerprint(items);
+        if (fingerprints.has(order.id) && fingerprints.get(order.id) !== fingerprint) {
+          throw new FulfillmentBatchError('contains a conflicting duplicate order ID');
+        }
+        fingerprints.set(order.id, fingerprint);
+        results.set(order.id, items);
+      }
+      if (!hasMore) return results;
+      const nextCursor: unknown = data.cursor;
+      if (data.orders.length === 0 || typeof nextCursor !== 'string' || !nextCursor.trim() || seenCursors.has(nextCursor)) {
+        throw new FulfillmentBatchError('pagination is incomplete or repeated');
+      }
+      seenCursors.add(nextCursor);
+      cursor = nextCursor;
+    }
+    throw new FulfillmentBatchError('exceeded 200 pages');
+  } catch (error) {
+    if (error instanceof FulfillmentBatchError) throw error;
+    // node-fetch/JSON failures may contain request URLs, payload fragments or credentials.
+    throw new FulfillmentBatchError('request failed');
+  }
+}

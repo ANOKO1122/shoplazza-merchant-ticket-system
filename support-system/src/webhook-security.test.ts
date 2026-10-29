@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { buildWebhookCallbackUrl, logWebhookRejection, redactWebhookAddress, requireWebhookAuth } from './webhook-security';
+import { buildWebhookCallbackUrl, configureWebhookRejectionLogging, logWebhookRejection, redactWebhookAddress, requireWebhookAuth } from './webhook-security';
+import type { OperationLogParams } from './log-service';
 
 function withSecret(t: import('node:test').TestContext) {
   const logs: Array<{ prefix: string; details: Record<string, unknown> }> = [];
@@ -82,8 +83,11 @@ test('authentication rejections distinguish missing, malformed, incorrect and wr
   }
 });
 
-test('shared rejection logger only emits bounded safe metadata, including for hostile path and header values', t => {
+test('rejection audit retains only bounded safe metadata, including for hostile path and header values', async t => {
   const logs = withSecret(t);
+  const retained: OperationLogParams[] = [];
+  configureWebhookRejectionLogging(async entry => { retained.push(entry); });
+  t.after(() => configureWebhookRejectionLogging());
   const key = 'a'.repeat(64);
   const email = 'customer-private@example.invalid';
   const headers: Record<string, string> = {
@@ -99,15 +103,76 @@ test('shared rejection logger only emits bounded safe metadata, including for ho
     get body(): never { throw new Error('logger must not read body'); },
     get originalUrl(): never { throw new Error('logger must not read URL'); },
   };
-  logWebhookRejection(req as any, 'rate_limited');
-  assert.deepEqual(Object.keys(logs[0].details).sort(), ['deliveryIdHash', 'headerShop', 'reason', 'shop', 'topic']);
+  const before = Date.now();
+  logWebhookRejection(req as any, 'invalid_payload');
+  const after = Date.now();
+  assert.equal(retained.length, 0, 'audit persistence must not run on the response path');
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.deepEqual(Object.keys(logs[0].details).sort(), ['deliveryIdHash', 'headerShop', 'reason', 'receivedAt', 'shop', 'topic']);
   assert.equal(logs[0].details.shop, '[invalid]');
   assert.equal(logs[0].details.headerShop, '[invalid]');
   assert.equal(logs[0].details.topic, '[invalid]');
   assert.match(String(logs[0].details.deliveryIdHash), /^[a-f0-9]{16}$/);
-  const output = JSON.stringify(logs);
+  const receivedAt = Date.parse(String(logs[0].details.receivedAt));
+  assert.ok(receivedAt >= before && receivedAt <= after);
+  assert.deepEqual(retained, [{
+    category: 'webhook', action: 'rejected', actor: 'system', storeSubdomain: undefined,
+    summary: 'Webhook rejected: invalid_payload', status: 'failed', failedAtStep: 'ingress',
+    detailJson: logs[0].details,
+  }]);
+  const output = JSON.stringify({ logs, retained });
   for (const forbidden of [key, email, 'forged-log', 'user-agent']) assert.ok(!output.includes(forbidden));
-  assert.ok(output.length < 300);
+  assert.ok(JSON.stringify(logs[0]).length < 350);
   logWebhookRejection(req as any, `untrusted:${key}` as any);
+  await new Promise<void>(resolve => setImmediate(resolve));
   assert.equal(logs[1].details.reason, 'unknown_rejection');
+  assert.equal(retained[1].summary, 'Webhook rejected: unknown_rejection');
+  assert.ok(!JSON.stringify(retained).includes(key));
+});
+
+test('authentication responds before a pending audit write finishes and retains the safe store and reason', async t => {
+  const logs = withSecret(t);
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const retained: OperationLogParams[] = [];
+  configureWebhookRejectionLogging(async entry => { retained.push(entry); await pending; });
+  t.after(() => { release(); configureWebhookRejectionLogging(); });
+  assert.deepEqual(checkAuth('bad-key-secret'), { status: 401, accepted: false });
+  assert.equal(retained.length, 0);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(retained.length, 1);
+  assert.equal(retained[0].storeSubdomain, 'store-a');
+  assert.equal(retained[0].detailJson?.reason, 'malformed_key');
+  assert.equal(logs[0].prefix, '[webhook-rejected]');
+  const key = new URL(buildWebhookCallbackUrl('https://support.example.invalid', 'store-a')).searchParams.get('key');
+  assert.deepEqual(checkAuth(key), { status: 200, accepted: true });
+  assert.equal(retained.length, 1);
+});
+
+for (const failure of ['throw', 'reject'] as const) {
+  test(`audit sink ${failure} does not change rejection responses or leak errors`, async t => {
+    const logs = withSecret(t);
+    const secret = 'private-database-error@example.invalid?key=fixture-secret';
+    configureWebhookRejectionLogging(() => {
+      if (failure === 'throw') throw new Error(secret);
+      return Promise.reject(new Error(secret));
+    });
+    t.after(() => configureWebhookRejectionLogging());
+    assert.deepEqual(checkAuth(undefined), { status: 401, accepted: false });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.deepEqual(logs.map(log => log.prefix), ['[webhook-rejected]', '[webhook-rejection-audit-failed]']);
+    assert.equal(logs[1].details.reason, 'missing_key');
+    assert.ok(!JSON.stringify(logs).includes(secret));
+  });
+}
+
+test('console failures cannot prevent authentication rejection or create unhandled audit errors', async t => {
+  withSecret(t);
+  t.mock.method(console, 'warn', () => { throw new Error('fixture console unavailable'); });
+  let writes = 0;
+  configureWebhookRejectionLogging(async () => { writes++; throw new Error('fixture sink unavailable'); });
+  t.after(() => configureWebhookRejectionLogging());
+  assert.deepEqual(checkAuth(undefined), { status: 401, accepted: false });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(writes, 1);
 });

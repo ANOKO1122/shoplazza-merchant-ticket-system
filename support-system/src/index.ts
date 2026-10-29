@@ -19,9 +19,9 @@ import { processPendingPaidWebhooks } from './paid-webhook';
 import { processPendingOrderStatusWebhooks } from './order-status-webhook';
 import { processPendingShippingAddressRequests } from './order-address-service';
 import { createApiLimiter, createWebhookIngressRouter, isShoplazzaWebhookRequest } from './api-rate-limits';
-import { logWebhookRejection } from './webhook-security';
+import { configureWebhookRejectionLogging, logWebhookRejection } from './webhook-security';
 import { runFulfillmentReconciliation } from './fulfillment-reconcile';
-import { cleanupSyncLogs, cleanupOperationLogs } from './log-service';
+import { cleanupSyncLogs, cleanupOperationLogs, logOperation } from './log-service';
 import { getRequestAgent } from './auth';
 import { ADMIN_HOME, ADMIN_PAGES, ADMIN_PAGE_FILES, normalizeAdminPath, safeAdminRedirect } from './admin-pages';
 
@@ -78,8 +78,9 @@ app.use((req, res, next) => {
   next();
 });
 
-// Interactive APIs share an IP budget; authenticated webhook stores use their own.
+// Authenticated webhook ingress is exempt from the interactive API request quota.
 const apiLimiter = createApiLimiter();
+configureWebhookRejectionLogging(logOperation);
 
 const loginLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -361,12 +362,12 @@ async function startup() {
     orderStatusWebhookTimer.unref();
     const reconcileFulfillments = async () => {
       try {
-        if (await getAutoBackfillEnabled()) await runFulfillmentReconciliation({ limit: 200 });
+        if (await getAutoBackfillEnabled()) await runFulfillmentReconciliation();
       } catch (error: any) {
         console.error('[fulfillment-reconcile] failed:', error.message);
       }
     };
-    // Webhooks handle live updates; reconcile one bounded batch each hour.
+    // Webhooks handle live updates; reconcile bounded per-store ID batches each hour.
     fulfillmentReconcileTimer = setInterval(reconcileFulfillments, 60 * 60 * 1000);
     fulfillmentReconcileTimer.unref();
   }

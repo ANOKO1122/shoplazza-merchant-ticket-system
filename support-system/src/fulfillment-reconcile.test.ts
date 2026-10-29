@@ -6,6 +6,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { PassThrough } from 'node:stream';
 import { Response, RequestInit } from 'node-fetch';
+import * as selection from './fulfillment-selection';
 
 const NOW = '2026-10-26T12:00:00.000Z';
 const STORE = { subdomain: 'store-a', storeName: 'Store A', accessToken: 'fixture-only' };
@@ -135,12 +136,13 @@ test('fulfillment API does not turn HTTP, business or malformed responses into a
   });
 });
 
-interface Candidate { store_subdomain: string; order_id: string; order_number: string; }
+interface Candidate { store_subdomain: string; order_id: string; order_number: string; priority?: boolean; }
 
 function harness(options: {
   candidates?: Candidate[];
   locked?: boolean;
   list?: (orderId: string) => Promise<Record<string, unknown>[]>;
+  batch?: (store: any, ids: string[]) => Promise<Map<string, Record<string, unknown>[]>>;
   apply?: (params: any) => Promise<any>;
   selectionError?: boolean;
   unlockError?: boolean;
@@ -148,7 +150,7 @@ function harness(options: {
   onQuery?: (sql: string, params: any[]) => void;
   onLog?: () => void;
 } = {}) {
-  const calls = { connections: 0, unlocks: 0, released: [] as unknown[], selections: [] as Array<{ sql: string; params: any[] }>, state: [] as Array<{ sql: string; params: any[] }>, api: [] as string[], applied: [] as any[], logs: [] as any[] };
+  const calls = { connections: 0, unlocks: 0, released: [] as unknown[], selections: [] as Array<{ sql: string; params: any[] }>, state: [] as Array<{ sql: string; params: any[] }>, api: [] as string[], batches: [] as Array<{store: string; ids: string[]}>, applied: [] as any[], logs: [] as any[] };
   const stores = ['store-a', 'store-b'].map(subdomain => ({ subdomain, store_name: subdomain, access_token: 'fixture-only', enabled: true }));
   const client = {
     async query(sql: string, params: any[] = []) {
@@ -159,10 +161,16 @@ function harness(options: {
         if (options.unlockError) throw new Error('simulated unlock error');
         return { rows: [{}] };
       }
-      if (sql.includes('WITH paid_orders')) {
+      if (sql.includes('AS store_position') || sql.includes('WITH paid_orders')) {
         calls.selections.push({ sql, params });
         if (options.selectionError) throw new Error('simulated selection error');
-        return { rows: (options.candidates || []).filter(item => params[0].includes(item.store_subdomain) && (!params[1] || item.order_id === params[1])).slice(0, params[2]) };
+        const perStore = new Map<string, number>();
+        return { rows: (options.candidates || []).filter(item => {
+          if (!params[0].includes(item.store_subdomain) || (params[1] && item.order_id !== params[1])) return false;
+          const used = perStore.get(item.store_subdomain) || 0;
+          perStore.set(item.store_subdomain, used + 1);
+          return used < params[2];
+        }) };
       }
       if (sql.includes('INSERT INTO support_fulfillment_sync_state')) {
         calls.state.push({ sql, params });
@@ -176,7 +184,18 @@ function harness(options: {
   const reconciler = isolatedModule<typeof import('./fulfillment-reconcile')>('fulfillment-reconcile.ts', {
     './pg': { getClient: async () => { calls.connections++; return client; } },
     './store-service': { getEnabledStores: async () => stores },
-    './shoplazza-client': { listOrderFulfillments: async (_store: unknown, id: string) => { calls.api.push(id); return options.list ? options.list(id) : [{ id: 'f1', order_id: id }]; } },
+    './fulfillment-selection': selection,
+    './shoplazza-client': {
+      listOrderFulfillments: async (_store: unknown, id: string) => { calls.api.push(id); return options.list ? options.list(id) : [{ id: 'f1', order_id: id }]; },
+      listOrderFulfillmentsBatch: async (store: any, ids: string[]) => {
+        calls.batches.push({ store: store.subdomain, ids: Array.from(ids) });
+        calls.api.push(...ids);
+        if (options.batch) return options.batch(store, ids);
+        const result = new Map<string, Record<string, unknown>[]>();
+        for (const id of ids) result.set(id, options.list ? await options.list(id) : [{ id: 'f1', order_id: id }]);
+        return result;
+      },
+    },
     './fulfillment-service': { applyFulfillmentUpdate: async (params: any) => {
       calls.applied.push(params);
       return options.apply ? options.apply(params) : { matched: true, added: 1, updated: 0, unchanged: 0, stale: 0, changes: [{ id: 'f1', kind: 'added' }], trackingNumbers: ['TRACK'] };
@@ -190,34 +209,61 @@ function candidate(orderId: string, store = 'store-a'): Candidate {
   return { store_subdomain: store, order_id: orderId, order_number: orderId };
 }
 
-test('reconciliation includes old paid orders, has one global batch limit and schedules successful checks for 24 hours', async () => {
-  const input = Array.from({ length: 230 }, (_, i) => candidate(i === 0 ? 'old-order-from-2024' : `order-${i}`, i % 2 ? 'store-b' : 'store-a'));
+test('reconciliation gives each store 1000 slots and fetches groups of 50 without crossing stores', async () => {
+  const input = Array.from({ length: 2200 }, (_, i) => candidate(`order-${i}`, i % 2 ? 'store-b' : 'store-a'));
   const { run, calls } = harness({ candidates: input });
   const summary = await run({ limit: 1000 });
-  assert.equal(summary.checked, 200);
-  assert.equal(calls.api.length, 200);
-  assert.ok(calls.api.includes('old-order-from-2024'));
-  assert.equal(summary.stores[0].checked, 100);
-  assert.equal(summary.stores[1].checked, 100);
+  assert.equal(summary.checked, 2000);
+  assert.equal(calls.api.length, 2000);
+  assert.equal(calls.batches.length, 40);
+  assert.ok(calls.batches.every(batch => batch.ids.length === 50));
+  assert.ok(calls.batches.every(batch => batch.ids.every(id => input.find(item => item.order_id === id)?.store_subdomain === batch.store)));
+  assert.equal(summary.stores[0].checked, 1000);
+  assert.equal(summary.stores[1].checked, 1000);
   assert.equal(summary.remainingDue, 7);
-  assert.equal(calls.selections[0].params[2], 200);
-  const sql = calls.selections[0].sql;
-  assert.match(sql, /snapshot.payment_status IN \('paid', 'partially_refunded'\)/);
-  assert.match(sql, /GROUP BY snapshot.store_subdomain, snapshot.order_id/);
-  assert.match(sql, /PARTITION BY \(state.last_attempt_at IS NULL\)/);
-  assert.match(sql, /state.next_check_at <= now\(\)/);
-  assert.doesNotMatch(sql, /(?:created_at|paid_at)\s*[<>]=?/);
-  assert.ok(calls.state.every(write => write.sql.includes("interval '24 hours'") && write.sql.includes('last_checked_at = EXCLUDED.last_checked_at')));
+  assert.equal(calls.selections[0].params[2], 1000);
+  assert.ok(calls.state.every(write => write.params[3] === 24 && write.sql.includes('last_checked_at = EXCLUDED.last_checked_at')));
   assert.ok(calls.applied.every(params => params.source === 'backfill' && !('fulfillmentStatus' in params)));
   assert.equal(calls.logs.length, 2);
-  assert.ok(calls.logs.every(log => log.source === 'backfill' && log.action === 'fulfillment_reconcile_summary' && log.detailJson.checked === 100));
+  assert.ok(calls.logs.every(log => log.source === 'backfill' && log.action === 'fulfillment_reconcile_summary' && log.detailJson.checked === 1000 && log.detailJson.apiBatches === 20));
   assert.equal(calls.unlocks, 1);
   assert.equal(calls.released.length, 1);
 });
 
+test('a missing order in a successful batch fails only that order and never clears its logistics', async () => {
+  const { run, calls } = harness({
+    candidates: [candidate('present'), candidate('absent'), { ...candidate('priority'), priority: true }],
+    batch: async () => new Map([['present', []], ['priority', []]]),
+  });
+  const result = await run();
+  assert.equal(result.checked, 3);
+  assert.equal(result.failed, 1);
+  assert.equal(result.priorityChecked, 1);
+  assert.deepEqual(calls.applied.map(row => row.orderId), ['present', 'priority']);
+  assert.equal(calls.state.find(row => row.params[1] === 'priority')?.params[3], 6);
+  const failed = calls.state.find(row => row.params[1] === 'absent')!;
+  assert.doesNotMatch(failed.sql, /last_checked_at/);
+  assert.match(failed.params[3], /not returned/);
+});
+
+test('a failed store batch does not stop the next store and does not write successful check times', async () => {
+  const { run, calls } = harness({
+    candidates: [candidate('a1'), candidate('a2'), candidate('b1', 'store-b')],
+    batch: async (store, ids) => {
+      if (store.subdomain === 'store-a') throw new Error('Batch HTTP 503');
+      return new Map(ids.map(id => [id, []]));
+    },
+  });
+  const result = await run();
+  assert.equal(result.failed, 2);
+  assert.deepEqual(calls.applied.map(row => row.orderId), ['b1']);
+  assert.equal(calls.state.filter(row => row.sql.includes('last_checked_at')).length, 1);
+  assert.equal(calls.unlocks, 1);
+});
+
 test('API failure and unmatched updates retry in one hour without recording a successful check', async () => {
   const { run, calls } = harness({
-    candidates: [candidate('api-error'), candidate('missing-snapshot'), candidate('unchanged')],
+    candidates: [candidate('api-error', 'store-b'), candidate('missing-snapshot'), candidate('unchanged')],
     list: async id => { if (id === 'api-error') throw new Error('Fulfillment list HTTP 503'); return []; },
     apply: async params => ({ matched: params.orderId !== 'missing-snapshot', added: 0, updated: 0, unchanged: 1, stale: 0, changes: [], trackingNumbers: [] }),
   });
@@ -229,7 +275,7 @@ test('API failure and unmatched updates retry in one hour without recording a su
   assert.equal(failed.length, 2);
   assert.ok(failed.every(write => !write.sql.includes('last_checked_at')));
   assert.equal(calls.logs[0].status, 'partial');
-  assert.equal(calls.logs[0].detailJson.items.filter((item: any) => item.status === 'failed').length, 2);
+  assert.equal(calls.logs.flatMap(log => log.detailJson.items).filter((item: any) => item.status === 'failed').length, 2);
   assert.equal(calls.applied.length, 2);
 });
 
@@ -245,7 +291,7 @@ test('store durations accumulate only their own checks while batch duration incl
       return { matched: true, added: 0, updated: 0, unchanged: 1, stale: 0, changes: [], trackingNumbers: [] };
     },
     onQuery: sql => {
-      if (sql.includes('WITH paid_orders')) clock += 40;
+      if (sql.includes('AS store_position')) clock += 40;
       if (sql.includes('INSERT INTO support_fulfillment_sync_state')) clock += 7;
       if (sql.includes('AS remaining_due')) clock += 60;
     },
@@ -297,7 +343,7 @@ test('forced reconciliation filters a single order and bypasses its next due tim
   assert.deepEqual(calls.api, ['already-checked']);
   assert.deepEqual(Array.from(calls.selections[0].params[0]), ['store-a']);
   assert.equal(calls.selections[0].params[1], 'already-checked');
-  assert.match(calls.selections[0].sql, /WHERE \$2::text IS NOT NULL OR state.next_check_at/);
+  assert.equal(calls.batches.length, 0, 'an explicit order retains the individual fulfillment endpoint');
 });
 
 test('forced reconciliation reports missing or ambiguous snapshots instead of claiming success', async () => {

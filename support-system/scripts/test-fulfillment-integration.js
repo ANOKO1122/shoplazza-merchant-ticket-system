@@ -30,6 +30,7 @@ const pool = pg.getPool();
 const store = { id: 1, subdomain: 'integration-fixture', store_name: 'Integration Fixture', access_token: 'unused-fixture', enabled: true };
 const base = { storeSubdomain: store.subdomain, source: 'webhook' };
 const times = ['2026-10-20T10:00:00Z', '2026-10-20T10:00:01Z', '2026-10-20T10:00:02Z'];
+const fixtureNow = Date.now();
 const parcel = (id, tracking_number, updated_at = times[0]) => ({ id, tracking_number, updated_at });
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -50,14 +51,18 @@ function worker() {
   return loadModule('fulfillment-webhook.ts', {
     crypto, './pg': pg, './fulfillment-service': service,
     './store-service': { getStoreBySubdomain: async () => store },
+    // This queue fixture waits for a locally inserted snapshot; never recover via a live API.
+    './fulfillment-order-recovery': { recoverMissingFulfillmentOrder: async () => ({ recovered: false }) },
   });
 }
 
-async function addOrder(id, fulfillments, email = 'one@example.invalid', status = 'waiting') {
+async function addOrder(id, fulfillments, email = 'one@example.invalid', status = 'waiting', ageDays = 1) {
+  const orderedAt = new Date(fixtureNow - ageDays * 86400000).toISOString();
   await pool.query(`INSERT INTO support_order_snapshots
     (store_subdomain, order_id, order_number, customer_email, payment_status, fulfillment_status, raw_order_json)
     VALUES ($1,$2,$3,$4,'paid',$5,$6::jsonb)`,
-  [store.subdomain, id, `#${id}`, email, status, JSON.stringify({ id, preserved: 'original', fulfillments })]);
+  [store.subdomain, id, `#${id}`, email, status,
+    JSON.stringify({ id, placed_at: orderedAt, created_at: orderedAt, preserved: 'original', fulfillments })]);
 }
 
 async function snapshots(id) {
@@ -83,10 +88,10 @@ async function realConcurrency() {
     for (let attempt = 0; attempt < 50 && waiting < 2; attempt++) {
       waiting = Number((await pool.query(`SELECT count(*) FROM pg_stat_activity
         WHERE datname=current_database() AND pid<>pg_backend_pid() AND wait_event_type='Lock'
-          AND query LIKE '%ORDER BY id FOR UPDATE%'`)).rows[0].count);
+          AND (query LIKE '%ORDER BY id FOR UPDATE%' OR query LIKE '%pg_advisory_xact_lock%')`)).rows[0].count);
       if (waiting < 2) await new Promise(resolve => setTimeout(resolve, 20));
     }
-    assert.equal(waiting, 2, 'both real transactions must block while acquiring the order read lock');
+    assert.equal(waiting, 2, 'both real transactions must block on the order row or its advisory lock');
     await blocker.query('COMMIT');
     await pending;
   } finally {
@@ -183,7 +188,9 @@ async function normalSnapshotProtection() {
     const values = columns.map(column => {
       const known = { store_subdomain: store.subdomain, store_name: store.store_name, order_id: 'PROTECTED', order_number: '#PROTECTED',
         customer_email: 'one@example.invalid', payment_status: 'paid', fulfillment_status: 'waiting',
-        raw_order_json: JSON.stringify({ id: 'PROTECTED', fresh_order_field: true, fulfillments: [parcel('PROTECTED', 'STALE')] }),
+        raw_order_json: JSON.stringify({ id: 'PROTECTED', placed_at: new Date(fixtureNow - 86400000).toISOString(),
+          created_at: new Date(fixtureNow - 86400000).toISOString(), fresh_order_field: true,
+          fulfillments: [parcel('PROTECTED', 'STALE')] }),
         items_json: '[]', last_webhook_topic: 'orders/paid' };
       if (column in known) return known[column];
       if (column.endsWith('_json')) return '{}';
@@ -200,33 +207,62 @@ async function normalSnapshotProtection() {
 
 async function reconcileStateAndCandidates() {
   await addOrder('RETRY', []);
+  await addOrder('OLD-MANUAL', [], 'one@example.invalid', 'waiting', 60);
   let fail = true;
   let candidate;
+  const batchCalls = [];
+  const manualCalls = [];
+  const selection = loadModule('fulfillment-selection.ts', {});
   const dependencies = {
     './pg': { getClient: async () => {
       const client = await pool.connect();
       return { release: error => client.release(error), query: (sql, values) => {
-        if (sql.includes('WITH paid_orders AS')) candidate = { sql, values };
+        if (sql === selection.FULFILLMENT_CANDIDATES_SQL) candidate = { sql, values };
         return client.query(sql, values);
       } };
     } },
     './store-service': { getEnabledStores: async () => [store] },
-    './shoplazza-client': { listOrderFulfillments: async (_store, orderId) => {
-      if (orderId === 'RETRY' && fail) throw new Error('fixture API failure');
-      return (await snapshots(orderId))[0].raw_order_json.fulfillments;
-    } },
+    './shoplazza-client': {
+      listOrderFulfillments: async (_store, orderId) => {
+        manualCalls.push(orderId);
+        if (orderId === 'RETRY' && fail) throw new Error('fixture API failure');
+        return (await snapshots(orderId))[0].raw_order_json.fulfillments;
+      },
+      listOrderFulfillmentsBatch: async (_store, orderIds) => {
+        batchCalls.push(Array.from(orderIds));
+        const result = new Map();
+        for (const id of orderIds) {
+          // An omitted result must fail only that order, never count as an empty success.
+          if (id === 'RETRY' && fail) continue;
+          result.set(id, (await snapshots(id))[0].raw_order_json.fulfillments);
+        }
+        return result;
+      },
+    },
+    './fulfillment-selection': selection,
     './fulfillment-service': service, './log-service': logService,
   };
-  const run = () => loadModule('fulfillment-reconcile.ts', dependencies).runFulfillmentReconciliation({ limit: 200 });
+  const run = (options = {}) => loadModule('fulfillment-reconcile.ts', dependencies)
+    .runFulfillmentReconciliation({ limit: 200, ...options });
   const first = await run();
-  const uniqueOrders = Number((await pool.query('SELECT count(DISTINCT order_id) FROM support_order_snapshots')).rows[0].count);
+  const uniqueOrders = Number((await pool.query("SELECT count(DISTINCT order_id) FROM support_order_snapshots WHERE order_id <> 'OLD-MANUAL'")).rows[0].count);
   assert.equal(first.checked, uniqueOrders, 'multiple customer emails count as one candidate');
   assert.equal(first.failed, 1);
+  assert.equal(first.apiBatches, 1);
+  assert.equal(first.stores[0].perStoreLimit, 200);
+  assert.equal(batchCalls[0].length, uniqueOrders);
+  assert.equal(batchCalls[0].includes('OLD-MANUAL'), false, 'recent local insertion must not make an old order eligible');
+  assert.deepEqual(manualCalls, [], 'automatic reconciliation must use the batch API');
   let state = (await pool.query("SELECT last_checked_at, last_error, next_check_at > now() AS deferred FROM support_fulfillment_sync_state WHERE order_id='RETRY'")).rows[0];
-  assert.deepEqual(state, { last_checked_at: null, last_error: 'fixture API failure', deferred: true });
+  assert.deepEqual(state, { last_checked_at: null, last_error: 'Order not returned by batch fulfillment lookup', deferred: true });
   const plan = await pool.query(`EXPLAIN (FORMAT JSON) ${candidate.sql}`, candidate.values);
   assert.ok(plan.rows[0]['QUERY PLAN'][0].Plan);
   assert.equal((await run()).checked, 0, 'the next process respects persisted success and retry deadlines');
+  const manualFailure = await run({ storeSubdomain: store.subdomain, orderId: 'RETRY' });
+  assert.equal(manualFailure.checked, 1);
+  assert.equal(manualFailure.failed, 1);
+  state = (await pool.query("SELECT last_checked_at, last_error, next_check_at > now() AS deferred FROM support_fulfillment_sync_state WHERE order_id='RETRY'")).rows[0];
+  assert.deepEqual(state, { last_checked_at: null, last_error: 'fixture API failure', deferred: true });
   await pool.query("UPDATE support_fulfillment_sync_state SET next_check_at=now()-interval '1 second' WHERE order_id='RETRY'");
   fail = false;
   const retried = await run();
@@ -234,7 +270,13 @@ async function reconcileStateAndCandidates() {
   assert.equal(retried.failed, 0);
   state = (await pool.query("SELECT last_checked_at IS NOT NULL AS checked, last_error FROM support_fulfillment_sync_state WHERE order_id='RETRY'")).rows[0];
   assert.deepEqual(state, { checked: true, last_error: null });
-  console.log('PASS real candidate SQL/EXPLAIN, unique-order selection, durable check deadlines and retry recovery');
+  const oldManual = await run({ storeSubdomain: store.subdomain, orderId: 'OLD-MANUAL' });
+  assert.equal(oldManual.checked, 1);
+  assert.equal(oldManual.failed, 0);
+  assert.deepEqual(manualCalls, ['RETRY', 'OLD-MANUAL']);
+  assert.deepEqual(batchCalls[1], ['RETRY']);
+  assert.equal((await run()).checked, 0);
+  console.log('PASS real batch candidate SQL/EXPLAIN, unique recent-order selection, manual old-order checks, durable deadlines and missing-result/API retry recovery');
 }
 
 async function independentReceiptPool() {
@@ -265,6 +307,7 @@ async function paidDurableQueueRetry() {
   // the token generator and all transport/API dependencies are isolated fixtures.
   const mailJobs = loadModule('email-service.ts', {
     crypto, './pg': pg, './config': config, './log-service': logService,
+    './email-text': require('../src/email-text.ts'),
     './mailer': { sendSupportEmail: forbidden },
     './token': { createBootstrapToken: async () => 'offline-fixture-token', createTicketAccessToken: forbidden,
       hashToken: token => crypto.createHash('sha256').update(token).digest('hex') },
@@ -272,8 +315,9 @@ async function paidDurableQueueRetry() {
   const dependencies = {
     crypto, './pg': pg, './config': config, './log-service': logService, './email-service': mailJobs,
     './normalize-order': loadModule('normalize-order.ts', {}),
-    './shipping-address-guard': loadModule('shipping-address-guard.ts', { './pg': pg }),
-    './shoplazza-client': { getOrderDetail: forbidden, getOrderByNumber: forbidden, getOrderTransactions: forbidden },
+    './shipping-address-guard': require('../src/shipping-address-guard.ts'),
+    './shoplazza-client': { getOrderDetail: forbidden, getOrderByNumber: forbidden, getOrderTransactions: forbidden,
+      getOrderForAddressUpdate: forbidden },
   };
   const paidWorker = () => loadModule('paid-webhook.ts', dependencies);
   const payload = { order: { id: 'PAID-RETRY', number: '#PAID-RETRY', financial_status: 'paid',
@@ -344,6 +388,8 @@ async function main() {
   await durableQueueRetry();
   await normalSnapshotProtection();
   await reconcileStateAndCandidates();
+  assert.equal(Number((await pool.query('SELECT count(*) FROM support_email_jobs')).rows[0].count), 0,
+    'fulfillment webhooks and reconciliation must not create notification jobs');
   await paidDurableQueueRetry();
   console.log('PASS all webhook and fulfillment PostgreSQL integration scenarios (no external API or SMTP calls)');
 }
