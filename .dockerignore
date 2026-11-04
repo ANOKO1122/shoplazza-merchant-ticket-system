@@ -1,0 +1,17 @@
+.git
+**/.env
+**/.env.*
+!**/.env.example
+**/node_modules
+**/dist
+**/tmp
+**/uploads
+**/thumbnails
+**/protection-data
+**/postgres-ssl
+**/nginx/ssl
+**/nginx/letsencrypt
+**/nginx/acme-challenge
+**/.build
+**/.backups
+**/*.log

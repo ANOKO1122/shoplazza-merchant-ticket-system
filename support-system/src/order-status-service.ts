@@ -25,6 +25,26 @@ function timestamp(value: unknown): number | null {
   const result = new Date(value as string).getTime();
   return Number.isFinite(result) ? result : null;
 }
+/** Persist the original completion evidence; a later GET.updated_at is not a completion date. */
+export function resolveOrderCompletion(previous: Record<string, unknown>, incoming: Record<string, unknown>, completionEvent?: Record<string, unknown>): Record<string, string> {
+  const explicit = incoming.status === 'finished' ? timestamp(incoming.finished_at) : null;
+  if (explicit !== null) return { _support_completed_at: new Date(explicit).toISOString(), _support_completed_source: 'order.finished_at' };
+  const saved = timestamp(previous._support_completed_at);
+  if (saved !== null && ['order.finished_at', 'orders/finished.updated_at'].includes(text(previous._support_completed_source))) {
+    return { _support_completed_at: new Date(saved).toISOString(), _support_completed_source: text(previous._support_completed_source) };
+  }
+  const eventAt = timestamp(completionEvent?.updated_at), currentAt = timestamp(incoming.updated_at);
+  if (incoming.status === 'finished' && completionEvent?.status === 'finished' && eventAt !== null && currentAt !== null && eventAt <= currentAt) {
+    return { _support_completed_at: new Date(eventAt).toISOString(), _support_completed_source: 'orders/finished.updated_at' };
+  }
+  return {};
+}
+/** Cancellation evidence must survive later partial views that omit its timestamp. */
+function resolveOrderCancellation(previous: Record<string, unknown>, incoming: Record<string, unknown>): Record<string, string> {
+  const at = timestamp(previous.cancelled_at) ?? timestamp(previous.canceled_at)
+    ?? timestamp(incoming.cancelled_at) ?? timestamp(incoming.canceled_at);
+  return at === null ? {} : { cancelled_at: new Date(at).toISOString() };
+}
 // Decimal strings avoid losing cents for values outside JavaScript's exact numeric range.
 function amountLessThan(value: string, previous: string): boolean {
   if (!value || !previous) return false;
@@ -108,17 +128,28 @@ async function readStoredStatus(client: PoolClient, store: string, orderId: stri
   }
   // Shipment changes have their own provider clock; retain progress from every email row.
   for (const row of rows) before.fulfillmentStatus = preserveFulfillmentProgress(before.fulfillmentStatus, text(row.fulfillment_status));
-  return { rows, before, version };
+  let completion: Record<string, string> = {};
+  let cancellation: Record<string, string> = {};
+  for (const raw of [...rows.map(row => record(row.raw_order_json)), record(state?.state_json)]) {
+    completion = resolveOrderCompletion(completion, raw);
+    if (!completion._support_completed_at) completion = resolveOrderCompletion(raw, {});
+    cancellation = resolveOrderCancellation(cancellation, raw);
+  }
+  return { rows, before, version, completion, cancellation };
 }
 
 /** Called inside the existing snapshot/address transaction before its upsert. */
 export async function guardSnapshotOrderStatus(client: PoolClient, incoming: NormalizedOrder): Promise<{ order: NormalizedOrder; hadSnapshots: boolean }> {
   const saved = await readStoredStatus(client, incoming.storeSubdomain, incoming.orderId);
-  if (!saved.rows.length) return { order: incoming, hadSnapshots: false };
+  const { _support_completed_at: _untrustedAt, _support_completed_source: _untrustedSource,
+    cancelled_at: _cancelled, canceled_at: _canceled, ...incomingRaw } = incoming.rawOrderJson;
+  if (!saved.rows.length) return { order: { ...incoming, rawOrderJson: { ...incomingRaw,
+    ...resolveOrderCompletion(saved.completion, incomingRaw), ...resolveOrderCancellation(saved.cancellation, incoming.rawOrderJson) } }, hadSnapshots: false };
   const incomingTime = timestamp(incoming.rawOrderJson.updated_at);
   const stale = saved.version !== null && (incomingTime === null || incomingTime < saved.version);
   const resolved = mergeOrderStatus(saved.before, stale ? {} : incoming.rawOrderJson, true);
-  const raw = { ...incoming.rawOrderJson, ...rawStatus(resolved) };
+  const raw = { ...incomingRaw, ...rawStatus(resolved), ...resolveOrderCompletion(saved.completion, stale ? {} : incomingRaw),
+    ...resolveOrderCancellation(saved.cancellation, stale ? {} : incoming.rawOrderJson) };
   if (resolved.refundAmount === '') delete raw.total_refund_price;
   if (stale && saved.version !== null) raw.updated_at = new Date(saved.version).toISOString();
   return { order: { ...incoming, ...resolved, rawOrderJson: raw }, hadSnapshots: true };
@@ -135,7 +166,8 @@ export async function synchronizeSnapshotOrderStatus(client: PoolClient, order: 
        (order_status, payment_status, fulfillment_status, refund_status, refund_amount) IS DISTINCT FROM ($3,$4,$5,$6,$7)
        OR (raw_order_json @> $8::jsonb) IS NOT TRUE)`,
     [order.storeSubdomain, order.orderId, order.orderStatus, order.paymentStatus, order.fulfillmentStatus,
-      order.refundStatus, order.refundAmount, JSON.stringify(rawStatus(order))]);
+      order.refundStatus, order.refundAmount, JSON.stringify({ ...rawStatus(order), ...resolveOrderCompletion(order.rawOrderJson, {}),
+        ...resolveOrderCancellation(order.rawOrderJson, {}) })]);
 }
 
 export interface ApplyOrderStatusUpdateResult {
@@ -149,7 +181,7 @@ export interface ApplyOrderStatusUpdateResult {
 
 /** Status-only, existing orders only. No customer, address, parcel, token or email writes. */
 export async function applyOrderStatusUpdate(params: {
-  storeSubdomain: string; storeName?: string; order: ShoplazzaOrderDetail; topic: string;
+  storeSubdomain: string; storeName?: string; order: ShoplazzaOrderDetail; topic: string; completionEvent?: Record<string, unknown>;
 }): Promise<ApplyOrderStatusUpdateResult> {
   const store = text(params.storeSubdomain);
   const order = record(params.order);
@@ -169,7 +201,9 @@ export async function applyOrderStatusUpdate(params: {
     else if (incomingTime === null) skipReason = 'missing_updated_at';
     else if (saved.version !== null && incomingTime < saved.version) skipReason = 'stale';
     const after = skipReason ? saved.before : mergeOrderStatus(saved.before, order, incomingTime === saved.version);
-    const rawPatch = rawStatus(after);
+    const rawPatch = { ...rawStatus(after), ...resolveOrderCompletion(saved.completion, skipReason ? {} : order,
+      !skipReason && params.topic === 'orders/finished' ? params.completionEvent : undefined),
+      ...resolveOrderCancellation(saved.cancellation, skipReason ? {} : order) };
     const changedRows = skipReason ? [] : saved.rows.filter(row => !same(snapshotStatus(row), after)
       || Object.entries(rawPatch).some(([key, value]) => text(record(row.raw_order_json)[key]) !== value));
     if (!skipReason) {

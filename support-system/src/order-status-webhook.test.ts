@@ -11,7 +11,7 @@ const ORDER = { id: 'A', number: 'ORDER-A', status: 'placed', financial_status: 
   fulfillment_status: 'shipped', total_refund_price: '12.50', updated_at: '2026-10-27T01:00:00Z' };
 const plain = (value: any) => JSON.parse(JSON.stringify(value));
 
-function harness(options: { found?: boolean; enabled?: boolean; fetchFailures?: number; fetchedAt?: string; writeFailures?: number;
+function harness(options: { found?: boolean; enabled?: boolean; fetchFailures?: number; fetchedAt?: string; writeFailures?: number; staleApplies?: number;
   completeFailures?: number; lostClaim?: boolean } = {}) {
   const event: any = { id: 1, store_subdomain: STORE.subdomain, topic: 'orders/partially_refunded', order_id: 'A', order_number: 'ORDER-A',
     payload_json: { order: { ...ORDER, financial_status: 'paid', total_refund_price: '0' } }, status: 'received', attempts: 0 };
@@ -27,6 +27,7 @@ function harness(options: { found?: boolean; enabled?: boolean; fetchFailures?: 
     './order-status-service': { applyOrderStatusUpdate: async (params: any) => {
       if (options.writeFailures && options.writeFailures-- > 0) throw new Error('private database error');
       calls.applied.push(params);
+      if(options.staleApplies&&options.staleApplies-->0)return {matched:true,changed:false,skipReason:'stale',orderNumber:ORDER.number};
       return { matched: true, changed: true, orderNumber: ORDER.number };
     } },
     './log-service': { logSync: async (params: any) => { calls.logs.push(params); } },
@@ -126,6 +127,14 @@ test('an API version older than the callback remains queued until the provider c
   event.deferred = false;
   assert.deepEqual(plain(await subject.processPendingOrderStatusWebhooks()), { processed: 1, failed: 0 });
   assert.equal(calls.applied.length, 1);
+});
+
+test('a finished event older than already saved state stays retryable until its completion evidence can be persisted',async()=>{
+  const {subject,calls,event}=harness({staleApplies:1});event.topic='orders/finished';event.payload_json.order.status='finished';
+  assert.deepEqual(plain(await subject.processPendingOrderStatusWebhooks()),{processed:0,failed:1});
+  assert.equal(event.status,'failed');assert.equal(calls.applied[0].completionEvent.status,'finished');
+  event.deferred=false;
+  assert.deepEqual(plain(await subject.processPendingOrderStatusWebhooks()),{processed:1,failed:0});
 });
 
 for (const failure of ['fetchFailures', 'writeFailures', 'completeFailures'] as const) {

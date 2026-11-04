@@ -2,7 +2,7 @@ import test, { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { Pool } from 'pg';
 import { normalizeOrder, normalizeRefundAmount } from './normalize-order';
-import { applyOrderStatusUpdate, guardSnapshotOrderStatus, mergeOrderStatus, type OrderStatus } from './order-status-service';
+import { applyOrderStatusUpdate, guardSnapshotOrderStatus, mergeOrderStatus, resolveOrderCompletion, type OrderStatus } from './order-status-service';
 
 const OLD = '2026-10-27T01:00:00Z';
 const NOW = '2026-10-27T02:00:00Z';
@@ -13,6 +13,21 @@ const order = (extra: Record<string, unknown> = {}) => ({ id: 'ORDER', number: '
 const snapshot = (extra: Record<string, unknown> = {}) => ({ id: '1', order_number: '#ORDER', store_name: 'Fixture',
   order_status: 'placed', payment_status: 'paid', fulfillment_status: 'shipped', refund_status: '', refund_amount: '0.00',
   raw_order_json: order({ updated_at: OLD, fulfillment_status: 'shipped' }), ...extra });
+
+test('completion time comes from a finished event or explicit completion field, never the latest unrelated update', () => {
+  const finished = order({ status: 'finished', updated_at: LATER });
+  assert.deepEqual(resolveOrderCompletion({}, finished), {});
+  assert.deepEqual(resolveOrderCompletion({}, finished, { status: 'placed', updated_at: NOW }), {});
+  assert.deepEqual(resolveOrderCompletion({}, order(), { status: 'finished', updated_at: NOW }), {});
+  const recorded = resolveOrderCompletion({}, finished, { status: 'finished', updated_at: NOW });
+  assert.deepEqual(recorded, { _support_completed_at: new Date(NOW).toISOString(), _support_completed_source: 'orders/finished.updated_at' });
+  assert.deepEqual(resolveOrderCompletion(recorded, finished), recorded);
+  assert.deepEqual(resolveOrderCompletion(recorded, finished, { status: 'finished', updated_at: LATER }), recorded);
+  assert.deepEqual(resolveOrderCompletion({}, { ...finished, finished_at: OLD }), {
+    _support_completed_at: new Date(OLD).toISOString(), _support_completed_source: 'order.finished_at',
+  });
+  assert.deepEqual(resolveOrderCompletion({}, order({ status: 'finished', updated_at: NOW }), { status: 'finished', updated_at: LATER }), {});
+});
 
 test('refund state and amount use financial_status and total_refund_price independently of cancellation', () => {
   for (const status of ['partially_refunded', 'refunded', 'refunding', 'refund_failed']) {
@@ -130,6 +145,34 @@ test('legacy guard uses saved state for a changed email and keeps the refund in 
   assert.equal(result.order.customerEmail, 'other@example.invalid');
   assert.equal(result.order.rawOrderJson.financial_status, 'refunded');
   assert.equal(result.order.rawOrderJson.updated_at, new Date(NOW).toISOString());
+});
+
+test('finished event time survives later status changes and legacy snapshot replacement', async t => {
+  const db = database(t, [snapshot()]);
+  await applyOrderStatusUpdate({ storeSubdomain: 'fixture', order: order({ status: 'finished', updated_at: LATER }),
+    topic: 'orders/finished', completionEvent: { status: 'finished', updated_at: NOW } });
+  const patch = JSON.parse(db.calls.find(call => call.sql.includes('UPDATE support_order_snapshots'))!.values[6]);
+  assert.equal(patch._support_completed_at, new Date(NOW).toISOString());
+  assert.equal(patch._support_completed_source, 'orders/finished.updated_at');
+  db.calls.length = 0;
+  const db2 = database(t, [snapshot({ raw_order_json: { ...order({ status: 'finished', updated_at: LATER }), ...patch } })]);
+  const incoming = normalizeOrder('fixture', 'Fixture', order({ status: 'finished', updated_at: LATER,
+    _support_completed_at: '2099-01-01T00:00:00Z', _support_completed_source: 'orders/finished.updated_at' }), []);
+  const guarded = await guardSnapshotOrderStatus(db2.client as any, incoming);
+  assert.equal(guarded.order.rawOrderJson._support_completed_at, new Date(NOW).toISOString());
+});
+
+test('authoritative cancellation survives status state and later snapshot replacement that omit the date', async t => {
+  const db = database(t, [snapshot()]);
+  await applyOrderStatusUpdate({ storeSubdomain: 'fixture', order: order({ status: 'finished', canceled_at: NOW }), topic: 'orders/finished' });
+  const patch = JSON.parse(db.calls.find(call => call.sql.includes('UPDATE support_order_snapshots'))!.values[6]);
+  assert.equal(patch.cancelled_at, new Date(NOW).toISOString());
+  const state = JSON.parse(db.calls.find(call => call.sql.includes('INSERT INTO support_order_status_state'))!.values[2]);
+  assert.equal(state.cancelled_at, patch.cancelled_at);
+  const db2 = database(t, [snapshot()], { provider_updated_at: NOW, state_json: state });
+  const incoming = normalizeOrder('fixture', 'Fixture', order({ status: 'finished', updated_at: LATER, cancelled_at: null }), []);
+  const guarded = await guardSnapshotOrderStatus(db2.client as any, incoming);
+  assert.equal(guarded.order.rawOrderJson.cancelled_at, new Date(NOW).toISOString());
 });
 
 test('log failure rolls back state and snapshot writes; rollback failure destroys the pooled connection', async t => {

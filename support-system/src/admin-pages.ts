@@ -13,11 +13,13 @@
 export const ADMIN_PAGES: ReadonlyArray<readonly [string, string]> = [
   ['/thinkpro-admin', 'admin.html'],
   ['/thinkpro-admin/stores', 'admin-stores.html'],
+  ['/thinkpro-admin/protection', 'admin-protection.html'],
   ['/thinkpro-admin/emails', 'admin-emails.html'],
   ['/thinkpro-admin/logs', 'admin-logs.html'],
   ['/thinkpro-admin/ticket-preview', 'admin-ticket-preview.html'],
   ['/thinkpro-admin/ticket-preview.html', 'admin-ticket-preview.html'],
   ['/thinkpro-admin/email-templates', 'email-templates.html'],
+  ['/thinkpro-admin/email-preferences', 'admin-email-preferences.html'],
   ['/thinkpro-admin/settings', 'admin-settings.html'],
   ['/thinkpro-admin/email-preview', 'email-preview.html'],
 ];

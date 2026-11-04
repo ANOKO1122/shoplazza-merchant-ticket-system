@@ -117,7 +117,11 @@ export function processPendingOrderStatusWebhooks(options: { limit?: number } = 
           }
           const result = await applyOrderStatusUpdate({
             storeSubdomain: event.store_subdomain, storeName: store.store_name, order, topic: event.topic,
+            completionEvent: event.topic === 'orders/finished' ? event.payload_json?.order : undefined,
           });
+          if (event.topic === 'orders/finished' && result.skipReason === 'stale') {
+            throw new Error('Current order lookup has not reached the stored version for completion evidence');
+          }
           orderNumber = result.orderNumber || orderNumber;
         } else {
           await logSync({ source: 'webhook', action: 'order_status_update',

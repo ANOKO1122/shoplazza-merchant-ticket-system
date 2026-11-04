@@ -43,7 +43,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .content { flex: 1; overflow: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
 
 /* 模板类型 Tab */
-.tab-bar { display: flex; gap: 0; border-bottom: 2px solid var(--border); background: var(--bg-card); border-radius: var(--radius) var(--radius) 0 0; }
+.tab-bar { display: flex; flex-wrap: wrap; gap: 0; border-bottom: 2px solid var(--border); background: var(--bg-card); border-radius: var(--radius) var(--radius) 0 0; }
 .tab-btn { padding: 10px 20px; cursor: pointer; font-size: 13px; font-weight: 500; color: var(--text-secondary); border: none; background: transparent; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all .2s; }
 .tab-btn:hover { color: var(--primary); }
 .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
@@ -145,7 +145,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
         <button class="tab-btn" data-type="agent_reply_notice" onclick="switchTemplate('agent_reply_notice')">💬 客服回复提醒</button>
         <button class="tab-btn" data-type="ticket_closed_notice" onclick="switchTemplate('ticket_closed_notice')">✅ 工单关闭提醒</button>
         <button class="tab-btn" data-type="customer_complaint_invite" onclick="switchTemplate('customer_complaint_invite')">📝 顾客投诉工单</button>
+        <button class="tab-btn" data-type="protection_completion_notice" onclick="switchTemplate('protection_completion_notice')">完成模板（物流保障）</button>
+        <button class="tab-btn" data-type="protection_claim_update" onclick="switchTemplate('protection_claim_update')">申请更新（物流保障）</button>
       </div>
+      <p id="protectionTemplateNote" hidden style="margin:0;padding:10px 14px;background:#eef5fb;border-radius:6px;color:#365575">物流保障模板已就绪，自动发送尚未开启。顾客入口使用 us-seel.com；“订单完成”不等于承运商签收，签收通知需要可靠物流依据。</p>
+      <p id="protectionUpdateNote" hidden style="margin:0;padding:10px 14px;background:#eef5fb;border-radius:6px;color:#365575">申请状态更新时生成独立通知，发送由保障邮件配置控制，不补发历史状态。邮件只提示有更新，顾客通过 us-seel.com 私有链接查看详情。</p>
 
       <!-- 编辑 + 预览 -->
       <div class="editor-grid">
@@ -165,20 +169,22 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
           <div class="panel-body">
             <div class="form-group">
               <label>📧 邮件主题 (Subject)</label>
-              <input type="text" id="subjectInput" placeholder="输入邮件主题模板...">
+              <input type="text" id="subjectInput" placeholder="输入邮件主题模板..." oninput="livePreview()">
               <div class="help-text">
                 可用变量：<code>{{store_name}}</code> <code>{{order_number}}</code> <code>{{public_ticket_no}}</code> <code>{{customer_name}}</code> <code>{{order_currency}}</code> <code>{{order_amount}}</code> <code>{{paid_at}}</code>
               </div>
             </div>
             <div class="form-group">
               <label>📄 邮件正文 (HTML)</label>
-              <textarea class="body-editor" id="bodyInput" placeholder="输入邮件正文 HTML 模板..."></textarea>
+              <textarea class="body-editor" id="bodyInput" placeholder="输入邮件正文 HTML 模板..." oninput="livePreview()"></textarea>
+              <div class="help-text">系统会在发送时自动添加 Unsubscribe 链接，无需写入模板。右侧预览包含此页脚，预览链接不生效。</div>
             </div>
             <div class="help-text">
               通用变量：<code>{{store_name}}</code> <code>{{store_domain}}</code> <code>{{store_link}}</code> <code>{{order_id}}</code> <code>{{order_number}}</code>
               <code>{{customer_name}}</code> <code>{{customer_email}}</code> <code>{{public_ticket_no}}</code> <code>{{client_link}}</code> <code>{{complaint_link}}</code>
               <code>{{paid_at}}</code> <code>{{payment_method}}</code> <code>{{card_last4}}</code> <code>{{order_amount}}</code> <code>{{order_currency}}</code>
               <code>{{product_image}}</code> <code>{{has_items}}</code>
+              <br><strong>物流保障：</strong><code>{{protection_link}}</code> <code>{{protection_no}}</code> <code>{{claim_no}}</code> <code>{{tracking_number}}</code> <code>{{carrier}}</code>；申请链接由保障系统生成，不使用工单链接。
               <br>条件块：<code>{{#card_last4}}内容{{/card_last4}}</code> <code>{{#has_items}}内容{{/has_items}}</code>
               <br><strong>商品迭代（顾客投诉模板）：</strong>
               <code>{{#items}}&lt;tr&gt;...{{product_title}} ×{{quantity}} ...{{/items}}</code>
@@ -197,6 +203,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
               <span class="var-chip" onclick="insertVar('{{customer_email}}')">customer_email</span>
               <span class="var-chip" onclick="insertVar('{{public_ticket_no}}')">public_ticket_no</span>
               <span class="var-chip" onclick="insertVar('{{client_link}}')">client_link</span>
+              <span class="var-chip" onclick="insertVar('{{protection_link}}')">protection_link</span>
+              <span class="var-chip" onclick="insertVar('{{protection_no}}')">protection_no</span>
+              <span class="var-chip" onclick="insertVar('{{claim_no}}')">claim_no</span>
+              <span class="var-chip" onclick="insertVar('{{tracking_number}}')">tracking_number</span>
+              <span class="var-chip" onclick="insertVar('{{carrier}}')">carrier</span>
               <span class="var-chip" onclick="insertVar('{{complaint_link}}')">complaint_link</span>
               <span class="var-chip" onclick="insertVar('{{paid_at}}')">paid_at</span>
               <span class="var-chip" onclick="insertVar('{{payment_method}}')">payment_method</span>
@@ -240,6 +251,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
                 <div class="form-group"><label>customer_email</label><input id="tv_customer_email" value="john@example.com" onchange="livePreview()"></div>
                 <div class="form-group"><label>public_ticket_no</label><input id="tv_public_ticket_no" value="TKT-000001" onchange="livePreview()"></div>
                 <div class="form-group"><label>client_link</label><input id="tv_client_link" value="https://example.com/ticket?t=test_token_xxx" onchange="livePreview()"></div>
+                <div class="form-group"><label for="tv_protection_link">protection_link（预览链接无订单权限）</label><input id="tv_protection_link" value="https://us-seel.com/protection" onchange="livePreview()"></div>
+                <div class="form-group"><label for="tv_protection_no">protection_no</label><input id="tv_protection_no" value="SP-DEMO-1042" onchange="livePreview()"></div>
+                <div class="form-group"><label for="tv_claim_no">claim_no</label><input id="tv_claim_no" value="CL-DEMO-1042" onchange="livePreview()"></div>
+                <div class="form-group"><label for="tv_tracking_number">tracking_number</label><input id="tv_tracking_number" value="DEMO-TRACKING-1042" onchange="livePreview()"></div>
+                <div class="form-group"><label for="tv_carrier">carrier</label><input id="tv_carrier" value="Example carrier" onchange="livePreview()"></div>
                 <div class="form-group"><label>paid_at</label><input id="tv_paid_at" value="2026-05-19 10:30:00" onchange="livePreview()"></div>
                 <div class="form-group"><label>payment_method</label><input id="tv_payment_method" value="Visa" onchange="livePreview()"></div>
                 <div class="form-group"><label>card_last4</label><input id="tv_card_last4" value="4242" onchange="livePreview()"></div>
@@ -267,6 +283,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 var API = '/api/admin';
 var currentType = 'paid_support_invite';
 var currentTemplate = null;
+var templateLoadSequence = 0;
+var previewSequence = 0;
+var previewTimer = null;
+var previewController = null;
 
 // 页面加载
 (async function init() {
@@ -306,9 +326,17 @@ function switchTemplate(type) {
 }
 
 async function loadTemplate(type) {
+  var loadSequence = ++templateLoadSequence;
+  var loadEpoch = adminEpoch();
+  invalidatePreview();
+  document.getElementById('previewSubject').textContent = '(加载中)';
+  document.getElementById('previewFrame').srcdoc = '<p style="padding:24px;color:#8c8c8c">正在加载模板…</p>';
+  document.getElementById('protectionTemplateNote').hidden = type !== 'protection_completion_notice';
+  document.getElementById('protectionUpdateNote').hidden = type !== 'protection_claim_update';
   try {
     var r = await fetch(API + '/email-templates/' + type, { credentials: 'same-origin' });
     var d = await r.json();
+    if (loadSequence !== templateLoadSequence || type !== currentType || loadEpoch !== adminEpoch()) return;
     if (d.ok && d.template) {
       currentTemplate = d.template;
       document.getElementById('subjectInput').value = d.template.subject_template || '';
@@ -323,9 +351,11 @@ async function loadTemplate(type) {
       document.getElementById('saveStatus').textContent = '';
     }
   } catch(e) {
+    if (loadSequence !== templateLoadSequence || type !== currentType || loadEpoch !== adminEpoch()) return;
     showToast('加载模板失败', 'error');
   }
   await loadPresets();
+  if (loadSequence !== templateLoadSequence || type !== currentType || loadEpoch !== adminEpoch()) return;
   livePreview();
 }
 
@@ -334,11 +364,18 @@ var currentPresets = [];
 var activePresetName = ''; // 当前活跃的预设名（从服务端查）
 
 async function loadPresets() {
+  var type = currentType;
+  var loadSequence = templateLoadSequence;
+  var loadEpoch = adminEpoch();
   try {
-    var r = await fetch(API + '/email-templates/' + currentType + '/presets', { credentials: 'same-origin' });
+    var r = await fetch(API + '/email-templates/' + type + '/presets', { credentials: 'same-origin' });
     var d = await r.json();
+    if (type !== currentType || loadSequence !== templateLoadSequence || loadEpoch !== adminEpoch()) return;
     currentPresets = d.ok ? d.presets : [];
-  } catch(e) { currentPresets = []; }
+  } catch(e) {
+    if (type !== currentType || loadSequence !== templateLoadSequence || loadEpoch !== adminEpoch()) return;
+    currentPresets = [];
+  }
 
   // 使用服务端记录的 active_preset_name，不再依赖内容比对
   // activePresetName 已在 loadTemplate 中从服务端获取
@@ -507,7 +544,18 @@ async function saveTemplate() {
   btn.textContent = '💾 保存模板';
 }
 
+function invalidatePreview() {
+  previewSequence++;
+  clearTimeout(previewTimer);
+  if (previewController) previewController.abort();
+  previewController = null;
+}
+
 function livePreview() {
+  invalidatePreview();
+  var sequence = previewSequence;
+  var type = currentType;
+  var epoch = adminEpoch();
   var subject = document.getElementById('subjectInput').value;
   var body = document.getElementById('bodyInput').value;
 
@@ -529,6 +577,11 @@ function livePreview() {
     customer_email: document.getElementById('tv_customer_email').value,
     public_ticket_no: document.getElementById('tv_public_ticket_no').value,
     client_link: document.getElementById('tv_client_link').value,
+    protection_link: document.getElementById('tv_protection_link').value,
+    protection_no: document.getElementById('tv_protection_no').value,
+    claim_no: document.getElementById('tv_claim_no').value,
+    tracking_number: document.getElementById('tv_tracking_number').value,
+    carrier: document.getElementById('tv_carrier').value,
     paid_at: document.getElementById('tv_paid_at').value,
     payment_method: document.getElementById('tv_payment_method').value,
     card_last4: document.getElementById('tv_card_last4').value,
@@ -544,58 +597,29 @@ function livePreview() {
     vars.items = [];
   }
 
-  // 客户端简单渲染
-  var previewSubject = renderTemplate(subject, vars);
-  var previewHtml = renderTemplate(body, vars);
-
-  document.getElementById('previewSubject').textContent = previewSubject;
-
-  var frame = document.getElementById('previewFrame');
-  var doc = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{font-family:Arial,sans-serif;margin:0;padding:16px;color:#333;line-height:1.6;word-wrap:break-word} a{color:#1890ff}</style></head><body>' + previewHtml + '</body></html>';
-  frame.srcdoc = doc;
-}
-
-// 客户端模板渲染（与服务端行为一致：{{{var}}} 原始, {{var}} 转义, {{#arr}} 迭代, _index 自动注入）
-function renderTemplate(tpl, vars) {
-  var result = tpl;
-  // 条件/迭代块 {{#var}}...{{/var}}
-  result = result.replace(/\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g, function(m, key, content) {
-    var val = vars[key];
-    if (Array.isArray(val)) {
-      // 数组迭代：每项作为子上下文递归渲染
-      return val.map(function(item, idx) {
-        var ctx = {};
-        for (var k in item) { if (item.hasOwnProperty(k)) ctx[k] = item[k]; }
-        ctx._index = String(idx + 1);
-        return renderTemplate(content, ctx);
-      }).join('');
+  previewTimer = setTimeout(async function() {
+    var controller = new AbortController();
+    previewController = controller;
+    try {
+      var response = await fetch(API + '/email-templates/' + type + '/preview', {
+        method: 'POST', credentials: 'same-origin', signal: controller.signal,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subject_template: subject, body_template: body, variables: vars })
+      });
+      var result = await response.json();
+      if (sequence !== previewSequence || type !== currentType || epoch !== adminEpoch()) return;
+      if (!response.ok || !result.ok || !result.preview) throw new Error('Preview unavailable');
+      document.getElementById('previewSubject').textContent = result.preview.subject || '(空)';
+      var html = result.preview.html;
+      document.getElementById('previewFrame').srcdoc = /<html\b/i.test(html) ? html : '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{font-family:Arial,sans-serif;margin:0;padding:16px;color:#333;line-height:1.6;word-wrap:break-word} a{color:#1890ff}</style></head><body>' + html + '</body></html>';
+    } catch(e) {
+      if (sequence !== previewSequence || type !== currentType || epoch !== adminEpoch() || e.name === 'AbortError') return;
+      document.getElementById('previewSubject').textContent = '(预览失败)';
+      document.getElementById('previewFrame').srcdoc = '<p style="padding:24px;color:#8c8c8c">预览暂时不可用，请修改内容或点击刷新预览重试。</p>';
+    } finally {
+      if (previewController === controller) previewController = null;
     }
-    // 非数组真值：递归处理内层模板变量
-    if (val && (typeof val === 'string' ? val.trim() : true)) return renderTemplate(content, vars);
-    return '';
-  });
-  // 原始 HTML：{{{var}}}
-  for (var k in vars) {
-    if (!vars.hasOwnProperty(k) || Array.isArray(vars[k])) continue;
-    result = result.replace(new RegExp('\\{\\{\\{' + k + '\\}\\}\\}', 'g'), String(vars[k]));
-  }
-  // 转义输出：{{var}}
-  for (var k in vars) {
-    if (!vars.hasOwnProperty(k) || Array.isArray(vars[k])) continue;
-    result = result.replace(new RegExp('\\{\\{' + k + '\\}\\}', 'g'), function() {
-      return escapeHtml(String(vars[k]));
-    });
-  }
-  return result;
-}
-
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+  }, 200);
 }
 
 function insertVar(varName) {
@@ -618,6 +642,16 @@ async function resetToDefault() {
 
   // 重新加载页面以获取默认值
   try {
+    if (currentType === 'protection_completion_notice' || currentType === 'protection_claim_update') {
+      var response = await fetch(API + '/email-templates/' + currentType + '/default', { credentials: 'same-origin' });
+      var result = await response.json();
+      if (!response.ok || !result.ok) throw new Error('加载默认模板失败');
+      subject.value = result.template.subject_template;
+      body.value = result.template.body_template;
+      await saveTemplate();
+      livePreview();
+      return;
+    }
     // 用空 PUT 触发默认回退不太合适，直接重新加载
     var typeLabels = {
       paid_support_invite: '下单/付款后通知',

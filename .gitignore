@@ -21,6 +21,7 @@ dist/
 
 # 测试覆盖率
 coverage/
+.impeccable/
 
 # Docker覆写
 docker-compose.override.yml
@@ -28,6 +29,10 @@ docker-compose.override.yml
 # 系统文件
 .DS_Store
 Thumbs.db
+support-system/protection-data/
+support-system/public/protection/
+support-system/public/assets/customer-protection.js
+support-system/public/assets/customer-protection.css
 
 # Claude Code / Cursor
 .claude/
@@ -42,3 +47,16 @@ Thumbs.db
 support-system/nginx/letsencrypt/
 support-system/nginx/acme-challenge/*
 !support-system/nginx/acme-challenge/.gitkeep
+
+# Local reports and temporary operational artifacts
+support-system/tmp/
+
+# Local application sources are versioned only on their local branches.
+/shipping-protection/
+/product-visibility/
+/docs/superpowers/plans/2026-11-02-amao04-protection.md
+/docs/superpowers/plans/2026-11-02-cart-linkage.md
+/docs/superpowers/plans/2026-11-03-protection-multistore.md
+/docs/superpowers/specs/2026-11-02-amao04-protection.md
+/docs/superpowers/specs/2026-11-02-cart-linkage.md
+/docs/superpowers/specs/2026-11-03-protection-multistore.md

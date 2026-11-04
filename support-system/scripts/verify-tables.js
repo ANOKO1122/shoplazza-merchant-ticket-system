@@ -1,7 +1,9 @@
 const { Pool } = require('pg');
 
 async function main() {
-  const p = new Pool({ connectionString: 'postgres://postgres:root@localhost:5432/support_portal' });
+  const connectionString = process.env.SUPPORT_DATABASE_URL?.trim();
+  if (!connectionString) throw new Error('SUPPORT_DATABASE_URL is required');
+  const p = new Pool({ connectionString });
   const tables = await p.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name");
   console.log('=== 表列表 ===');
   tables.rows.forEach(r => console.log(' ', r.table_name));

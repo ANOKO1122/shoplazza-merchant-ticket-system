@@ -51,6 +51,7 @@ function fakeDatabase(t: TestContext, options: {
   insert: (attempt: number, values: unknown[]) => FakeResult;
   previousReply?: Record<string, unknown>;
   suppression?: (read: number, values: unknown[]) => boolean;
+  unsubscribed?: boolean;
 }) {
   // Never load .env. Every database/SMTP/network operation is mocked or blocked.
   const env = {
@@ -78,10 +79,19 @@ function fakeDatabase(t: TestContext, options: {
   let templateReads = 0;
   let existingJobReads = 0;
   let suppressionReads = 0;
+  let unsubscribeTokens = 0;
   const existingJob = { id: 99, email_job_no: 'existing-job', status: 'sent' };
 
   t.mock.method(Pool.prototype, 'query', async (text: string, values: unknown[] = []): Promise<FakeResult> => {
     const sql = text.replace(/\s+/g, ' ').trim();
+    if (sql.startsWith('SELECT 1 FROM support_email_preferences')) {
+      assert.deepEqual(values, ['ticket', fixture.customerEmail]);
+      return { rows: options.unsubscribed ? [{ '?column?': 1 }] : [], rowCount: options.unsubscribed ? 1 : 0 };
+    }
+    if (sql.startsWith('INSERT INTO support_email_unsubscribe_tokens')) {
+      assert.equal(values[1], 'ticket'); assert.equal(values[2], fixture.customerEmail); unsubscribeTokens++;
+      return { rows: [], rowCount: 1 };
+    }
     if (sql.startsWith('SELECT reason FROM support_order_notification_suppressions')) {
       suppressionReads++;
       const rows = options.suppression?.(suppressionReads, values) ? [{ reason: 'fulfillment_recovery' }] : [];
@@ -135,8 +145,31 @@ function fakeDatabase(t: TestContext, options: {
     get templateReads() { return templateReads; },
     get existingJobReads() { return existingJobReads; },
     get suppressionReads() { return suppressionReads; },
+    get unsubscribeTokens() { return unsubscribeTokens; },
   };
 }
+
+test('global normalized ticket unsubscribe blocks every creator across stores before tokens or rendering', async t => {
+  const db = fakeDatabase(t, { unsubscribed: true, insert() { throw new Error('Unsubscribed recipient must not queue'); } });
+  const other = { ...fixture, storeSubdomain: 'another-store', customerEmail: '  CUSTOMER@EXAMPLE.INVALID ' };
+  assert.equal((await createPaidSupportInviteEmailJob(other)).suppressed, true);
+  assert.equal(await createAgentReplyNoticeEmailJob(other), null);
+  assert.equal((await createCustomerComplaintInviteJob(other)).suppressed, true);
+  assert.equal(db.tokenCount, 0); assert.equal(db.unsubscribeTokens, 0); assert.equal(db.templateReads, 0);
+});
+
+test('new job previews already contain an opaque ticket unsubscribe footer', async t => {
+  const db = fakeDatabase(t, { insert: (_attempt, values) => ({ rows: [{ id: 100, email_job_no: values[0] }], rowCount: 1 }) });
+  await createPaidSupportInviteEmailJob(fixture);
+  await createAgentReplyNoticeEmailJob(fixture);
+  await createCustomerComplaintInviteJob(fixture);
+  for (const values of db.inserts) {
+    const html = values.find(value => typeof value === 'string' && value.includes('email-unsubscribe:start')) as string;
+    assert.ok(html); assert.match(html, /https:\/\/support\.example\.invalid\/email-preferences\?token=eu_[A-Za-z0-9_-]{43}/);
+    assert.match(html, />Unsubscribe<\/a>/);
+  }
+  assert.equal(db.unsubscribeTokens, 3);
+});
 
 for (const creator of creators) {
   test(`${creator.type} retries a job number collision without recreating tokens or content`, async t => {

@@ -215,7 +215,7 @@ export async function processOrderWebhook(params: {
       jobSource: 'webhook',
     });
     if (emailJob.suppressed) {
-      console.log('[webhook] paid invitation suppressed for recovered order');
+      console.log('[webhook] paid invitation suppressed by notification policy');
     } else {
       console.log(`[webhook] email job ${emailJob.inserted ? 'created' : 'exists'}: ${emailJob.job?.email_job_no || ''}`);
     }

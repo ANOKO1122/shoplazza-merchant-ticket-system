@@ -6,6 +6,7 @@ import vm from 'node:vm';
 import crypto from 'node:crypto';
 import ts from 'typescript';
 import * as emailText from './email-text';
+import * as protectionEmailTemplate from './protection-email-template';
 
 const plain = (value: any) => JSON.parse(JSON.stringify(value));
 function load<T>(filename: string, dependencies: Record<string, unknown>): T {
@@ -26,14 +27,16 @@ function load<T>(filename: string, dependencies: Record<string, unknown>): T {
 function harness(options: {
   type?: string; status?: string; suppressed?: boolean; suppressDuringPreparation?: boolean; lookupFails?: boolean;
   snapshotHtml?: string; withoutSnapshot?: boolean; customerName?: string;
+  unsubscribed?: boolean; unsubscribeDuringPreparation?: boolean; preferenceFails?: boolean; decorate?: boolean; smtpFails?: boolean;
 } = {}) {
   let suppressed = options.suppressed ?? true;
+  let unsubscribed = options.unsubscribed ?? false;
   const job: any = { id: 1, email_job_no: 'OFFLINE', event_key: 'offline-key', store_subdomain: 'offline', order_id: 'ORDER',
     customer_email: 'fixture@example.invalid', email_type: options.type || 'paid_support_invite', status: options.status || 'pending',
     subject_snapshot: options.withoutSnapshot ? '' : 'Fixture',
     body_snapshot: options.withoutSnapshot ? '' : options.snapshotHtml || '<p>Fixture body</p>',
     ordered_at: '2020-01-01T00:00:00Z', token_id: 1 };
-  const calls = { sent: 0, suppressionReads: 0, tokens: 0, sentEvents: 0, snapshots: 0, logs: [] as any[], mails: [] as any[], nameLookups: 0 };
+  const calls = { sent: 0, suppressionReads: 0, tokens: 0, sentEvents: 0, snapshots: 0, logs: [] as any[], mails: [] as any[], nameLookups: 0, preferenceReads: 0, decorations: 0, guarded: 0 };
   const pg = { query: async (text: string, values: any[] = []): Promise<any> => {
     const sql = text.replace(/\s+/g, ' ').trim();
     if (sql.startsWith('SELECT reason FROM support_order_notification_suppressions')) {
@@ -65,7 +68,7 @@ function harness(options: {
       const status = /SET status = '([^']+)'/.exec(sql)![1];
       if (status === 'sending' && job.status !== 'pending') return { rows: [], rowCount: 0 };
       if (status === 'skipped') {
-        assert.match(sql, /status = 'sending'/);
+        assert.ok(sql.includes("status = 'sending'") || sql.includes('status = $3'));
         job.last_error = values[1];
       }
       job.status = status;
@@ -73,6 +76,8 @@ function harness(options: {
     }
     if (sql.startsWith('UPDATE support_email_jobs SET token_id')) {
       if (options.suppressDuringPreparation) suppressed = true;
+      if (options.unsubscribeDuringPreparation) unsubscribed = true;
+      job.subject_snapshot = values[2]; job.body_snapshot = values[3];
       return { rows: [], rowCount: 1 };
     }
     if (sql.startsWith('INSERT INTO support_email_events')) { calls.sentEvents++; return { rows: [], rowCount: 1 }; }
@@ -80,9 +85,15 @@ function harness(options: {
     throw new Error(`Unexpected fixture SQL: ${sql}`);
   } };
   const subject = load<typeof import('./email-service')>('email-service.ts', {
+    './email-preferences': {
+      isEmailUnsubscribed: async (email: string, category: string) => { calls.preferenceReads++; assert.equal(category, 'ticket'); assert.equal(email.trim().toLowerCase(), job.customer_email); if (options.preferenceFails) throw new Error('preferences unavailable'); return unsubscribed; },
+      withEmailPreferenceGuard: async (email: string, category: string, send: () => Promise<unknown>) => { calls.guarded++; assert.equal(category, 'ticket'); assert.equal(email, job.customer_email); if (unsubscribed) return { suppressed: true }; return { suppressed: false, value: await send() }; },
+      decorateEmailWithUnsubscribe: async (mail: any, category: string, base: string) => { calls.decorations++; assert.equal(category, 'ticket'); assert.equal(base, 'https://support.example.invalid'); if (!options.decorate || mail.html.includes('unsubscribe-fixture')) return mail; const html = mail.html + '<p><a href="https://support.example.invalid/email-preferences?token=unsubscribe-fixture">Unsubscribe from ticket emails</a></p>'; return { ...mail, html, text: emailText.emailHtmlToText(html) }; },
+    },
+    './protection-email-template': protectionEmailTemplate,
     './email-text': emailText,
     crypto, './pg': pg, './config': { loadConfig: () => ({}), buildStoreDomain: () => 'offline.invalid' },
-    './mailer': { sendSupportEmail: async (mail: any) => { calls.sent++; calls.mails.push(mail); return { messageId: 'OFFLINE-SMTP-MOCK' }; } },
+    './mailer': { sendSupportEmail: async (mail: any) => { calls.sent++; calls.mails.push(mail); if(options.smtpFails) throw new Error('fixture SMTP failure'); return { messageId: 'OFFLINE-SMTP-MOCK' }; } },
     './token': { createBootstrapToken: () => { calls.tokens++; throw new Error('Unexpected token creation'); },
       createTicketAccessToken: () => {
         calls.tokens++;
@@ -93,6 +104,49 @@ function harness(options: {
   });
   return { subject, job, calls, pg };
 }
+
+const ticketRecipient = { storeSubdomain: 'offline', orderId: 'ORDER', customerEmail: 'fixture@example.invalid', publicTicketNo: 'TICKET' };
+test('unsubscribed ticket recipients do not create invitations, replies or manual invitation tokens', async () => {
+  const h = harness({ suppressed: false, unsubscribed: true });
+  assert.equal((await h.subject.createPaidSupportInviteEmailJob(ticketRecipient)).suppressed, true);
+  assert.equal(await h.subject.createAgentReplyNoticeEmailJob(ticketRecipient), null);
+  assert.deepEqual(plain(await h.subject.ensureAgentReplyNoticeJob(ticketRecipient)), { job: null, created: false, suppressed: true });
+  assert.deepEqual(plain(await h.subject.createCustomerComplaintInviteJob(ticketRecipient)), { job: null, suppressed: true });
+  assert.equal(h.calls.tokens, 0); assert.equal(h.calls.sent, 0);
+});
+for (const type of ['paid_support_invite', 'agent_reply_notice', 'customer_complaint_invite', 'ticket_closed_notice']) {
+  test(`queued ${type} is skipped after recipient unsubscribes`, async () => {
+    const h = harness({ type, suppressed: false, unsubscribed: true, withoutSnapshot: true });
+    assert.deepEqual(plain(await h.subject.processDueEmailJobs({ onlyJobId: 1 })), { picked: 1, sent: 0, failed: 0 });
+    assert.equal(h.job.status, 'skipped'); assert.equal(h.job.last_error, 'email_unsubscribed:ticket');
+    assert.equal(h.calls.sent, 0); assert.equal(h.calls.tokens, 0); assert.equal(h.calls.sentEvents, 0);
+  });
+}
+test('unsubscribe committed during preparation suppresses SMTP at the final preference guard', async () => {
+  const h = harness({ type: 'agent_reply_notice', suppressed: false, unsubscribeDuringPreparation: true, decorate: true });
+  await h.subject.processDueEmailJobs({ onlyJobId: 1 });
+  assert.equal(h.job.status, 'skipped'); assert.equal(h.calls.sent, 0); assert.equal(h.calls.guarded, 1);
+  assert.match(h.job.body_snapshot, /Unsubscribe from ticket emails/);
+});
+test('manual resend of an unsubscribed failed task stays skipped without a failed outcome', async () => {
+  const h = harness({ type: 'customer_complaint_invite', status: 'failed', suppressed: false, unsubscribed: true });
+  const result = await h.subject.resendEmailJob(1);
+  assert.equal(result.status, 'skipped'); assert.equal(result.last_error, 'email_unsubscribed:ticket'); assert.equal(h.calls.sent, 0);
+});
+test('decorated preview snapshot survives SMTP failure and retry with one stable footer', async () => {
+  const h = harness({ type: 'agent_reply_notice', suppressed: false, decorate: true, smtpFails: true });
+  await h.subject.processDueEmailJobs({ onlyJobId: 1 });
+  const snapshot = h.job.body_snapshot;
+  assert.match(snapshot, /Unsubscribe from ticket emails/); assert.equal(h.calls.mails[0].html, snapshot);
+  h.job.status = 'pending'; await h.subject.processDueEmailJobs({ onlyJobId: 1 });
+  assert.equal(h.job.body_snapshot, snapshot); assert.equal(h.calls.mails[1].html, snapshot); assert.equal((snapshot.match(/unsubscribe-fixture/g)||[]).length, 1);
+  assert.match(h.calls.mails[1].text, /Unsubscribe from ticket emails/);
+});
+test('preference lookup failure fails closed before tokens or SMTP', async () => {
+  const h = harness({ type: 'agent_reply_notice', suppressed: false, preferenceFails: true, withoutSnapshot: true });
+  const result = await h.subject.processDueEmailJobs({ onlyJobId: 1 });
+  assert.equal(result.failed, 1); assert.equal(h.calls.tokens, 0); assert.equal(h.calls.sent, 0);
+});
 
 for (const entry of ['automatic', 'send-all', 'retry'] as const) {
   test(`${entry} cannot send a suppressed paid invitation, including a previously skipped task`, async () => {

@@ -7,6 +7,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import express from 'express';
 import ts from 'typescript';
+import * as protectionEmailTemplate from './protection-email-template';
 
 const TICKET = { public_ticket_no: 'T-OFFLINE', store_subdomain: 'real-store', order_id: 'real-order', customer_email: 'fixture@example.invalid' };
 const AGENT = { agentId: 7, name: 'Offline Agent', role: 'agent' };
@@ -33,6 +34,9 @@ async function harness(t: TestContext, options: { readError?: Error; submitError
   const request = options.request || { id: '42', status: 'pending', storeSubdomain: TICKET.store_subdomain, orderId: TICKET.order_id,
     patch: { city: 'New City' }, expectedAddress: ADDRESS, desiredAddress: { ...ADDRESS, city: 'New City' } };
   const dependencies: Record<string, unknown> = {
+    './protection-email-template': protectionEmailTemplate,
+    './email-preferences': {}, './protection-customer-auth': {},
+    './email-preferences-admin-routes': { createEmailPreferencesAdminRouter: () => express.Router() },
     express, crypto, 'express-rate-limit': () => (_req: unknown, _res: unknown, next: () => void) => next(),
     './auth': { SESSION_COOKIE_NAME: 'fixture', getRequestAgent: async (req: any) => req.headers.cookie === 'fixture=yes' ? AGENT : null },
     './ticket-service': { getTicketByPublicNo: async (id: string) => { calls.tickets.push(id); return options.missingTicket ? null : TICKET; },
@@ -47,6 +51,7 @@ async function harness(t: TestContext, options: { readError?: Error; submitError
     },
     './admin-preview': { buildTrackingDetails: () => ({ tracking_numbers: [], shipments: [] }) },
     './normalize-order': { mapPaymentMethodDisplay: () => '' },
+    './quick-reply-service': {},
     './storage-service': { uploadAttachments: forbid },
     './pg': { query: forbid }, './store-service': {}, './email-service': {}, './backfill-jobs': {},
     './log-service': {}, './config': {}, './shoplazza-client': {}, './webhook-security': {},

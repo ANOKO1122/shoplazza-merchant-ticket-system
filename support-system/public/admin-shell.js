@@ -3,8 +3,10 @@
   var ADMIN_LINKS = [
     ['/thinkpro-admin', '📋', '工单处理'],
     ['/thinkpro-admin/stores', '🏪', '店铺管理'],
+    ['/thinkpro-admin/protection', '◇', '运输保障'],
     ['/thinkpro-admin/emails', '📧', '订单邮件管理'],
     ['/thinkpro-admin/email-templates', '📨', '邮件模板'],
+    ['/thinkpro-admin/email-preferences', '✉', '邮件退订'],
     ['/thinkpro-admin/settings', '⚙️', '系统设置'],
     ['/thinkpro-admin/logs', '📋', '系统日志'],
   ];
@@ -62,12 +64,37 @@
   }
 
   function adoptExisting() {
-    if (document.getElementById('adminShell')) return;
-    var aside = document.querySelector('.app > aside.sidebar, .app > .sidebar');
+    var aside = document.getElementById('adminShell') || document.querySelector('.app > aside.sidebar, .app > .sidebar');
     var main = document.querySelector('.app > .main');
     if (!aside || !main) return;
     aside.id = 'adminShell';
     if (!main.id) main.id = 'mainArea';
+    // Older pages supply their own sidebar. Restore every missing shared entry,
+    // preserving existing link elements, targets and page-specific extra links.
+    var menu = aside.querySelector('.nav-menu');
+    if (menu) {
+      var links = Object.create(null);
+      menu.querySelectorAll('a.nav-item').forEach(function (link) {
+        try {
+          var url = new URL(link.getAttribute('href'), location.origin);
+          if (url.origin === location.origin && !links[url.pathname]) links[url.pathname] = link;
+        } catch (e) { /* Leave nonstandard links untouched. */ }
+      });
+      ADMIN_LINKS.forEach(function (entry, index) {
+        if (links[entry[0]]) return;
+        var item = document.createElement('a');
+        item.className = 'nav-item';
+        item.href = entry[0];
+        item.innerHTML = '<span class="nav-icon">' + entry[1] + '</span>' + entry[2];
+        var next = null;
+        for (var i = index + 1; i < ADMIN_LINKS.length && !next; i++) next = links[ADMIN_LINKS[i][0]];
+        if (next) menu.insertBefore(item, next);
+        else if (index > 0 && links[ADMIN_LINKS[index - 1][0]]) links[ADMIN_LINKS[index - 1][0]].insertAdjacentElement('afterend', item);
+        else menu.appendChild(item);
+        links[entry[0]] = item;
+      });
+    }
+    setActive(location.pathname);
   }
 
   function ensureShell(path) {
@@ -142,7 +169,8 @@
     opts = opts || {};
     var url;
     try { url = new URL(href, location.origin); } catch (e) { location.href = href; return; }
-    if (url.origin !== location.origin || !isAdminAppPath(url.pathname)) {
+    if (url.origin !== location.origin || !isAdminAppPath(url.pathname)
+      || url.pathname === '/thinkpro-admin/protection' || location.pathname === '/thinkpro-admin/protection') {
       location.href = href;
       return;
     }

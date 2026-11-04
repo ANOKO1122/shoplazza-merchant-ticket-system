@@ -1,6 +1,7 @@
 import express from 'express';
 import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
+import { PROTECTION_COMPLETION_EMAIL_TYPE, PROTECTION_COMPLETION_TEMPLATE, PROTECTION_CLAIM_UPDATE_EMAIL_TYPE, PROTECTION_CLAIM_UPDATE_TEMPLATE, PROTECTION_EMAIL_PREVIEW_VARS } from './protection-email-template';
 import { SESSION_COOKIE_NAME, getRequestAgent, parseSessionCookie, loginAgent, createSession, destroySession, changeAgentPassword } from './auth';
 import { listTickets, getTicketByPublicNo, getTicketMessages, getOrderSnapshot, addAgentMessage, updateTicketStatus, reopenTicket } from './ticket-service';
 import { listStores, createStore, updateStore, deleteStore, getStoreBySubdomain, decryptToken } from './store-service';
@@ -16,6 +17,15 @@ import { mapPaymentMethodDisplay } from './normalize-order';
 import { uploadAttachments, processAttachments, getStorageProvider } from './storage-service';
 import { getOrderShippingAddress, submitShippingAddressRequest, getShippingAddressRequest, processShippingAddressRequest, ShippingAddressError } from './order-address-service';
 import { listQuickReplies, createQuickReply, updateQuickReply, deleteQuickReply, validateQuickReplyInput } from './quick-reply-service';
+import { decorateEmailPreviewWithUnsubscribe } from './email-preferences';
+import { protectionPublicBaseUrl } from './protection-customer-auth';
+import { createEmailPreferencesAdminRouter } from './email-preferences-admin-routes';
+
+function redactEmailPreviewCapabilities(value: string): string {
+  return value
+    .replace(/(?:bt|ta|pa|eu)_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g, '[redacted]')
+    .replace(/((?:[?#]|&(?:amp;)?)(?:t|token|access)=)[^"'&<>\s]*/gi, '$1[redacted]');
+}
 
 function webhookTopicsFromList(webhooks: ShoplazzaWebhook[], expectedAddress: string) {
   return STORE_WEBHOOK_TOPICS.map((topic) => {
@@ -187,6 +197,8 @@ export function createAdminRouter(): express.Router {
     (req as any).agent = agent;
     next();
   });
+
+  router.use('/email-preferences', createEmailPreferencesAdminRouter());
 
   // 全客服共享的快捷回复；仅保存文案，不发送工单消息或邮件。
   router.get('/quick-replies', async (_req, res) => {
@@ -362,6 +374,7 @@ export function createAdminRouter(): express.Router {
         return;
       }
       const sendOk = job.status === 'sent';
+      const unsubscribed = job.status === 'skipped' && job.last_error === 'email_unsubscribed:ticket';
       const actionLabel = job.retry_count > 0 ? '重发' : '发送';
       await logOperation({
         category: 'email',
@@ -369,11 +382,12 @@ export function createAdminRouter(): express.Router {
         actor: (req as any).agent?.name || 'unknown',
         storeSubdomain: job.store_subdomain,
         target: job.email_job_no,
-        summary: `手动${actionLabel}邮件: ${job.email_job_no}${sendOk ? '' : ' (发送失败，见系统日志)'}`,
-        status: sendOk ? 'success' : 'partial',
-        failedAtStep: sendOk ? undefined : 'smtp_send',
+        summary: `手动${actionLabel}邮件: ${job.email_job_no}${unsubscribed ? ' (收件人已退订，跳过发送)' : sendOk ? '' : ' (发送失败，见系统日志)'}`,
+        status: sendOk || unsubscribed ? 'success' : 'partial',
+        failedAtStep: sendOk || unsubscribed ? undefined : 'smtp_send',
         detailJson: { job_no: job.email_job_no, retry_count: job.retry_count, send_status: job.status },
       });
+      if (unsubscribed) { res.status(409).json({ ok: false, suppressed: true, error: '收件人已退订工单邮件，已跳过发送。', job }); return; }
       res.json({ ok: true, job });
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e.message });
@@ -427,7 +441,14 @@ export function createAdminRouter(): express.Router {
       const j = detail.job;
       const snap = detail.orderSnapshot || {};
 
-      // 始终用数据库模板重新渲染，保证与顾客实际收到的邮件一致（仅链接脱敏）
+      // Show the exact prepared/sent content, including its unsubscribe footer.
+      // Preview never mints or exposes a working customer capability.
+      if (j.subject_snapshot && j.body_snapshot) {
+        res.json({ ok: true, subject: redactEmailPreviewCapabilities(j.subject_snapshot), html: redactEmailPreviewCapabilities(j.body_snapshot) });
+        return;
+      }
+
+      // Older jobs without snapshots retain the read-only template fallback.
       const { getEffectivePublicBaseUrl } = await import('./email-service');
       const baseUrl = await getEffectivePublicBaseUrl();
       const clientLink = j.client_link_snapshot || baseUrl + '/ticket?t=...';
@@ -459,7 +480,7 @@ export function createAdminRouter(): express.Router {
         order_amount: snap.order_amount || '',
         order_currency: snap.order_currency || '',
       });
-      res.json({ ok: true, subject: rendered.subject, html: rendered.html });
+      res.json({ ok: true, subject: redactEmailPreviewCapabilities(rendered.subject), html: redactEmailPreviewCapabilities(rendered.html) });
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e.message });
     }
@@ -934,9 +955,12 @@ export function createAdminRouter(): express.Router {
         customerName: snapForNotify?.customer_name?.trim() || ticket.customer_name?.trim() || undefined,
         publicTicketNo: ticket.public_ticket_no,
       });
-
+      if (!job) { res.status(409).json({ ok: false, suppressed: true, error: '收件人已退订工单邮件，未创建通知任务。' }); return; }
       await processDueEmailJobs({ limit: 1, onlyJobId: Number(job.id) });
       const detail = await getEmailJobDetail(Number(job.id));
+      if (detail?.job?.status === 'skipped' && detail.job.last_error === 'email_unsubscribed:ticket') {
+        res.status(409).json({ ok: false, suppressed: true, error: '收件人已退订工单邮件，已跳过发送。', job: detail.job }); return;
+      }
       res.json({ ok: true, job: detail?.job || job });
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e.message });
@@ -986,9 +1010,13 @@ export function createAdminRouter(): express.Router {
         orderCurrency: snapshot.order_currency || '',
         itemsJson: snapshot.items_json || [],
       });
-
+      if (!job) { res.status(409).json({ ok: false, suppressed: true, error: '收件人已退订工单邮件，未创建邀请任务。' }); return; }
       // 立即发送（不等定时器）
       await processDueEmailJobs({ limit: 1, onlyJobId: Number(job.id) });
+      const detail = await getEmailJobDetail(Number(job.id));
+      if (detail?.job?.status === 'skipped' && detail.job.last_error === 'email_unsubscribed:ticket') {
+        res.status(409).json({ ok: false, suppressed: true, error: '收件人已退订工单邮件，已跳过发送。', job: detail.job }); return;
+      }
 
       await logOperation({
         category: 'ticket',
@@ -1262,6 +1290,18 @@ export function createAdminRouter(): express.Router {
   });
 
   // GET /api/admin/email-templates/:type
+  router.get('/email-templates/protection_completion_notice/default', (_req, res) => {
+    res.json({ ok: true, template: {
+      subject_template: PROTECTION_COMPLETION_TEMPLATE.subject,
+      body_template: PROTECTION_COMPLETION_TEMPLATE.body,
+    } });
+  });
+  router.get('/email-templates/protection_claim_update/default', (_req, res) => {
+    res.json({ ok: true, template: {
+      subject_template: PROTECTION_CLAIM_UPDATE_TEMPLATE.subject,
+      body_template: PROTECTION_CLAIM_UPDATE_TEMPLATE.body,
+    } });
+  });
   router.get('/email-templates/:type', async (req, res) => {
     try {
       const tpl = await getEmailTemplate(req.params.type);
@@ -1306,7 +1346,7 @@ export function createAdminRouter(): express.Router {
   router.post('/email-templates/:type/preview', async (req, res) => {
     try {
       const { subject_template, body_template, variables } = req.body || {};
-      const tpl = subject_template
+      const tpl = typeof subject_template === 'string'
         ? { subject_template, body_template: body_template || '' }
         : await getEmailTemplate(req.params.type);
 
@@ -1315,7 +1355,7 @@ export function createAdminRouter(): express.Router {
         return;
       }
 
-      const vars = variables || {
+      const vars = variables || ([PROTECTION_COMPLETION_EMAIL_TYPE, PROTECTION_CLAIM_UPDATE_EMAIL_TYPE].includes(req.params.type) ? PROTECTION_EMAIL_PREVIEW_VARS : {
         store_name: 'Test Store',
         store_domain: 'test.myshoplaza.com',
         order_id: '1001',
@@ -1330,10 +1370,12 @@ export function createAdminRouter(): express.Router {
         order_amount: '29.99',
         order_currency: 'USD',
         product_image: 'https://img.shoplazza.com/example.jpg',
-      };
+      });
 
       const subject = renderTemplateString(tpl.subject_template, vars);
-      const html = renderTemplateString(tpl.body_template, vars);
+      const baseUrl = [PROTECTION_COMPLETION_EMAIL_TYPE, PROTECTION_CLAIM_UPDATE_EMAIL_TYPE].includes(req.params.type)
+        ? protectionPublicBaseUrl() : await getEffectivePublicBaseUrl();
+      const html = decorateEmailPreviewWithUnsubscribe(renderTemplateString(tpl.body_template, vars), baseUrl);
 
       res.json({ ok: true, preview: { subject, html } });
     } catch (e: any) {

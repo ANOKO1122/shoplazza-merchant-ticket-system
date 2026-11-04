@@ -1,8 +1,16 @@
 import { Pool, PoolClient } from 'pg';
 import { ORDER_ADDRESS_SCHEMA_SQL } from './order-address-schema';
+import { PROTECTION_STORE_SCHEMA_SQL } from './protection-store-schema';
+import { PROTECTION_SCHEMA_SQL } from './protection-schema';
+import { PROTECTION_CUSTOMER_SCHEMA_SQL } from './protection-customer-schema';
+import { PROTECTION_FULFILLMENT_SCHEMA_SQL } from './protection-fulfillment-schema';
+import { PROTECTION_COMPLETION_EMAIL_TYPE, PROTECTION_COMPLETION_TEMPLATE } from './protection-email-template';
+import { EMAIL_PREFERENCES_SCHEMA_SQL } from './email-preferences-schema';
+import { VISIBILITY_SCHEMA } from './product-visibility-schema';
 
 let pool: Pool;
 let webhookPool: Pool;
+let emailPreferencePool: Pool;
 
 export function getPool(): Pool {
   if (!pool) {
@@ -36,7 +44,13 @@ export async function queryWebhook(text: string, params?: unknown[]) {
 }
 
 export async function closeDatabasePools(): Promise<void> {
-  await Promise.all([pool?.end(), webhookPool?.end()]);
+  await Promise.all([pool?.end(), webhookPool?.end(), emailPreferencePool?.end()]);
+}
+
+/** Preference locks span SMTP; leave the ordinary pool free for transport settings and job bookkeeping. */
+export async function getEmailPreferenceClient(): Promise<PoolClient> {
+  if (!emailPreferencePool) emailPreferencePool = new Pool({ connectionString: process.env.SUPPORT_DATABASE_URL, max: 4, connectionTimeoutMillis: 10000 });
+  return emailPreferencePool.connect();
 }
 
 export async function getClient(): Promise<PoolClient> {
@@ -45,6 +59,7 @@ export async function getClient(): Promise<PoolClient> {
 
 export async function ensureTables(): Promise<void> {
   const p = getPool();
+  await p.query(EMAIL_PREFERENCES_SCHEMA_SQL);
 
   await p.query(`
     CREATE TABLE IF NOT EXISTS support_order_snapshots (
@@ -646,6 +661,19 @@ export async function ensureTables(): Promise<void> {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_support_email_jobs_created ON support_email_jobs(created_at)`);
 
   await p.query(ORDER_ADDRESS_SCHEMA_SQL);
+  await p.query(VISIBILITY_SCHEMA);
+  await p.query(PROTECTION_STORE_SCHEMA_SQL);
+  await p.query(PROTECTION_SCHEMA_SQL);
+  await p.query(PROTECTION_CUSTOMER_SCHEMA_SQL);
+  await p.query(PROTECTION_FULFILLMENT_SCHEMA_SQL);
+
+  // This draft is editable in the template library, but is not an automatic email job type.
+  await p.query(`INSERT INTO support_email_templates (email_type, subject_template, body_template)
+    VALUES ($1,$2,$3) ON CONFLICT (email_type) DO NOTHING`,
+    [PROTECTION_COMPLETION_EMAIL_TYPE, PROTECTION_COMPLETION_TEMPLATE.subject, PROTECTION_COMPLETION_TEMPLATE.body]);
+  await p.query(`INSERT INTO support_email_template_presets (email_type, preset_name, subject_template, body_template)
+    VALUES ($1,'完成模板（物流保障）',$2,$3) ON CONFLICT (email_type, preset_name) DO NOTHING`,
+    [PROTECTION_COMPLETION_EMAIL_TYPE, PROTECTION_COMPLETION_TEMPLATE.subject, PROTECTION_COMPLETION_TEMPLATE.body]);
 
   // 统计实际表数和索引数
   const tableR = await p.query(

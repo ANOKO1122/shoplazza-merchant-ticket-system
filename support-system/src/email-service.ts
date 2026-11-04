@@ -5,6 +5,8 @@ import { sendSupportEmail } from './mailer';
 import { emailHtmlToText } from './email-text';
 import { createBootstrapToken, createTicketAccessToken, hashToken } from './token';
 import { logOperation } from './log-service';
+import { PROTECTION_COMPLETION_TEMPLATE, PROTECTION_CLAIM_UPDATE_TEMPLATE } from './protection-email-template';
+import { decorateEmailWithUnsubscribe, isEmailUnsubscribed, withEmailPreferenceGuard } from './email-preferences';
 
 export type EmailJobStatus = 'pending' | 'sending' | 'sent' | 'failed' | 'cancelled' | 'skipped';
 export type EmailType = 'paid_support_invite' | 'agent_reply_notice' | 'ticket_closed_notice' | 'customer_complaint_invite';
@@ -247,6 +249,7 @@ export async function createPaidSupportInviteEmailJob(params: PaidSupportInviteS
   if (await paidInviteSuppressionReason(params.storeSubdomain, params.orderId)) {
     return { job: null, inserted: false, suppressed: true };
   }
+  if (await isEmailUnsubscribed(params.customerEmail, 'ticket')) return { job: null, inserted: false, suppressed: true };
   const eventKey = buildPaidSupportInviteEventKey({
     storeSubdomain: params.storeSubdomain,
     orderId: params.orderId,
@@ -279,7 +282,8 @@ export async function createPaidSupportInviteEmailJob(params: PaidSupportInviteS
   const maskedLink = maskClientLink(clientLink);
   // body_snapshot 存完整 HTML（含真实链接），发送时直接使用
   // client_link_snapshot 存脱敏链接，仅用于后台展示
-  const snapshotBody = rendered.html;
+  const snapshotBody = (await decorateEmailWithUnsubscribe({ to: params.customerEmail, subject: rendered.subject,
+    html: rendered.html, text: emailHtmlToText(rendered.html) }, 'ticket', publicBaseUrl)).html;
   const tokenR = await query(`SELECT id FROM support_access_tokens WHERE token_hash = $1`, [hashToken(token)]);
   const tokenId = tokenR.rows[0] ? Number(tokenR.rows[0].id) : null;
 
@@ -324,6 +328,7 @@ export async function createPaidSupportInviteEmailJob(params: PaidSupportInviteS
 }
 
 export async function createAgentReplyNoticeEmailJob(params: AgentReplyNoticeSnapshot) {
+  if (await isEmailUnsubscribed(params.customerEmail, 'ticket')) return null;
   const config = loadConfig();
 
   // ── 令牌复用：查找该工单上一次回复通知的有效链接 ──
@@ -382,7 +387,8 @@ export async function createAgentReplyNoticeEmailJob(params: AgentReplyNoticeSna
     order_currency: params.orderCurrency || '',
   });
   const maskedLink = maskClientLink(clientLink);
-  const snapshotBody = rendered.html;
+  const snapshotBody = (await decorateEmailWithUnsubscribe({ to: params.customerEmail, subject: rendered.subject,
+    html: rendered.html, text: emailHtmlToText(rendered.html) }, 'ticket', await getEffectivePublicBaseUrl())).html;
 
   const result = await insertEmailJobWithRetry(
     `INSERT INTO support_email_jobs
@@ -411,7 +417,8 @@ export async function createAgentReplyNoticeEmailJob(params: AgentReplyNoticeSna
   return result.rows[0];
 }
 
-export async function ensureAgentReplyNoticeJob(params: AgentReplyNoticeSnapshot): Promise<{ job: any; created: boolean }> {
+export async function ensureAgentReplyNoticeJob(params: AgentReplyNoticeSnapshot): Promise<{ job: any; created: boolean; suppressed?: boolean }> {
+  if (await isEmailUnsubscribed(params.customerEmail, 'ticket')) return { job: null, created: false, suppressed: true };
   const existing = await query(
     `SELECT id FROM support_email_jobs
      WHERE public_ticket_no = $1 AND email_type = 'agent_reply_notice' AND status = 'pending'
@@ -422,7 +429,7 @@ export async function ensureAgentReplyNoticeJob(params: AgentReplyNoticeSnapshot
     return { job: existing.rows[0], created: false };
   }
   const job = await createAgentReplyNoticeEmailJob(params);
-  return { job, created: true };
+  return job ? { job, created: true } : { job: null, created: false, suppressed: true };
 }
 
 // ── 手动发起新工单邀请 ──
@@ -509,7 +516,8 @@ export interface CustomerComplaintInviteSnapshot {
 
 export async function createCustomerComplaintInviteJob(
   params: CustomerComplaintInviteSnapshot,
-): Promise<{ job: any }> {
+): Promise<{ job: any; suppressed?: boolean }> {
+  if (await isEmailUnsubscribed(params.customerEmail, 'ticket')) return { job: null, suppressed: true };
   const publicBaseUrl = await getEffectivePublicBaseUrl();
   // 生成两个独立的 bt_ token：联系支持 + 投诉商家各自对应一个工单
   const supportToken = await createBootstrapToken({
@@ -554,7 +562,8 @@ export async function createCustomerComplaintInviteJob(
   });
 
   const maskedLink = maskClientLink(clientLink);
-  const snapshotBody = rendered.html;
+  const snapshotBody = (await decorateEmailWithUnsubscribe({ to: params.customerEmail, subject: rendered.subject,
+    html: rendered.html, text: emailHtmlToText(rendered.html) }, 'ticket', publicBaseUrl)).html;
   const tokenR = await query(
     `SELECT id FROM support_access_tokens WHERE token_hash = $1`, [hashToken(supportToken)],
   );
@@ -674,6 +683,7 @@ export async function resendEmailJob(id: number) {
 
   // sent/sending 状态不应重发（已成功或正在发送中）
   if (original.status === 'sent' || original.status === 'sending') return null;
+  if (await isEmailUnsubscribed(original.customer_email, 'ticket')) return skipUnsubscribedTicketJob(original, original.status);
 
   if (original.status === 'pending') {
     // 待发送 → 立即发送（不重置状态，直接触发）
@@ -770,6 +780,17 @@ export async function processDueEmailJobs(params: { limit?: number; onlyJobId?: 
   return { picked: jobs.rows.length, sent, failed };
 }
 
+async function skipUnsubscribedTicketJob(job: any, expectedStatus = 'sending'): Promise<any> {
+  const skipped = await query(`UPDATE support_email_jobs SET status = 'skipped', failed_at = NULL,
+    last_error = $2, updated_at = now() WHERE id = $1 AND status = $3 RETURNING *`,
+    [job.id, 'email_unsubscribed:ticket', expectedStatus]);
+  if (skipped.rows.length) await logOperation({ category: 'email', action: 'job_skipped', actor: 'system',
+    storeSubdomain: job.store_subdomain, target: job.email_job_no, summary: '收件人已退订工单邮件，跳过发送', status: 'success',
+    detailJson: { email_type: job.email_type, reason: 'email_unsubscribed:ticket' },
+  }).catch(() => undefined);
+  return skipped.rows[0] || (await query('SELECT * FROM support_email_jobs WHERE id = $1', [job.id])).rows[0] || null;
+}
+
 async function sendEmailJob(id: number): Promise<boolean> {
   const claim = await query(
     `UPDATE support_email_jobs
@@ -788,6 +809,7 @@ async function sendEmailJob(id: number): Promise<boolean> {
   let token = '';
 
   try {
+    if (await isEmailUnsubscribed(job.customer_email, 'ticket')) { await skipUnsubscribedTicketJob(job); return false; }
     const config = loadConfig();
     let html = '';
 
@@ -856,6 +878,9 @@ async function sendEmailJob(id: number): Promise<boolean> {
       );
     }
 
+    const mail = await decorateEmailWithUnsubscribe({ to: job.customer_email, subject, html,
+      text: emailHtmlToText(html) }, 'ticket', await getEffectivePublicBaseUrl());
+    html = mail.html; snapshotBody = mail.html;
     await query(
       `UPDATE support_email_jobs
        SET token_id = $2, subject_snapshot = $3, body_snapshot = $4,
@@ -883,12 +908,9 @@ async function sendEmailJob(id: number): Promise<boolean> {
       }
     }
 
-    const mailResult = await sendSupportEmail({
-      to: job.customer_email,
-      subject,
-      html,
-      text: emailHtmlToText(html),
-    });
+    const delivery = await withEmailPreferenceGuard(job.customer_email, 'ticket', () => sendSupportEmail(mail));
+    if (delivery.suppressed) { await skipUnsubscribedTicketJob(job); return false; }
+    const mailResult = delivery.value;
 
     await query(
       `UPDATE support_email_jobs
@@ -979,6 +1001,8 @@ export interface EmailTemplate {
 }
 
 const DEFAULT_TEMPLATES: Record<string, { subject: string; body: string }> = {
+  protection_completion_notice: PROTECTION_COMPLETION_TEMPLATE,
+  protection_claim_update: PROTECTION_CLAIM_UPDATE_TEMPLATE,
   paid_support_invite: {
     subject: 'Order Notification',
     body: `<!DOCTYPE html>

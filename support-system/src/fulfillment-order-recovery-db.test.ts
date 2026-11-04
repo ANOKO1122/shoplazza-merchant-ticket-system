@@ -6,6 +6,8 @@ import vm from 'node:vm';
 import crypto from 'node:crypto';
 import ts from 'typescript';
 import * as emailText from './email-text';
+import * as protectionEmailTemplate from './protection-email-template';
+import * as emailPreferences from './email-preferences';
 import * as pg from './pg';
 import * as guard from './shipping-address-guard';
 import * as fulfillment from './fulfillment-service';
@@ -79,6 +81,8 @@ test('missing fulfillment orders recover safely in real PostgreSQL without notif
   let tokenCalls = 0;
   const forbidden = async () => { throw new Error('SMTP and real provider calls are forbidden'); };
   const mail = loadModule('email-service.ts', {
+    './email-preferences': emailPreferences,
+    './protection-email-template': protectionEmailTemplate,
     './email-text': emailText,
     crypto, './pg': pg, './log-service': logService,
     './config': { loadConfig: () => ({ publicBaseUrl: 'https://fixture.invalid' }), buildStoreDomain: () => store.subdomain },

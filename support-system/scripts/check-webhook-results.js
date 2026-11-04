@@ -1,7 +1,9 @@
 const { Pool } = require('pg');
 
 async function main() {
-  const p = new Pool({ connectionString: 'postgres://postgres:root@localhost:5432/support_portal' });
+  const connectionString = process.env.SUPPORT_DATABASE_URL?.trim();
+  if (!connectionString) throw new Error('SUPPORT_DATABASE_URL is required');
+  const p = new Pool({ connectionString });
 
   console.log('=== shoplazza_webhook_events ===');
   const rows = await p.query('SELECT id, event_key, store_subdomain, topic, order_id, customer_email, status FROM shoplazza_webhook_events ORDER BY id');
@@ -13,4 +15,4 @@ async function main() {
   await p.end();
 }
 
-main().catch((e) => console.error(e.message));
+main().catch((e) => { console.error(e.message); process.exitCode = 1; });

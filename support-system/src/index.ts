@@ -12,7 +12,8 @@ import { ensureTables, closeDatabasePools } from './pg';
 import { createShoplazzaWebhookRouter } from './shoplazza-webhook-routes';
 import { createSupportRouter } from './support-routes';
 import { createAdminRouter } from './admin-routes';
-import { processDueEmailJobs, cleanupEmailJobs } from './email-service';
+import { processDueEmailJobs, cleanupEmailJobs, getEffectivePublicBaseUrl } from './email-service';
+import { createEmailPreferencesRouter } from './email-preferences-routes';
 import { getAutoBackfillEnabled, runBackfillForAllStores } from './backfill-jobs';
 import { processPendingFulfillmentWebhooks } from './fulfillment-webhook';
 import { processPendingPaidWebhooks } from './paid-webhook';
@@ -24,6 +25,16 @@ import { runFulfillmentReconciliation } from './fulfillment-reconcile';
 import { cleanupSyncLogs, cleanupOperationLogs, logOperation } from './log-service';
 import { getRequestAgent } from './auth';
 import { ADMIN_HOME, ADMIN_PAGES, ADMIN_PAGE_FILES, normalizeAdminPath, safeAdminRedirect } from './admin-pages';
+import { createProtectionRouter } from './protection-routes';
+import { createProtectionStoreRouter } from './protection-store-routes';
+import { processProtectionInstallJobs, seedProtectionStores } from './protection-store-service';
+import { syncProtectionOrders } from './protection-service';
+import { isProtectionHost, protectionHostBoundary, protectionPageHeaders } from './protection-host';
+import { createProtectionCustomerRouter, createProtectionCustomerAdminRouter } from './protection-customer-routes';
+import { cleanupProtectionOrphanEvidence } from './protection-customer-media';
+import { initProtectionNotificationSchema, processProtectionNotifications } from './protection-notification';
+import { processProtectionFulfillments } from './protection-fulfillment';
+import { createVisibilityPublicRouter } from './product-visibility';
 
 let config: ReturnType<typeof loadConfig>;
 let storesConfig: Awaited<ReturnType<typeof loadStoresConfig>> | null = null;
@@ -39,6 +50,7 @@ const app = express();
 
 // 信任 nginx 反代传递的 X-Forwarded-For 头
 app.set('trust proxy', 1);
+app.use(protectionHostBoundary);
 
 // CORS
 const corsAllowOrigins = (process.env.SUPPORT_CORS_ORIGINS || '').trim();
@@ -68,8 +80,8 @@ app.use((req, res, next) => {
   if (allow) {
     res.setHeader('Access-Control-Allow-Origin', allow);
   }
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, X-Protection-Reference');
   res.setHeader('Access-Control-Max-Age', '86400');
   if (req.method === 'OPTIONS') {
     res.status(204).end();
@@ -94,6 +106,9 @@ app.use('/api/', apiLimiter);
 // Authenticate webhook headers before spending work parsing an untrusted body.
 app.use('/api/shoplazza', createWebhookIngressRouter());
 
+// This form-only route rejects unsupported bodies before generic parser errors
+// can include an unsubscribe capability in application diagnostics.
+app.use('/email-preferences', createEmailPreferencesRouter({ getTicketPublicBaseUrl: getEffectivePublicBaseUrl }));
 app.use(express.json({ limit: '512kb' }));
 
 // 挂载上传文件静态目录（图片附件访问）
@@ -107,9 +122,14 @@ app.use('/api/shoplazza', createShoplazzaWebhookRouter());
 
 // Support API (顾客端)
 app.use('/api/support', createSupportRouter());
+app.use('/api/protection', createProtectionCustomerRouter());
+app.use('/api/storefront/visibility', createVisibilityPublicRouter());
 
 // Admin API (客服端)
 app.use('/api/admin', createAdminRouter());
+app.use('/api/admin/protection', createProtectionCustomerAdminRouter());
+app.use('/api/admin/protection', createProtectionStoreRouter());
+app.use('/api/admin/protection', createProtectionRouter());
 
 // Static files (CSS/JS/assets) — 不含 index 自动映射，防止根路径泄露页面
 const publicDir = path.resolve(__dirname, '..', 'public');
@@ -118,7 +138,9 @@ const publicDir = path.resolve(__dirname, '..', 'public');
 const PRIVATE_PAGE_ALIASES: Record<string, string> = {
   '/admin.html': ADMIN_HOME,
   '/admin-stores.html': '/thinkpro-admin/stores',
+  '/admin-protection.html': '/thinkpro-admin/protection',
   '/admin-emails.html': '/thinkpro-admin/emails',
+  '/admin-email-preferences.html': '/thinkpro-admin/email-preferences',
   '/admin-logs.html': '/thinkpro-admin/logs',
   '/admin-settings.html': '/thinkpro-admin/settings',
   '/admin-ticket-preview.html': '/thinkpro-admin/ticket-preview',
@@ -136,6 +158,12 @@ app.use((req, res, next) => {
   }
   const q = req.originalUrl.indexOf('?');
   res.redirect(302, alias + (q >= 0 ? req.originalUrl.slice(q) : ''));
+});
+
+// This page shares its name with the storefront-assets directory. Register it
+// before static middleware so /protection never redirects to /protection/.
+app.get('/protection', protectionPageHeaders, (_req, res) => {
+  res.sendFile(path.join(publicDir, 'customer-protection.html'));
 });
 
 app.use(express.static(publicDir, {
@@ -158,7 +186,11 @@ app.use(express.static(publicDir, {
 }));
 
 // 根路径：返回 404 页面（不允许直接访问）
-app.get('/', (_req, res) => {
+app.get('/', protectionPageHeaders, (req, res) => {
+  if (isProtectionHost(req.get('host') || '')) {
+    res.sendFile(path.join(publicDir, 'customer-protection.html'));
+    return;
+  }
   res.status(404).sendFile(path.join(publicDir, 'not-found.html'));
 });
 
@@ -285,6 +317,8 @@ app.use((req, res) => {
 async function startup() {
   try {
     await ensureTables();
+    await initProtectionNotificationSchema();
+    await seedProtectionStores();
   } catch (e: any) {
     console.error('[support-bridge] 数据库初始化失败:', e.message);
     process.exit(1);
@@ -305,6 +339,7 @@ async function startup() {
   let orderStatusWebhookTimer: ReturnType<typeof setInterval> | null = null;
   let shippingAddressTimer: ReturnType<typeof setInterval> | null = null;
   let fulfillmentReconcileTimer: ReturnType<typeof setInterval> | null = null;
+  let protectionTimer: ReturnType<typeof setInterval> | null = null;
 
   // 优雅退出：关闭定时器、释放数据库连接池
   const shutdown = async () => {
@@ -316,6 +351,7 @@ async function startup() {
     if (orderStatusWebhookTimer) clearInterval(orderStatusWebhookTimer);
     if (shippingAddressTimer) clearInterval(shippingAddressTimer);
     if (fulfillmentReconcileTimer) clearInterval(fulfillmentReconcileTimer);
+    if (protectionTimer) clearInterval(protectionTimer);
     try {
       await closeDatabasePools();
       console.log('[support-bridge] 数据库连接池已关闭');
@@ -335,6 +371,20 @@ async function startup() {
   }
 
   if (!backgroundJobsDisabled) {
+    let nextProtectionEvidenceCleanup = 0;
+    const processProtection = () => {
+      syncProtectionOrders(200).catch(() => console.error('[protection] order indexing failed; will retry'));
+      processProtectionInstallJobs().catch(() => console.error('[protection] installation worker failed; check job status'));
+      processProtectionNotifications({ limit: 10 }).catch(() => console.error('[protection] notification worker failed; will retry'));
+      processProtectionFulfillments().catch(() => console.error('[protection] service fulfillment worker failed; will recheck'));
+      if (Date.now() >= nextProtectionEvidenceCleanup) {
+        nextProtectionEvidenceCleanup = Date.now() + 60 * 60 * 1000;
+        cleanupProtectionOrphanEvidence().catch(() => console.error('[protection] evidence cleanup failed; will retry'));
+      }
+    };
+    processProtection();
+    protectionTimer = setInterval(processProtection, 10000);
+    protectionTimer.unref();
     const processShippingAddresses = () => {
       processPendingShippingAddressRequests().catch(() => console.error('[shipping-address-worker] failed; will recheck'));
     };

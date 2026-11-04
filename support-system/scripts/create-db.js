@@ -1,7 +1,9 @@
 const { Pool } = require('pg');
 
 async function main() {
-  const p = new Pool({ connectionString: 'postgres://postgres:root@localhost:5432/postgres' });
+  const connectionString = process.env.SUPPORT_DATABASE_URL?.trim();
+  if (!connectionString) throw new Error('SUPPORT_DATABASE_URL is required');
+  const p = new Pool({ connectionString });
   const r = await p.query("SELECT 1 FROM pg_database WHERE datname='support_portal'");
   if (r.rowCount === 0) {
     await p.query('CREATE DATABASE support_portal');

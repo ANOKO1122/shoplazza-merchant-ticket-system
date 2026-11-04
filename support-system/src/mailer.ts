@@ -7,6 +7,7 @@ export interface SupportMail {
   subject: string;
   html: string;
   text: string;
+  messageId?: string;
 }
 
 // ── Transporter 复用 ──
@@ -77,6 +78,7 @@ export async function sendSupportEmail(mail: SupportMail): Promise<{ messageId: 
     subject: mail.subject,
     html: mail.html,
     text: mail.text,
+    ...(mail.messageId ? { messageId: mail.messageId } : {}),
   });
 
   // 生产模式：同时抄送一份到本地 Mailpit 供客服预览（fire-and-forget）
