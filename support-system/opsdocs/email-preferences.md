@@ -33,7 +33,7 @@ The template editor and its preview endpoint now render the same system footer. 
 
 ## Sender configuration
 
-The chosen protection sender is `Shipping Protection <support@us-seel.com>` using Alibaba DirectMail. Production retains `SUPPORT_PROTECTION_MAIL_MODE=disabled` until the new domain and sender are verified and the dedicated SMTP settings are ready. The explicit compose override wins over `.env`. Do not switch to the original ticket sender.
+The protection sender is `Shipping Protection <support@us-seel.com>` using Alibaba DirectMail. On 2026-11-04, the user supplied the dedicated credentials, SMTP authentication succeeded, and production switched to `SUPPORT_PROTECTION_MAIL_MODE=dedicated`. One explicitly authorized test email was accepted. The explicit compose override wins over `.env`; credentials remain in private configuration. Do not switch to the original ticket sender. The completion template is still sent manually for this test; automatic completion scheduling remains unimplemented. See [notification operations](protection-notifications.md#authorized-live-test-2026-11-04).
 
 Publish the DNS values provided by the Alibaba console for the selected region, create the sender and set its SMTP password. Save credentials in private server configuration, never source or chat. A DirectMail sender does not itself provide a receiving mailbox; configure Reply-To only when a real mailbox is available. See [Alibaba sender setup](https://www.alibabacloud.com/help/en/direct-mail/user-guide/setup-sender-addresses) and [domain configuration](https://www.alibabacloud.com/help/en/direct-mail/getting-started/simplified-procedure-of-configuring-email-delivery).
 

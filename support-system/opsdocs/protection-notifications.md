@@ -24,9 +24,9 @@ The selected sender is `Shipping Protection <support@us-seel.com>` on Alibaba Di
 
 Verify the new domain/sender with the SMTP provider and publish its required SPF/DKIM/other DNS records before enabling dedicated mode. A working website A record or HTTPS certificate does not configure an email sender. `protectionMailReadiness()` reports configuration readiness only; it does not perform an SMTP send or certify provider/DNS verification.
 
-Production explicitly pins `SUPPORT_PROTECTION_MAIL_MODE=disabled` in `docker-compose.override.yml`. Changing `.env` alone will not override that value. When the dedicated sender is ready, update that explicit setting, validate compose, and recreate only support-bridge. The user chose to wait; shared delivery is not authorized.
+Production now pins `SUPPORT_PROTECTION_MAIL_MODE=dedicated` in the ignored `docker-compose.override.yml`. On 2026-11-04, the user completed sender configuration and authorized a test. Dedicated credentials are stored only in the private `.env`; the endpoint follows the existing Alibaba configuration (`smtpdm.aliyun.com`, port 465, implicit TLS). SMTP authentication and a test send from `support@us-seel.com` were accepted. The ordinary ticket sender was not reused. Changing `.env` alone does not override an explicit compose value.
 
-No real mail was sent during implementation. Tests use an injected delivery adapter or a fake Nodemailer transport.
+The original implementation tests use an injected delivery adapter or a fake Nodemailer transport. The first authorized live test used a manually rendered completion template; automatic completion-triggered delivery is still unimplemented. No completion message was inserted into the claim-update outbox.
 
 ## Retry, privacy and operations
 
@@ -47,3 +47,25 @@ GROUP BY status;
 ```
 
 Validation: isolated PostgreSQL notification/delivery/template suite 12/12; complete repository test command 414 backend passes and 13 environment-dependent skips, frontend 20/20, security checks and TypeScript pass at implementation review. The test database is separate from production.
+
+
+## Authorized live test (2026-11-04)
+
+The pending notification queue was empty before enabling dedicated delivery. One
+completion-template message was accepted by SMTP for the user-designated test
+recipient. The test order is `TEST-20261104-QQ-01`, protection reference
+`SP-0000000001`, under the synthetic store `protection-mail-test.invalid`. It has
+two copied merchandise lines and the source order’s unchanged purchase, shipment
+and completion dates. Original contact/address/tracking details and the original
+third-party service were excluded; the test service and all platform identifiers
+are synthetic. No live store configuration, source snapshot or fulfillment job
+was created. The test record remains visible in the protection system for the
+user’s manual review workflow and must be distinguished from real business data.
+
+Desktop/mobile browser checks confirmed secure access, both items, and opening
+the refund wizard. No claim was submitted by the test operator. Damage/theft
+windows are open; delay/loss windows remain based on the copied shipment date.
+Subsequent claim status changes use the normal dedicated notification worker.
+The one-off mail ledger and its private link are in the ignored
+`protection-data/test-runs/20261104-qq-completion-mail.json`; its accepted send
+must not be blindly repeated. No passwords or access capabilities belong in Git.
