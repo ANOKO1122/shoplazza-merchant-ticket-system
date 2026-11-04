@@ -4,6 +4,50 @@ import { PROTECTION_COMPLETION_TEMPLATE, PROTECTION_EMAIL_PREVIEW_VARS } from '.
 import { renderTemplateString } from './email-service';
 import * as protectionTemplates from './protection-email-template';
 
+// Simulate a mail sanitizer dropping fills while preserving link text colors.
+// This is the reported failure mode, not an emulation of a specific QQ version.
+function stripEmailBackgrounds(html: string): string {
+  return html.replace(/\sbgcolor="[^"]*"/gi, '').replace(/style="([^"]*)"/gi, (_match, declarations: string) =>
+    `style="${declarations.split(';').filter(declaration => !/^\s*background(?:-[\w-]+)?\s*:/i.test(declaration)).join(';')}"`);
+}
+
+function contrastAgainstWhite(color: string): number {
+  const hex = color.replace('#', '');
+  const expanded = hex.length === 3 ? hex.split('').map(value => value + value).join('') : hex;
+  assert.match(expanded, /^[\da-f]{6}$/i);
+  const rgb = expanded.match(/../g)!.map(value => {
+    const channel = parseInt(value, 16) / 255;
+    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  return 1.05 / (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2] + 0.05);
+}
+
+for (const [type, template, label] of [
+  ['completion', protectionTemplates.PROTECTION_COMPLETION_TEMPLATE, 'View order &amp; request support'],
+  ['claim update', protectionTemplates.PROTECTION_CLAIM_UPDATE_TEMPLATE, 'View update'],
+] as const) {
+  test(`${type} CTA stays readable when mail sanitization strips every background`, () => {
+    const html = stripEmailBackgrounds(renderTemplateString(template.body, PROTECTION_EMAIL_PREVIEW_VARS));
+    const anchors = [...html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)];
+    const cta = anchors.find(anchor => anchor[2].replace(/<[^>]+>/g, '') === label);
+    assert.ok(cta, 'The primary action must remain visible text');
+    assert.match(cta[1], /href="https:\/\/us-seel\.com\/protection"/);
+    const style = cta[1].match(/style="([^"]*)"/)?.[1] || '';
+    const textColor = style.match(/(?:^|;)\s*color\s*:\s*(#[\da-f]{3,6})\b/i)?.[1] || '#0000ee';
+    assert.ok(contrastAgainstWhite(textColor) >= 4.5, 'CTA text must contrast with the mail client’s white canvas after its fill is removed');
+  });
+
+  test(`${type} includes a separate readable link to the same secure destination`, () => {
+    const html = renderTemplateString(template.body, PROTECTION_EMAIL_PREVIEW_VARS);
+    const fallback = [...html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)]
+      .find(anchor => anchor[2] === 'Open your protection page');
+    assert.ok(fallback, 'A separate text link must remain available if button rendering fails');
+    assert.match(fallback[1], /href="https:\/\/us-seel\.com\/protection"/);
+    const color = fallback[1].match(/(?:^|[";])\s*color\s*:\s*(#[\da-f]{3,6})\b/i)?.[1] || '#0000ee';
+    assert.ok(contrastAgainstWhite(color) >= 4.5);
+  });
+}
+
 test('protection template uses own secure portal without asserting carrier delivery', () => {
   const html = renderTemplateString(PROTECTION_COMPLETION_TEMPLATE.body, PROTECTION_EMAIL_PREVIEW_VARS);
   assert.match(html, /https:\/\/us-seel\.com\/protection/);

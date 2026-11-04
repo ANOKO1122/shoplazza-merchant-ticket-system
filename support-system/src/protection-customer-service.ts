@@ -15,12 +15,17 @@ const iso=(value:any)=>new Date(value).toISOString();
 const issueReasons:Record<CustomerIssueCode,string>={damaged:'damaged',missing_items:'lost',wrong_item:'other',delivered_not_received:'stolen',not_arrived:'lost',delayed:'delayed',other:'other'};
 const hash=(value:unknown)=>crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function validateIdempotency(value:unknown):string{if(typeof value!=='string'||!UUID.test(value))throw new ProtectionError('Please refresh this request and try again.');return value.toLowerCase();}
-export function validateCustomerLocation(value:unknown):CustomerLocation|null {
-  if(value===null||value===undefined)return null;
+export function validateCustomerLocation(value:unknown,required=false):CustomerLocation|null {
+  if(value===null||value===undefined){
+    if(required)throw new ProtectionError('Location is required for a package you have not received. Please enable location access and share your location to continue.');
+    return null;
+  }
   const v=record(value),time=Date.parse(v.captured_at);
   if(typeof v.latitude!=='number'||!Number.isFinite(v.latitude)||Math.abs(v.latitude)>90||typeof v.longitude!=='number'||!Number.isFinite(v.longitude)||Math.abs(v.longitude)>180
     ||typeof v.accuracy_meters!=='number'||!Number.isFinite(v.accuracy_meters)||v.accuracy_meters<0||v.accuracy_meters>100000
-    ||!Number.isFinite(time)||time>Date.now()+10*60*1000||time<Date.now()-24*60*60*1000)throw new ProtectionError('The location information is invalid. You can continue without sharing your location.');
+    ||!Number.isFinite(time)||time>Date.now()+10*60*1000||time<Date.now()-24*60*60*1000)throw new ProtectionError(required
+      ? 'The location information is invalid or out of date. Please share your location again to continue.'
+      : 'The location information is invalid. You can continue without sharing your location.');
   return {latitude:v.latitude,longitude:v.longitude,accuracy_meters:v.accuracy_meters,captured_at:new Date(time).toISOString()};
 }
 function evidenceIds(value:unknown):string[]{
@@ -40,7 +45,7 @@ export function validateCustomerClaim(input:unknown):CustomerClaimInput{
     if(issue!=='damaged')throw new ProtectionError('A camera exception is only used for a damage request.');
     exception=v.camera_exception_reason.trim();
   }
-  return {submission_id:validateIdempotency(v.submission_id),received_package:received,issue_code:issue as CustomerIssueCode,selections:v.selections.map((s:any)=>({item_id:s.item_id,quantity:s.quantity})).sort((a:CustomerSelection,b:CustomerSelection)=>a.item_id.localeCompare(b.item_id)),description:description(v.description),evidence_ids:evidenceIds(v.evidence_ids).sort(),location:validateCustomerLocation(v.location),...(exception?{camera_exception_reason:exception}:{})};
+  return {submission_id:validateIdempotency(v.submission_id),received_package:received,issue_code:issue as CustomerIssueCode,selections:v.selections.map((s:any)=>({item_id:s.item_id,quantity:s.quantity})).sort((a:CustomerSelection,b:CustomerSelection)=>a.item_id.localeCompare(b.item_id)),description:description(v.description),evidence_ids:evidenceIds(v.evidence_ids).sort(),location:validateCustomerLocation(v.location,received===false),...(exception?{camera_exception_reason:exception}:{})};
 }
 function assertIdentity(order:ProtectionOrder,identity:ProtectionCustomerIdentity){if(order.customer_email.toLowerCase()!==identity.email.toLowerCase()||order.id!==identity.orderId)throw new ProtectionError('This access link is no longer valid.',401);}
 function assertEligible(order:ProtectionOrder){try{assertOrderEligible(order);}catch{throw new ProtectionError('A new request is not available for this order because its eligibility could not be confirmed. You can still view existing requests.');}}

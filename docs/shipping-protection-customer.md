@@ -4,12 +4,13 @@
 
 顾客正式域名固定为 `https://us-seel.com`，访问链接形如
 `https://us-seel.com/protection#access=…`。后台仍在原工单域名，入口为
-`/thinkpro-admin/protection`。域名 DNS/HTTPS 按用户要求暂缓，准备及激活步骤见
+`/thinkpro-admin/protection`。域名 DNS/HTTPS 已启用，配置及激活步骤见
 `support-system/opsdocs/us-seel-domain.md`。不要把工单系统的全局 public base URL
 改为赔付域名；两者独立。
 
 顾客页面已连接真实接口，包括订单与包裹、固定 SP 保障编号、收到/未收到分支、
-问题类型、商品数量、申请预估金额、图片/视频、可选定位、确认提交和申诉历史。
+问题类型、商品数量、申请预估金额、图片/视频、定位、确认提交和申诉历史。
+未收到包裹的新申诉必须提供定位；已收到包裹分支仍为可选。
 同一 SP 下可有多个 CL；拒绝不占用额度，重提产生新 CL。
 submitted/reviewing/needs_info 状态支持在原 CL 下继续补资料。
 
@@ -18,8 +19,9 @@ submitted/reviewing/needs_info 状态支持在原 CL 下继续补资料。
 审批金额受所选数量、商品余额及订单剩余额度约束。退款/取消资料未核实的订单
 继续沿用人工核验阻断，不凭不完整数据自动批准。
 
-本次没有增加退货、自动打款或退款 API，没有开启保障自动邮件，没有改店铺组件、
-保障商品或真实订单状态。保障时限、正式邮件发送条件与服务商品自动履约仍待配置。
+没有退货、自动打款或退款 API。保障时限与完成后服务商品履约已配置，见
+`support-system/opsdocs/protection-service-rules.md`；申诉状态通知使用独立发信地址，见
+`support-system/opsdocs/protection-notifications.md`。完成邮件模板仍未接入自动事件调度。
 店匠 `finished` 只展示商家系统完成记录，不冒充承运商真实签收时间。
 
 ## 邮件与访问链接
@@ -33,12 +35,12 @@ submitted/reviewing/needs_info 状态支持在原 CL 下继续补资料。
 后台「保障订单」详情可主动生成、复制并打开顾客访问链接。生成不会发送邮件。
 后续邮件流程应调用 `createProtectionAccessLink(protectionOrderId)`，将其结果传给
 `protection_link`，不能调用工单 `bt_`/`ta_` 令牌生成器。邮件类型暂未加入
-自动发送类型或订单事件调度；当前发信域名配置也没有变化。
+自动发送类型或订单事件调度。申诉更新邮件已使用 `support@us-seel.com` 独立发送。
 
 ## 安全边界
 
 - `pa_` 随机访问令牌在数据库中只保存 SHA-256，绑定一个保障订单及当前邮箱，
-  默认 30 天有效；`ps_` 会话最多 12 小时，邮箱改变或令牌撤销立即失效。
+  新签发链接默认 90 天有效，历史链接保持原到期日；`ps_` 会话最多 12 小时，邮箱改变或令牌撤销立即失效。
   这两个时间属于访问凭证有效期，不代表赔付申请期限。
 - token 仅通过 URL fragment 传入，脚本立即移除并以 POST 换取 HttpOnly、
   SameSite=Lax、HTTPS Secure 的 host-only cookie，path 为 `/api/protection`。
@@ -61,7 +63,10 @@ protection-data 挂载；不会存进公开 `/uploads`。
 - 下载必须匹配顾客合同或有效客服身份，视频支持 Range。没有公开对象 URL。
 - 上传使用 UUID 幂等键及源文件摘要；重试不重复计入名额。移除、取消草稿会
   清理未提交附件；服务端每小时清理超过 24 小时的未提交记录。
-- 定位只在顾客主动点击后采集，可拒绝或跳过；坐标是顾客提供的辅助资料。
+- 定位只在顾客主动点击后采集，提交时才发送坐标、精度与采集时间。未收到包裹
+  的三类新申诉在前端和接口都要求有效定位；拒绝、超时或移除定位后不能提交。
+  已收到包裹分支仍可跳过，旧申诉查看与补资料不受影响。浏览器坐标可被伪造，
+  只能作为辅助证据，不能作为顾客诚实或包裹签收的独立证明。
 
 ### 破损照片的现场拍摄
 
@@ -85,8 +90,8 @@ protection-data 挂载；不会存进公开 `/uploads`。
 实际菜单名称可能随系统版本变化。离开拍摄步骤、关闭窗口或切到后台会停止
 摄像头，未回答权限弹窗时离开也不会在随后授权后继续后台采集。
 
-`Permissions-Policy` 仅允许本站摄像头和可选定位，麦克风仍禁用。公开环境需要
-HTTPS；us-seel.com 的 DNS/证书仍遵循用户之前的暂缓决定。不能把 HTTP IP 地址
+`Permissions-Policy` 仅允许本站摄像头和定位，麦克风仍禁用。公开环境需要
+HTTPS；us-seel.com 已启用可信证书。不能把 HTTP IP 地址
 当作可用的手机相机生产入口。
 
 相关设置：

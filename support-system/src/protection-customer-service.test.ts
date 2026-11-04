@@ -34,6 +34,32 @@ test('customer question branch and optional location validation reject contradic
   assert.throws(()=>validateCustomerLocation({latitude:0,longitude:0,accuracy_meters:-1,captured_at:new Date().toISOString()}),/location/);
 });
 
+test('new not-received claims require location for every supported issue',()=>{
+  const base={submission_id:crypto.randomUUID(),received_package:false,selections:[{item_id:'coat',quantity:1}],description:'The package has not arrived.',evidence_ids:[]};
+  const location={latitude:0,longitude:0,accuracy_meters:12,captured_at:new Date().toISOString()};
+  for(const issue_code of ['delayed','not_arrived','delivered_not_received']){
+    for(const missing of [{},{location:null}])assert.throws(()=>validateCustomerClaim({...base,issue_code,...missing}),error=>{
+      assert.match((error as Error).message,/location.*required|enable.*location/i);
+      assert.doesNotMatch((error as Error).message,/without|skip|optional/i);return true;
+    });
+    assert.deepEqual(validateCustomerClaim({...base,issue_code,location}).location,location);
+  }
+});
+
+test('invalid required location cannot invite skipping and optional received claims still accept no location',()=>{
+  const base={submission_id:crypto.randomUUID(),received_package:false,issue_code:'not_arrived',selections:[{item_id:'coat',quantity:1}],description:'No package received.',evidence_ids:[]};
+  const now=Date.now(),location={latitude:40.7,longitude:-74,accuracy_meters:25,captured_at:new Date(now).toISOString()};
+  for(const invalid of [{},{...location,latitude:91},{...location,longitude:-181},{...location,latitude:NaN},{...location,latitude:'40.7'},{...location,accuracy_meters:-1},{...location,accuracy_meters:100001},{...location,captured_at:new Date(now-25*3600000).toISOString()},{...location,captured_at:new Date(now+11*60000).toISOString()}]){
+    assert.throws(()=>validateCustomerClaim({...base,location:invalid}),error=>{
+      assert.match((error as Error).message,/location/i);
+      assert.doesNotMatch((error as Error).message,/without|skip|optional/i);return true;
+    });
+  }
+  for(const issue_code of ['damaged','missing_items'])for(const optional of [{},{location:null}]){
+    assert.equal(validateCustomerClaim({...base,received_package:true,issue_code,...optional}).location,null);
+  }
+});
+
 test('private evidence rejects disguised documents and video without a real stream',async()=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'protection-media-test-'));const previous=process.env.SUPPORT_PROTECTION_EVIDENCE_DIR;process.env.SUPPORT_PROTECTION_EVIDENCE_DIR=root;
   try{
@@ -98,7 +124,15 @@ test('customer portal isolation, evidence, repeated claims and review quantities
     await pool.query('INSERT INTO support_agent_sessions VALUES($1,1,now()+interval \'1 hour\')',[crypto.createHash('sha256').update(adminToken).digest('hex')]);
     const request=(url:string,cookie:string,body?:unknown,method=body?'POST':'GET')=>fetch(base+url,{method,headers:{Cookie:cookie,...(cookie===first?{'X-Protection-Reference':orders[0].public_no}:cookie===second?{'X-Protection-Reference':orders[1].public_no}:{}),...(body?{'Content-Type':'application/json',Origin:base}:{})},...(body?{body:JSON.stringify(body)}:{})});
     let evidenceId:string,claim:any,cameraFixture:any;
-    const submission={submission_id:crypto.randomUUID(),received_package:false,issue_code:'delayed',selections:[{item_id:'coat',quantity:1}],description:'Fixture incorrect coat',evidence_ids:[] as string[],location:null};
+    const submission={submission_id:crypto.randomUUID(),received_package:false,issue_code:'delayed',selections:[{item_id:'coat',quantity:1}],description:'Fixture incorrect coat',evidence_ids:[] as string[],location:{latitude:40.7,longitude:-74,accuracy_meters:25,captured_at:new Date().toISOString()}};
+    await t.test('HTTP new not-received claims reject missing or invalid location without writing a claim',async()=>{
+      const before=Number((await pool.query('SELECT count(*)::int n FROM support_protection_claims')).rows[0].n);
+      for(const location of [undefined,null,{...submission.location,longitude:181}]){
+        const response=await fetch(base+'/api/protection/claims',{method:'POST',headers:{Cookie:first,Origin:base,'Content-Type':'application/json','X-Protection-Reference':orders[0].public_no,'X-Forwarded-For':'10.23.0.8'},body:JSON.stringify({...submission,submission_id:crypto.randomUUID(),location})});
+        assert.equal(response.status,400);const body=await response.json() as any;assert.match(body.error,/location/i);assert.doesNotMatch(body.error,/without|skip|optional/i);
+      }
+      assert.equal(Number((await pool.query('SELECT count(*)::int n FROM support_protection_claims')).rows[0].n),before);
+    });
     await t.test('new access links last 90 days while legacy expiry, 12-hour sessions and revocation remain enforced',async()=>{
       const tokenFrom=(url:string)=>new URLSearchParams(new URL(url).hash.slice(1)).get('access')!;
       const token=tokenFrom(await createProtectionAccessLink(String(orders[0].id)));
@@ -163,18 +197,22 @@ test('customer portal isolation, evidence, repeated claims and review quantities
       const foreign=await request('/api/protection/claims',second,{...submission,evidence_ids:[evidenceId]});assert.equal(foreign.status,400);
       submission.evidence_ids=[evidenceId];const firstResponse=await request('/api/protection/claims',first,submission);assert.equal(firstResponse.status,201,await firstResponse.clone().text());claim=((await firstResponse.json()) as any).claim;
       assert.equal(claim.requested_amount_cents,3333);assert.equal(claim.evidence.length,1);
+      assert.deepEqual(claim.location,submission.location);
       const retry=await request('/api/protection/claims',first,submission);assert.equal(((await retry.json()) as any).claim.public_no,claim.public_no);
       assert.equal((await request('/api/protection/claims',first,{...submission,description:'changed'})).status,409);
       assert.equal((await request(`/api/protection/claims/${claim.public_no}`,second)).status,404);
       assert.equal((await request(`/api/protection/evidence/${evidenceId}`,first,{},'DELETE')).status,404);
     });
-    await t.test('public reply is separate from internal notes; supplements retain issue number and change revision',async()=>{
+    await t.test('legacy claims without location remain readable and supplementable; public reply stays separate from internal notes',async()=>{
       const row=(await pool.query('SELECT id FROM support_protection_claims WHERE public_no=$1',[claim.public_no])).rows[0];
+      await pool.query('UPDATE support_protection_claims SET location_json=NULL WHERE id=$1',[row.id]);
       const updated=await updateProtectionClaim(String(row.id),{revision:1,status:'needs_info',note:'PRIVATE INVESTIGATION',customer_message:'Please add a photo of the packaging.'},actor);
       const publicDetail=await(await request(`/api/protection/claims/${claim.public_no}`,first)).json() as any;
+      assert.equal(publicDetail.claim.received_package,false);assert.equal(publicDetail.claim.location,null);
       assert.equal(publicDetail.claim.customer_message,'Please add a photo of the packaging.');assert.equal(JSON.stringify(publicDetail).includes('PRIVATE INVESTIGATION'),false);
       const message={submission_id:crypto.randomUUID(),description:'Package details',evidence_ids:[]};
       const reply=await request(`/api/protection/claims/${claim.public_no}/messages`,first,message);assert.equal(reply.status,201);const result=await reply.json() as any;assert.equal(result.claim.public_no,claim.public_no);assert.equal(result.claim.status,'reviewing');
+      assert.equal(result.claim.location,null);
       await request(`/api/protection/claims/${claim.public_no}/messages`,first,message);
       assert.equal((await pool.query('SELECT count(*)::int n FROM support_protection_customer_messages WHERE claim_id=$1',[row.id])).rows[0].n,1);
       await assert.rejects(updateProtectionClaim(String(row.id),{revision:updated.revision,status:'approved',approved_amount_cents:3333},actor),/其他操作/);

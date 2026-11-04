@@ -69,3 +69,42 @@ Subsequent claim status changes use the normal dedicated notification worker.
 The one-off mail ledger and its private link are in the ignored
 `protection-data/test-runs/20261104-qq-completion-mail.json`; its accepted send
 must not be blindly repeated. No passwords or access capabilities belong in Git.
+
+## Mobile email and customer-flow fixes (2026-11-04)
+
+Both protection templates now use a light button fill and dark, underlined text.
+The previous completion button kept white text on the link but its only blue fill
+was on the parent table cell. Removing that fill reproduced the empty-looking
+button reported in QQ mobile mail. The new text remains readable even when all
+background fills are removed; both templates also include a plain fallback link.
+This is a deterministic sanitization check, not a physical QQ-app certification.
+
+Production current templates and presets were updated only where their bodies
+exactly matched the previous defaults (four rows). Subjects and customized bodies
+were preserved. The prior rows are backed up privately as
+`protection-data/test-runs/20261104-email-buttons-before.json`. Historical sent
+snapshots remain unchanged. A separately tracked `[TEST v2]` completion message
+uses the same isolated order and designated recipient; its private ledger is
+`protection-data/test-runs/20261104-qq-completion-mail-v2.json`.
+
+Customer request-window navigation also now preserves button-label elements when
+browser translation replaces text nodes. The original translated Continue label
+caused a DOM removal error and unmounted the page when a blocked reason was chosen.
+New package-not-received requests require location in both the wizard and API;
+received-package location stays optional, and legacy claims remain readable and
+supplementable. Location is requested only on an explicit click and sent only
+with the final submission; it is supporting evidence, not proof against fraud.
+
+The deployed image is `support-bridge:protection-qq-location-20261104`; prior image
+`support-bridge:restored-admin-e54f311` remains available for rollback. Only the
+bridge service was replaced. Dedicated sender settings and persistent data remain
+in place; the Shoplazza installer is still included in the image.
+
+Validation: standard tests 474 backend passes/16 environment skips plus 24 frontend
+passes; isolated PostgreSQL customer/policy tests 24/24; typecheck, production build,
+security checks and desktop/mobile browser regressions pass. Live test-order checks
+confirmed translated blocked-window navigation, exact UTC dates and required
+location without submitting a claim. The browser regressions are reproducible with
+`node scripts/test-protection-request-windows.cjs` and
+`node scripts/test-protection-customer-location.cjs` from `support-system`, setting
+`PLAYWRIGHT_MODULE` and `CHROMIUM_PATH` when installed outside the project.
