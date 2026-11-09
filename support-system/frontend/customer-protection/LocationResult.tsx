@@ -6,4 +6,3 @@ export function LocationResult({ value, provisional = false }: { value: Customer
     <div><dt>Captured at</dt><dd>{new Date(value.captured_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'medium' })}</dd></div>
   </dl><p>This is a device estimate, not a guaranteed distance from your actual position. If the location looks wrong, enable Precise Location and try again.</p></div>;
 }
-
