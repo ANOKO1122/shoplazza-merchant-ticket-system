@@ -7,6 +7,8 @@ import { Uploads } from './Uploads';
 import { CameraEvidence, CameraException } from './CameraEvidence';
 import { damageEvidenceProblem } from './camera';
 import { ServiceDetails } from './ServiceDetails';
+import { LocationCapture } from './LocationCapture';
+import { LocationResult } from './LocationResult';
 import { servicePolicyBasis } from './service-details';
 import { blockedWindowItems, ItemRequestWindow, reasonWindowNotice, RequestWindowNotice, SelectedRequestWindows, selectedWindowProblem, type WindowItem } from './RequestWindows';
 const stepNames = ['Package', 'Issue', 'Items', 'Details', 'Review'];
@@ -22,7 +24,6 @@ export function Wizard({ data, initialItem, onClose, onSubmitted }: { data: Cust
   const [uploadsBlocked, setUploadsBlocked] = useState(false);
   const [location, setLocation] = useState<CustomerLocation | null>(null);
   const [locating, setLocating] = useState(false);
-  const [locationNotice, setLocationNotice] = useState('');
   const [error, setError] = useState<Error | string | null>(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
@@ -30,12 +31,10 @@ export function Wizard({ data, initialItem, onClose, onSubmitted }: { data: Cust
   const errorRegion = useRef<HTMLDivElement>(null);
   const submissionId = useRef(crypto.randomUUID());
   const preserveEvidence = useRef(false);
-  const locationRequest = useRef(0);
   const locationRequired = received === false;
   const requiredLocationMessage = 'Share your current location before continuing with a package-not-received request.';
   useEffect(() => { if (!windowNotice) heading.current?.focus(); }, [step, windowNotice]);
   useEffect(() => { if (error) errorRegion.current?.scrollIntoView({ block: 'nearest' }); }, [error]);
-  useEffect(() => () => { locationRequest.current++; }, []);
   const selectedItems = data.order.items.filter(item => selections.some(selection => selection.item_id === item.id));
   const amount = selectionAmount(selections, data.order.items, data.order.remaining_amount_cents);
   function showWindowNotice(items: WindowItem[], returnStep: number) { setError(null); setWindowNotice({ items, returnStep }); }
@@ -55,22 +54,6 @@ export function Wizard({ data, initialItem, onClose, onSubmitted }: { data: Cust
     if (step === 3 && locationRequired && !location) { setError(requiredLocationMessage); return; }
     if (step === 3 && issue === 'damaged') { const problem = damageEvidenceProblem(evidence, cameraException); if (problem) { setError(problem); return; } }
     setError(null); setStep(step + 1);
-  }
-  function captureLocation() {
-    setError(null);
-    const sequence = ++locationRequest.current;
-    try {
-      const geolocation = navigator.geolocation;
-      if (!geolocation) { setLocating(false); setLocationNotice('Location is not available in this browser. Open this secure link in Safari or Chrome and allow location access.'); return; }
-      setLocating(true); setLocationNotice('');
-      geolocation.getCurrentPosition(position => {
-        if (sequence !== locationRequest.current) return;
-        setLocation({ latitude: position.coords.latitude, longitude: position.coords.longitude, accuracy_meters: position.coords.accuracy, captured_at: new Date(position.timestamp).toISOString() }); setLocating(false); setLocationNotice('Location added to this request.');
-      }, error => { if (sequence !== locationRequest.current) return; setLocating(false); setLocationNotice(error.code === 1 ? 'Allow location permission for this website in your browser and device settings, then try again. If your email browser blocks it, open this secure link in Safari or Chrome.' : error.code === 3 ? 'The location request timed out. Check that location services are enabled, then try again.' : 'Your location could not be determined. Check your device location settings and connection, then try again.'); }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
-    } catch {
-      if (sequence !== locationRequest.current) return;
-      setLocating(false); setLocationNotice('Your browser could not start the location request. Check location permissions and try again, or open this secure link in Safari or Chrome.');
-    }
   }
   async function submit() {
     if (busyRef.current || received == null || !issue || amount == null || amount <= 0) return;
@@ -93,9 +76,9 @@ export function Wizard({ data, initialItem, onClose, onSubmitted }: { data: Cust
     <div className="cp-step" hidden={step !== 2}><h3 ref={step === 2 ? heading : undefined} tabIndex={-1}>Which items are affected?</h3><p>Choose the items and quantities included in this request. Only items with an open request window can be included.</p><ul className="cp-select-items">{data.order.items.map(item => { const selection = selections.find(selection => selection.item_id === item.id); const unavailable = item.has_active_claim || item.available_quantity < 1; return <li key={item.id} className={selection ? 'cp-item-selected' : ''}><label><input type="checkbox" aria-label={`Include ${item.title}`} disabled={unavailable} checked={!!selection} onChange={event => { const next = event.target.checked ? [...selections, { item_id: item.id, quantity: 1 }] : selections.filter(selection => selection.item_id !== item.id); setSelections(next); if (event.target.checked) { const blocked = blockedWindowItems(issue, [{ item_id: item.id, quantity: 1 }], data.order.items); if (blocked.length) showWindowNotice(blocked, 2); } }} /><ProductImage src={item.image_url} /><span><strong>{item.title}</strong><small>{money(item.amount_cents, data.order.currency)} · Purchased quantity {item.quantity}</small>{!unavailable && <ItemRequestWindow issue={issue} item={item} />}{unavailable && <small>{item.has_active_claim ? 'An active request already includes this item.' : 'No remaining quantity available for a new request.'}</small>}</span></label>{selection && <label className="cp-quantity">Quantity<input type="number" min={1} max={item.available_quantity} value={selection.quantity} onChange={event => setSelections(selections.map(selection => selection.item_id === item.id ? { ...selection, quantity: Number(event.target.value) } : selection))} /></label>}</li>; })}</ul><SelectedRequestWindows data={data} selections={selections} issue={issue} /></div>
     <div className="cp-step" hidden={step !== 3}><h3 ref={step === 3 ? heading : undefined} tabIndex={-1}>Tell us what happened</h3><p>{issue === 'damaged' ? 'Describe the damage, then use the camera below to show the affected item.' : issue === 'delivered_not_received' ? 'Tell us where you checked for your package and whether you contacted the carrier.' : 'Include any details that can help the store review your request.'}</p><label className="cp-field"><span>Issue details</span><textarea value={description} rows={5} maxLength={10000} placeholder="What happened, when did you notice it, and what have you checked?" onChange={event => setDescription(event.target.value)} /></label>
       {issue === 'damaged' ? <><CameraEvidence limits={data.limits} onChange={setEvidence} onBlocked={setUploadsBlocked} preserve={preserveEvidence} disabled={busy} active={!windowNotice && step === 3 && cameraException == null} requireDamaged={cameraException == null} /><CameraException value={cameraException} onChange={setCameraException} disabled={busy} /></> : <Uploads limits={data.limits} onChange={setEvidence} onBlocked={setUploadsBlocked} preserve={preserveEvidence} disabled={busy} />}
-      <section className="cp-location"><h3><Icon name="pin" />Share your location <span>{locationRequired ? 'Required' : 'Optional'}</span></h3><p>{locationRequired ? 'Your current location is required to review a package-not-received request. Share it while you are at the delivery address, if possible. It will be reviewed alongside your order and other evidence.' : 'Your current location can help the store review delivery issues.'} It is only collected when you choose to share it and is included only with this request.</p><div className="cp-inline-actions">{!location && <button className="cp-button" type="button" disabled={locating} onClick={captureLocation}><span>{locating ? 'Getting location…' : 'Share current location'}</span></button>}{(location || locating) && <button className="cp-text-button" type="button" onClick={() => { locationRequest.current++; setLocating(false); setLocation(null); setLocationNotice(''); }}><span>{location ? 'Remove location' : 'Cancel location request'}</span></button>}</div><p className="cp-location-status" role="status">{locationNotice || (locationRequired ? 'Location must be included before you can continue or submit this request.' : 'You can continue without sharing your location.')}</p></section>
+      <LocationCapture value={location} onChange={setLocation} onBusy={setLocating} required={locationRequired} active={!windowNotice && step === 3} />
     </div>
-    <div className="cp-step" hidden={step !== 4}><h3 ref={step === 4 ? heading : undefined} tabIndex={-1}>Review your request</h3><p>Check the details before sending them to the store for review.</p><dl className="cp-review-grid"><div><dt>Order</dt><dd>{data.order.order_number}</dd></div><div><dt>Issue</dt><dd>{issue && issueLabels[issue]}</dd></div><div><dt>Package received</dt><dd>{received ? 'Yes' : 'No'}</dd></div><div><dt>Estimated request amount</dt><dd>{money(amount, data.order.currency)}</dd></div></dl><ul className="cp-review-items">{selectedItems.map(item => <li key={item.id}><ProductImage src={item.image_url} /><div>{item.title}<small>Quantity {selections.find(selection => selection.item_id === item.id)?.quantity}</small></div></li>)}</ul><SelectedRequestWindows data={data} selections={selections} issue={issue} /><p className="cp-description">{description}</p>{issue === 'damaged' && cameraException != null && <div className="cp-notice"><strong>Camera access explanation</strong><p>{cameraException}</p><p>Your explanation will be included for manual review.</p></div>}<p className="cp-muted">{evidence.length} attachment{evidence.length === 1 ? '' : 's'} · {location ? 'Location included' : 'Location not included'}</p><div className="cp-notice">Submitting a request does not issue a refund. The store will review the information and confirm the outcome here.</div></div>
+    <div className="cp-step" hidden={step !== 4}><h3 ref={step === 4 ? heading : undefined} tabIndex={-1}>Review your request</h3><p>Check the details before sending them to the store for review.</p><dl className="cp-review-grid"><div><dt>Order</dt><dd>{data.order.order_number}</dd></div><div><dt>Issue</dt><dd>{issue && issueLabels[issue]}</dd></div><div><dt>Package received</dt><dd>{received ? 'Yes' : 'No'}</dd></div><div><dt>Estimated request amount</dt><dd>{money(amount, data.order.currency)}</dd></div></dl><ul className="cp-review-items">{selectedItems.map(item => <li key={item.id}><ProductImage src={item.image_url} /><div>{item.title}<small>Quantity {selections.find(selection => selection.item_id === item.id)?.quantity}</small></div></li>)}</ul><SelectedRequestWindows data={data} selections={selections} issue={issue} /><p className="cp-description">{description}</p>{issue === 'damaged' && cameraException != null && <div className="cp-notice"><strong>Camera access explanation</strong><p>{cameraException}</p><p>Your explanation will be included for manual review.</p></div>}{location && <LocationResult value={location} />}<p className="cp-muted">{evidence.length} attachment{evidence.length === 1 ? '' : 's'} · {location ? 'Location included' : 'Location not included'}</p><div className="cp-notice">Submitting a request does not issue a refund. The store will review the information and confirm the outcome here.</div></div>
     <div ref={errorRegion} className="cp-step-error"><ErrorNotice error={error} /></div>
     </div>
   </Dialog>;
