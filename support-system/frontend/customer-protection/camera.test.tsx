@@ -36,12 +36,16 @@ test('damage evidence needs the damaged item and cannot use ordinary uploads eve
 });
 test('camera evidence requests the phone camera while other issue types retain ordinary attachments', () => {
   const props = { limits: { max_files: 6, max_file_bytes: 25 * 1024 * 1024, max_total_bytes: 100 * 1024 * 1024 }, onChange: () => {}, onBlocked: () => {}, preserve: { current: false } };
-  const camera = renderToStaticMarkup(<CameraEvidence {...props} active requireDamaged />);
+  const camera = renderToStaticMarkup(<CameraEvidence {...props} active requireDamaged onCannotUseCamera={() => {}} />);
   assert.match(camera, /type="file"[^>]*accept="image\/\*"[^>]*capture="environment"[^>]*hidden=""/);
   assert.ok(camera.includes('Open camera for damaged item'));
   assert.ok(camera.includes('Outer packaging') && camera.includes('Shipping label'));
   assert.ok(camera.includes('cp-capture-rail'));
   assert.ok(camera.includes('Photo guidelines'));
+  assert.ok(camera.includes('Upload supporting documents'));
+  assert.ok(camera.includes('href="/protection/photo-requirements"'));
+  assert.ok(camera.includes('I cannot use a camera'));
+  assert.ok(camera.includes('cp-photo-step-heading'));
   assert.ok(camera.includes('/assets/protection-photo-guidelines.png'));
   assert.ok(camera.includes('Camera permission help'));
   assert.ok(renderToStaticMarkup(<Uploads {...props} />).includes('type="file"'));
@@ -59,5 +63,6 @@ test('the camera exception field keeps its accessible name after a reason has be
     assert.ok(label, 'the visible label has its own text-only target');
     assert.ok(html.includes(`aria-labelledby="${label[1]}"`), 'the control references only the label, not the entered reason');
     assert.ok(html.includes(value));
+    assert.ok(!html.includes('Open camera for damaged item'));
   }
 });

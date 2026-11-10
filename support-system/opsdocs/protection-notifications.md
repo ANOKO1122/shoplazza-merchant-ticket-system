@@ -232,3 +232,30 @@ build passed. The live bridge health check returned 200 with 12 stores, the
 customer page returned 200, and the served JavaScript/CSS SHA-256 hashes
 matched the verified local build. No test mail was sent and no real order
 state was changed. Physical phone presentation still needs observation.
+
+## Portrait photo preview and supporting documents article (2026-11-10)
+
+The current production image is `support-bridge:protection-evidence-guide-20261110`,
+built with the private Shoplazza app target. A captured portrait photo now
+keeps its native aspect ratio in the review preview. The damaged-item form
+labels its evidence section "Upload supporting documents" and links to the
+site's own `/protection/photo-requirements` article. Photo guidelines and the
+camera exception action sit beside the photo heading; choosing the exception
+replaces camera controls with a required written explanation. Existing attached
+photos are removed from that request when switching to the explanation.
+
+The article uses two example photos from the operator's reference article,
+attributed on the page. It explains this site's photo requirements only and
+does not import the reference site's claim deadlines or decision rules. The
+customer host and Nginx allow only the exact article path and two JPGs.
+Notification scheduling, sender and templates were unchanged. No new backup,
+test mail or real-order change was made.
+
+Verification: standard tests passed (481 backend, 17 environment-dependent
+skips; 32 frontend); isolated mobile/desktop Chromium camera, portrait preview,
+exception switch and article flows passed. TypeScript, production build,
+private-app Docker build and Nginx syntax check passed. Live health returned
+200 with 12 stores, the customer page and article returned 200, and the served
+JavaScript, CSS and example JPG hashes matched the local build. Unlisted assets
+and staff routes returned 404 on the customer host; anonymous order access
+remained 401. Physical phone presentation still needs observation.

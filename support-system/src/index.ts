@@ -166,6 +166,10 @@ app.get('/protection', protectionPageHeaders, (_req, res) => {
   res.sendFile(path.join(publicDir, 'customer-protection.html'));
 });
 
+app.get('/protection/photo-requirements', protectionPageHeaders, (_req, res) => {
+  res.sendFile(path.join(publicDir, 'protection-photo-requirements.html'));
+});
+
 app.use(express.static(publicDir, {
   index: false,
   etag: true,

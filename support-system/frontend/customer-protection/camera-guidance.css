@@ -6,6 +6,18 @@
 .cp-photo-guide-image img{display:block;width:100%;height:auto}
 .cp-photo-guide-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px}
 .cp-photo-guide-footer .cp-text-button{font-size:12px;flex:none}
+.cp-supporting-heading h3{font-size:16px}
+.cp-supporting-heading p{margin-top:4px;font-size:13px}
+.cp-photo-step-heading{display:flex;align-items:center;flex-wrap:wrap;gap:4px 16px;margin:24px 0 6px}
+.cp-photo-step-heading h4{margin:0;font-size:15px;font-weight:600;line-height:1.5}
+.cp-photo-step-heading .cp-photo-guide{display:contents}
+.cp-photo-step-heading .cp-photo-guide-trigger,.cp-photo-step-heading .cp-camera-exception-trigger{min-height:40px;padding:6px 0;font-size:13px}
+.cp-photo-step-heading .cp-photo-guide-panel{order:10;flex:0 0 100%;max-width:620px}
+.cp-camera-evidence>.cp-muted{margin-top:7px}
+.cp-step .cp-camera-exception{margin-top:28px;padding-top:0;border-top:0}
+.cp-camera-exception>.cp-muted{margin-top:8px}
+.cp-camera-evidence .cp-camera-preview.cp-camera-preview-photo{aspect-ratio:auto;max-height:none}
+.cp-camera-evidence .cp-camera-preview.cp-camera-preview-photo>img{width:100%;height:auto;max-height:min(70dvh,720px);object-fit:contain}
 
 .cp-camera-evidence .cp-capture-rail{max-width:100%;overflow-x:auto;overscroll-behavior-inline:contain;scroll-snap-type:x proximity;padding:2px 2px 10px}
 .cp-camera-evidence .cp-capture-slots{display:flex;gap:10px;width:max-content;list-style:none;margin:0;padding:0}
@@ -25,6 +37,10 @@
 .cp-camera-help-content>.cp-guide-frame~.cp-muted{margin-top:10px}
 
 @media(max-width:680px){
+  .cp-photo-step-heading{column-gap:8px}
+  .cp-photo-step-heading h4{font-size:14px}
+  .cp-photo-step-heading .cp-photo-guide-trigger{font-size:12px}
+  .cp-photo-step-heading .cp-camera-exception-trigger{order:5;flex-basis:100%;justify-content:flex-start;min-height:32px}
   .cp-camera-evidence .cp-capture-slots>li{flex-basis:132px}
   .cp-camera-evidence .cp-capture-slots .cp-capture-tile{width:132px;min-height:120px}
   .cp-photo-guide-panel{padding:10px}

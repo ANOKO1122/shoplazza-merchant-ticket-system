@@ -39,12 +39,14 @@ Let's Encrypt 独立证书有效至 **2027-02-02**。公网 `/`、`/protection` 
 
 ## 顾客域名边界
 
-HTTPS 仅反代 `/`、`/protection`、`/email-preferences`、`/assets/customer-protection.js`、
+HTTPS 仅反代 `/`、`/protection`、`/protection/photo-requirements`、
+`/email-preferences`、`/assets/customer-protection.js`、
 `/assets/customer-protection.css`、`/assets/protection-location-ios.png`、
 `/assets/protection-location-android.png`、`/assets/protection-photo-guidelines.png`、
-`/assets/protection-camera-ios.png`、`/assets/protection-camera-android.png` 和
-`/api/protection/` 前缀。五张教学图为固定公开静态图片；不要扩展为整个 assets
-目录或任意 PNG 路径。
+`/assets/protection-camera-ios.png`、`/assets/protection-camera-android.png`、
+`/assets/protection-example-package.jpg`、`/assets/protection-example-item.jpg` 和
+`/api/protection/` 前缀。五张教学图及两张照片示例为固定公开静态图片；不要
+扩展为整个 assets 目录或任意图片路径。
 其他路径直接返回 404，包括 `/api/admin`、`/thinkpro-admin`、`/uploads`、
 `/api/support`、`/mailpit` 和其他 assets。一般顾客 API 请求体积上限 64 KiB；
 仅精确 `/api/protection/evidence` 允许 26 MiB multipart 请求，应用再校验单文件

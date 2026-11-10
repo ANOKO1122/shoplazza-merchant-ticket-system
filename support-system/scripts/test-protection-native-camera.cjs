@@ -4,20 +4,35 @@ const http = require('node:http');
 const path = require('node:path');
 const fs = require('node:fs');
 const { build } = require('esbuild');
+const sharp = require('sharp');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 
 const root = path.resolve(__dirname, '..');
 const captureId = '10c83620-b938-4c13-a5d4-93c6737a1877';
-const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lZkAAAAASUVORK5CYII=', 'base64');
 let server, browser;
 (async () => {
+  const png = await sharp({ create: { width: 600, height: 800, channels: 3, background: '#8fb7c8' } }).png().toBuffer();
   const bundle = await build({ absWorkingDir: root, stdin: { contents: `
+    import { useState } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { CameraEvidence } from './frontend/customer-protection/CameraEvidence';
+    import { CameraEvidence, CameraException } from './frontend/customer-protection/CameraEvidence';
     import './frontend/customer-protection/styles.css';
-    createRoot(document.getElementById('root')).render(<dialog className="cp-dialog" open><div className="cp-dialog-content"><CameraEvidence active requireDamaged limits={{max_files:6,max_file_bytes:26214400,max_total_bytes:104857600}} onChange={files=>{window.attachedFiles=files}} onBlocked={()=>{}} preserve={{current:true}} /></div></dialog>);
+    function Fixture(){
+      const [reason,setReason]=useState(null);
+      const common={limits:{max_files:6,max_file_bytes:26214400,max_total_bytes:104857600},onChange:files=>{window.attachedFiles=files},onBlocked:()=>{},preserve:{current:false}};
+      return reason===null ? <CameraEvidence {...common} active requireDamaged onCannotUseCamera={()=>{window.attachedFiles=[];setReason('')}} /> : <CameraException value={reason} onChange={setReason} />;
+    }
+    createRoot(document.getElementById('root')).render(<dialog className="cp-dialog" open><div className="cp-dialog-content"><Fixture /></div></dialog>);
   `, resolveDir: root, loader: 'tsx' }, bundle: true, write: false, outfile: 'camera.js', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' } });
   server = http.createServer((req, res) => {
+    if (req.url === '/protection/photo-requirements') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.end(fs.readFileSync(path.join(root, 'public/protection-photo-requirements.html')));
+    }
+    if (['protection-example-package.jpg', 'protection-example-item.jpg'].some(name => req.url === `/assets/${name}`)) {
+      res.setHeader('Content-Type', 'image/jpeg');
+      return res.end(fs.readFileSync(path.join(root, 'public', req.url)));
+    }
     if (['protection-photo-guidelines.png', 'protection-camera-ios.png', 'protection-camera-android.png'].some(name => req.url === `/assets/${name}`)) {
       res.setHeader('Content-Type', 'image/png');
       return res.end(fs.readFileSync(path.join(root, 'public', req.url)));
@@ -29,7 +44,9 @@ let server, browser;
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH, headless: true, args: ['--no-sandbox'] });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, userAgent: 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/130.0.0.0 Mobile Safari/537.36' });
-  const errors = []; let uploaded = false;
+  const errors = []; let uploaded = false; let deleted = false;
+  let markDeleted;
+  const deletedPromise = new Promise(resolve => { markDeleted = resolve; });
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/api/protection/capture-sessions', route => route.fulfill({ status: 201, json: { ok: true, capture: { id: captureId, category: 'damaged_item', expires_at: '2099-01-01T00:00:00Z' } } }));
   await page.route('**/api/protection/evidence', route => {
@@ -37,7 +54,18 @@ let server, browser;
     assert.match(body, /capture_id/); assert.match(body, new RegExp(captureId)); uploaded = true;
     return route.fulfill({ json: { ok: true, evidence: { id: 'photo-1', kind: 'image', original_name: 'damage.png', size_bytes: png.length, url: '/api/protection/evidence/photo-1', source: 'camera', capture: { category: 'damaged_item', requested_at: '2026-11-09T00:00:00Z', received_at: '2026-11-09T00:01:00Z' } } } });
   });
+  await page.route('**/api/protection/evidence/photo-1', route => { deleted = route.request().method() === 'DELETE'; if (deleted) markDeleted(); return route.fulfill({ json: { ok: true } }); });
   await page.goto(`http://127.0.0.1:${server.address().port}`);
+  assert.equal(await page.getByRole('link', { name: 'Learn more about the supporting documents' }).getAttribute('href'), '/protection/photo-requirements');
+  const headingBox = await page.getByRole('heading', { name: 'Take photos of the damage' }).boundingBox();
+  const guideBox = await page.getByRole('button', { name: 'Photo guidelines' }).boundingBox();
+  assert.ok(Math.abs(headingBox.y - guideBox.y) < 12, 'Photo guidelines stays beside the photo heading on a phone');
+  await page.getByRole('button', { name: 'I cannot use a camera' }).click();
+  assert.equal(await page.getByRole('textbox', { name: 'Why you cannot use a camera' }).isVisible(), true);
+  assert.equal(await page.getByRole('button', { name: 'Open camera for damaged item' }).count(), 0, 'Text explanation replaces camera controls');
+  await page.getByRole('textbox', { name: 'Why you cannot use a camera' }).fill('My phone camera is broken and cannot take pictures.');
+  await page.getByRole('button', { name: 'Use the camera instead' }).click();
+  assert.equal(await page.getByRole('button', { name: 'Open camera for damaged item' }).isVisible(), true);
   assert.equal(await page.locator('.cp-capture-rail').evaluate(element => element.scrollWidth > element.clientWidth), true, 'Photo types scroll horizontally on a phone');
   const guidelines = page.getByRole('button', { name: 'Photo guidelines' });
   await guidelines.hover();
@@ -67,6 +95,12 @@ let server, browser;
   await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' }); document.dispatchEvent(new Event('visibilitychange')); });
   await chooser.setFiles({ name: 'damage.png', mimeType: 'image/png', buffer: png });
   await page.getByRole('button', { name: 'Use photo' }).waitFor();
+  const portrait = await page.locator('.cp-camera-preview-photo img').evaluate(async image => { await image.decode(); const rect = image.getBoundingClientRect(); const frame = image.parentElement.getBoundingClientRect(); return { naturalWidth: image.naturalWidth, naturalHeight: image.naturalHeight, ratio: rect.height / rect.width, frameHeight: frame.height, imageHeight: rect.height }; });
+  assert.equal(portrait.naturalWidth, 600);
+  assert.equal(portrait.naturalHeight, 800);
+  assert.ok(Math.abs(portrait.ratio - 4 / 3) < 0.02, 'Portrait preview keeps the phone photo ratio');
+  assert.ok(portrait.frameHeight >= portrait.imageHeight - 1, 'Portrait preview is not clipped by its frame');
+  await page.locator('.cp-camera-viewer').screenshot({ path: '/tmp/protection-camera-portrait-preview.png' });
   await page.getByRole('button', { name: 'Use photo' }).click();
   await page.waitForFunction(() => window.attachedFiles?.length === 1);
   const cancelledChooser = page.waitForEvent('filechooser');
@@ -74,7 +108,26 @@ let server, browser;
   await cancelledChooser;
   await page.locator('input[capture="environment"]').dispatchEvent('cancel');
   assert.equal(await page.getByRole('button', { name: 'Open camera for damaged item' }).isEnabled(), true);
+  await page.getByRole('button', { name: 'I cannot use a camera' }).click();
+  assert.equal(await page.getByRole('textbox', { name: 'Why you cannot use a camera' }).isVisible(), true);
+  await page.waitForFunction(() => window.attachedFiles?.length === 0);
+  await page.waitForFunction(() => document.querySelector('.cp-capture-rail') === null);
+  await Promise.race([deletedPromise, new Promise((_, reject) => setTimeout(() => reject(new Error('Attached photo was not deleted')), 5000))]);
+  assert.equal(deleted, true, 'Switching to a text explanation discards attached photos');
   assert.equal(uploaded, true); assert.deepEqual(errors, []);
+  const article = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await article.goto(`http://127.0.0.1:${server.address().port}/protection/photo-requirements`);
+  assert.equal(await article.getByRole('heading', { name: 'Photos for a damaged item' }).isVisible(), true);
+  assert.equal(await article.locator('figure img').count(), 2);
+  for (const image of await article.locator('figure img').all()) assert.ok(await image.evaluate(async element => { await element.decode(); return element.naturalWidth; }) > 0);
+  assert.equal(await article.locator('main').evaluate(element => /\b(insurance|insured|coverage|underwritten)\b/i.test(element.innerText)), false);
+  await article.screenshot({ path: '/tmp/protection-photo-requirements-mobile.png', fullPage: true });
+  await article.close();
+  const desktopArticle = await browser.newPage({ viewport: { width: 1200, height: 900 } });
+  await desktopArticle.goto(`http://127.0.0.1:${server.address().port}/protection/photo-requirements`);
+  assert.equal(await desktopArticle.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Photo article fits desktop width');
+  await desktopArticle.screenshot({ path: '/tmp/protection-photo-requirements-desktop.png' });
+  await desktopArticle.close();
   const desktop = await browser.newPage({ viewport: { width: 1200, height: 900 } });
   await desktop.goto(`http://127.0.0.1:${server.address().port}`);
   assert.equal(await desktop.locator('.cp-capture-rail').evaluate(element => element.scrollWidth <= element.clientWidth), true, 'Desktop keeps all photo types on one row');
