@@ -1,4 +1,4 @@
-/** No historical backfill: only the transactional claim status hook inserts work. */
+/** Claim transitions and new order milestones share one durable delivery outbox. */
 export const PROTECTION_NOTIFICATION_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS support_protection_notification_outbox (
   id BIGSERIAL PRIMARY KEY,
@@ -27,4 +27,28 @@ CREATE TABLE IF NOT EXISTS support_protection_notification_outbox (
   UNIQUE(claim_id,revision)
 );
 CREATE INDEX IF NOT EXISTS idx_protection_notification_due ON support_protection_notification_outbox(next_attempt_at,id) WHERE status IN ('pending','sending');
+
+ALTER TABLE support_protection_notification_outbox ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT 'claim_update';
+ALTER TABLE support_protection_notification_outbox ALTER COLUMN claim_id DROP NOT NULL;
+ALTER TABLE support_protection_notification_outbox ALTER COLUMN revision DROP NOT NULL;
+ALTER TABLE support_protection_notification_outbox ALTER COLUMN target_status DROP NOT NULL;
+DO $notification_event_shape$
+BEGIN
+  IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='protection_notification_event_shape' AND conrelid='support_protection_notification_outbox'::regclass) THEN
+    ALTER TABLE support_protection_notification_outbox ADD CONSTRAINT protection_notification_event_shape CHECK (
+      (event_type='claim_update' AND claim_id IS NOT NULL AND revision IS NOT NULL AND target_status IS NOT NULL)
+      OR (event_type IN ('shipment','completion') AND claim_id IS NULL AND revision IS NULL AND target_status IS NULL)
+    );
+  END IF;
+END;
+$notification_event_shape$;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_protection_notification_order_stage
+  ON support_protection_notification_outbox(protection_order_id,event_type) WHERE event_type IN ('shipment','completion');
+
+-- Retained across restarts/reindexing: enabling mail never sweeps old milestones.
+CREATE TABLE IF NOT EXISTS support_protection_notification_activation (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  activated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO support_protection_notification_activation(id) VALUES(1) ON CONFLICT DO NOTHING;
 `;

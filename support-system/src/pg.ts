@@ -667,7 +667,7 @@ export async function ensureTables(): Promise<void> {
   await p.query(PROTECTION_CUSTOMER_SCHEMA_SQL);
   await p.query(PROTECTION_FULFILLMENT_SCHEMA_SQL);
 
-  // This draft is editable in the template library, but is not an automatic email job type.
+  // Keep the existing editable completion template; lifecycle delivery uses the protection outbox.
   await p.query(`INSERT INTO support_email_templates (email_type, subject_template, body_template)
     VALUES ($1,$2,$3) ON CONFLICT (email_type) DO NOTHING`,
     [PROTECTION_COMPLETION_EMAIL_TYPE, PROTECTION_COMPLETION_TEMPLATE.subject, PROTECTION_COMPLETION_TEMPLATE.body]);

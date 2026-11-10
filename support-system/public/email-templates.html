@@ -145,10 +145,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
         <button class="tab-btn" data-type="agent_reply_notice" onclick="switchTemplate('agent_reply_notice')">💬 客服回复提醒</button>
         <button class="tab-btn" data-type="ticket_closed_notice" onclick="switchTemplate('ticket_closed_notice')">✅ 工单关闭提醒</button>
         <button class="tab-btn" data-type="customer_complaint_invite" onclick="switchTemplate('customer_complaint_invite')">📝 顾客投诉工单</button>
-        <button class="tab-btn" data-type="protection_completion_notice" onclick="switchTemplate('protection_completion_notice')">完成模板（物流保障）</button>
+        <button class="tab-btn" data-type="protection_shipment_notice" onclick="switchTemplate('protection_shipment_notice')">发货通知（物流保障）</button>
+        <button class="tab-btn" data-type="protection_completion_notice" onclick="switchTemplate('protection_completion_notice')">完成通知（物流保障）</button>
         <button class="tab-btn" data-type="protection_claim_update" onclick="switchTemplate('protection_claim_update')">申请更新（物流保障）</button>
       </div>
-      <p id="protectionTemplateNote" hidden style="margin:0;padding:10px 14px;background:#eef5fb;border-radius:6px;color:#365575">物流保障模板已就绪，自动发送尚未开启。顾客入口使用 us-seel.com；“订单完成”不等于承运商签收，签收通知需要可靠物流依据。</p>
+      <p id="protectionShipmentNote" hidden style="margin:0;padding:10px 14px;background:#eef5fb;border-radius:6px;color:#365575">已付款的保障订单首次出现实物商品发货记录时自动通知，每单一次。部分发货也会触发，邮件说明商品可能分开发出。顾客通过 us-seel.com 私有链接查看订单，发送前检查保障邮件退订状态。</p>
+      <p id="protectionTemplateNote" hidden style="margin:0;padding:10px 14px;background:#eef5fb;border-radius:6px;color:#365575">已付款的保障订单被店铺标记完成时自动通知，每单一次。完成状态不代表承运商确认签收。顾客通过 us-seel.com 私有链接查看订单，发送前检查保障邮件退订状态。</p>
       <p id="protectionUpdateNote" hidden style="margin:0;padding:10px 14px;background:#eef5fb;border-radius:6px;color:#365575">申请状态更新时生成独立通知，发送由保障邮件配置控制，不补发历史状态。邮件只提示有更新，顾客通过 us-seel.com 私有链接查看详情。</p>
 
       <!-- 编辑 + 预览 -->
@@ -331,6 +333,7 @@ async function loadTemplate(type) {
   invalidatePreview();
   document.getElementById('previewSubject').textContent = '(加载中)';
   document.getElementById('previewFrame').srcdoc = '<p style="padding:24px;color:#8c8c8c">正在加载模板…</p>';
+  document.getElementById('protectionShipmentNote').hidden = type !== 'protection_shipment_notice';
   document.getElementById('protectionTemplateNote').hidden = type !== 'protection_completion_notice';
   document.getElementById('protectionUpdateNote').hidden = type !== 'protection_claim_update';
   try {
@@ -642,7 +645,7 @@ async function resetToDefault() {
 
   // 重新加载页面以获取默认值
   try {
-    if (currentType === 'protection_completion_notice' || currentType === 'protection_claim_update') {
+    if (currentType === 'protection_shipment_notice' || currentType === 'protection_completion_notice' || currentType === 'protection_claim_update') {
       var response = await fetch(API + '/email-templates/' + currentType + '/default', { credentials: 'same-origin' });
       var result = await response.json();
       if (!response.ok || !result.ok) throw new Error('加载默认模板失败');

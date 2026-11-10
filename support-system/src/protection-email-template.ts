@@ -1,4 +1,5 @@
-/** Editable draft only. No worker schedules this template until the delivery rules are approved. */
+/** Editable templates used by the protection notification worker. */
+export const PROTECTION_SHIPMENT_EMAIL_TYPE = 'protection_shipment_notice';
 export const PROTECTION_COMPLETION_EMAIL_TYPE = 'protection_completion_notice';
 export const PROTECTION_CLAIM_UPDATE_EMAIL_TYPE = 'protection_claim_update';
 
@@ -6,6 +7,29 @@ export const PROTECTION_CLAIM_UPDATE_EMAIL_TYPE = 'protection_claim_update';
 function protectionEmailAction(label: string): string {
   return `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" bgcolor="#e8f0f8" style="border-radius:6px;background-color:#e8f0f8"><a href="{{protection_link}}" style="display:inline-block;padding:14px 24px;border:1px solid #255c98;border-radius:6px;background-color:#e8f0f8;color:#17466f;text-decoration:underline;font-size:16px;line-height:1.5;font-weight:700">${label}</a></td></tr></table>`;
 }
+
+export const PROTECTION_SHIPMENT_TEMPLATE = {
+  subject: '{{store_name}} — a shipment from your protected order #{{order_number}}',
+  body: `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>A shipment from your protected order</title></head>
+<body style="margin:0;padding:0;background:#f5f7fa;-webkit-text-size-adjust:100%;color:#172b43">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" style="padding:32px 16px">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:#ffffff;border:1px solid #e2e8ef;border-radius:12px;font-family:Arial,Helvetica,sans-serif;line-height:1.6">
+<tr><td align="center" style="padding:28px 28px 12px;color:#526780;font-size:13px;font-weight:700;letter-spacing:1px">SHIPPING PROTECTION · {{store_name}}</td></tr>
+<tr><td align="center" style="padding:4px 28px 20px"><h1 style="font-size:28px;line-height:1.3;margin:0;color:#172b43">A shipment from your protected order is on the way</h1></td></tr>
+<tr><td align="center" style="padding:0 28px 12px;font-size:20px;font-weight:700">Hi {{customer_name}},</td></tr>
+<tr><td align="center" style="padding:0 28px 24px;font-size:15px;color:#526174">{{store_name}} has recorded a shipment for your protected order. Some items may ship separately. You can view your order, check the request windows, and report an eligible delivery issue on your private protection page.</td></tr>
+<tr><td align="center" style="padding:0 24px 28px">${protectionEmailAction('View protected order')}</td></tr>
+<tr><td style="padding:0 28px 24px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f6f8fb;border-radius:8px;font-size:14px"><tr><td style="padding:18px 20px">
+<p style="margin:0 0 6px">Order: <strong>#{{order_number}}</strong></p>
+<p style="margin:0 0 6px">Protection reference: <strong>{{protection_no}}</strong></p>
+{{#tracking_number}}<p style="margin:0 0 6px;word-break:break-all">Tracking number: {{tracking_number}}</p>{{/tracking_number}}
+{{#carrier}}<p style="margin:0">Carrier: {{carrier}}</p>{{/carrier}}
+</td></tr></table></td></tr>
+<tr><td style="padding:0 28px 24px;font-size:13px;color:#607085">Shipping protection is provided by {{store_name}}. Requests are reviewed by the support team. Submitting a request does not issue a refund automatically.</td></tr>
+<tr><td align="center" style="border-top:1px solid #e2e8ef;padding:22px 28px;font-size:12px;color:#607085">Thank you for shopping with {{store_name}}.<br>This private link gives access to your order. Please do not share it.<br><a href="{{protection_link}}" style="color:#255c98;text-decoration:underline">Open your protection page</a></td></tr>
+</table></td></tr></table></body></html>`,
+};
 
 export const PROTECTION_CLAIM_UPDATE_TEMPLATE = {
   subject: 'Your request has been updated — {{claim_no}}',

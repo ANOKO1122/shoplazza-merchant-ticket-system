@@ -92,18 +92,26 @@ function harness(options: { snapshotName?: string | null; ticketName?: string | 
       router(request as express.Request, response as express.Response, error => reject(error || new Error('Route did not respond')));
     });
   }
-  function previewTemplate(type: string, authenticated = true, subject = 'Hello {{customer_name}}', html = '<html><body><p>Hi {{customer_name}}</p></body></html>') {
+  function previewTemplate(type: string, authenticated = true, subject = 'Hello {{customer_name}}', html = '<html><body><p>Hi {{customer_name}}</p></body></html>', useDefaultVariables = false) {
     return new Promise<{ status: number; body: any }>((resolve, reject) => {
       let status = 200;
-      const request = { method: 'POST', url: `/email-templates/${type}/preview`, headers: authenticated ? { cookie: 'fixture=yes' } : {}, body: { subject_template: subject, body_template: html, variables: { customer_name: 'Preview buyer' } } };
+      const request = { method: 'POST', url: `/email-templates/${type}/preview`, headers: authenticated ? { cookie: 'fixture=yes' } : {}, body: { subject_template: subject, body_template: html, ...(useDefaultVariables ? {} : { variables: { customer_name: 'Preview buyer' } }) } };
       const response = { status(code: number) { status = code; return this; }, json(body: unknown) { resolve({ status, body }); return this; } };
       router(request as express.Request, response as express.Response, error => reject(error || new Error('Route did not respond')));
     });
   }
-  return { calls, post, preview, previewTemplate };
+  function defaultTemplate(type: string, authenticated = true) {
+    return new Promise<{ status: number; body: any }>((resolve, reject) => {
+      let status = 200;
+      const request = { method: 'GET', url: `/email-templates/${type}/default`, headers: authenticated ? { cookie: 'fixture=yes' } : {} };
+      const response = { status(code: number) { status = code; return this; }, json(body: unknown) { resolve({ status, body }); return this; } };
+      router(request as express.Request, response as express.Response, error => reject(error || new Error('Route did not respond')));
+    });
+  }
+  return { calls, post, preview, previewTemplate, defaultTemplate };
 }
 
-for (const [type, origin] of [['paid_support_invite', 'https://tickets.example.invalid'], ['agent_reply_notice', 'https://tickets.example.invalid'], ['protection_completion_notice', 'https://us-seel.com'], ['protection_claim_update', 'https://us-seel.com']]) {
+for (const [type, origin] of [['paid_support_invite', 'https://tickets.example.invalid'], ['agent_reply_notice', 'https://tickets.example.invalid'], ['protection_shipment_notice', 'https://us-seel.com'], ['protection_completion_notice', 'https://us-seel.com'], ['protection_claim_update', 'https://us-seel.com']]) {
   test(`${type} template preview includes an inert system footer on the correct host without creating tokens or sending`, async () => {
     const response = await harness().previewTemplate(type);
     assert.equal(response.status, 200);
@@ -118,6 +126,20 @@ for (const [type, origin] of [['paid_support_invite', 'https://tickets.example.i
     assert.doesNotMatch(html, /eu_[A-Za-z0-9_-]{43}/);
   });
 }
+test('shipment default can be restored and previewed with synthetic protection variables', async () => {
+  const h = harness();
+  const response = await h.defaultTemplate('protection_shipment_notice');
+  assert.equal(response.status, 200);
+  assert.equal(response.body.template.subject_template, protectionEmailTemplate.PROTECTION_SHIPMENT_TEMPLATE.subject);
+  assert.equal(response.body.template.body_template, protectionEmailTemplate.PROTECTION_SHIPMENT_TEMPLATE.body);
+  const preview = await h.previewTemplate('protection_shipment_notice', true, response.body.template.subject_template, response.body.template.body_template, true);
+  assert.equal(preview.status, 200);
+  assert.match(preview.body.preview.subject, /DEMO-1042/);
+  assert.match(preview.body.preview.html, /https:\/\/us-seel\.com\/protection/);
+  assert.match(preview.body.preview.html, /SP-DEMO-1042/);
+  assert.doesNotMatch(preview.body.preview.html, /pa_[A-Za-z0-9_-]{43}|\{\{/);
+  assert.equal((await h.defaultTemplate('protection_shipment_notice', false)).status, 401);
+});
 test('template preview accepts in-progress empty subjects and replaces pasted live footer tokens', async () => {
   const html = `<p>Draft</p><!-- email-unsubscribe:start --><a href="https://tickets.example.invalid/email-preferences?token=eu_${'x'.repeat(43)}">Old link</a><!-- email-unsubscribe:end -->`;
   const response = await harness().previewTemplate('paid_support_invite', true, '', html);

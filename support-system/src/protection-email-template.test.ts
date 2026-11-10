@@ -23,10 +23,12 @@ function contrastAgainstWhite(color: string): number {
 }
 
 for (const [type, template, label] of [
+  ['shipment', (protectionTemplates as any).PROTECTION_SHIPMENT_TEMPLATE, 'View protected order'],
   ['completion', protectionTemplates.PROTECTION_COMPLETION_TEMPLATE, 'View order &amp; request support'],
   ['claim update', protectionTemplates.PROTECTION_CLAIM_UPDATE_TEMPLATE, 'View update'],
 ] as const) {
   test(`${type} CTA stays readable when mail sanitization strips every background`, () => {
+    assert.ok(template, `${type} template must be registered`);
     const html = stripEmailBackgrounds(renderTemplateString(template.body, PROTECTION_EMAIL_PREVIEW_VARS));
     const anchors = [...html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)];
     const cta = anchors.find(anchor => anchor[2].replace(/<[^>]+>/g, '') === label);
@@ -38,6 +40,7 @@ for (const [type, template, label] of [
   });
 
   test(`${type} includes a separate readable link to the same secure destination`, () => {
+    assert.ok(template, `${type} template must be registered`);
     const html = renderTemplateString(template.body, PROTECTION_EMAIL_PREVIEW_VARS);
     const fallback = [...html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)]
       .find(anchor => anchor[2] === 'Open your protection page');
@@ -47,6 +50,27 @@ for (const [type, template, label] of [
     assert.ok(contrastAgainstWhite(color) >= 4.5);
   });
 }
+
+test('shipment notification describes a partial shipment and uses the private protection page', () => {
+  const template = (protectionTemplates as any).PROTECTION_SHIPMENT_TEMPLATE;
+  assert.ok(template, 'Shipment template must be registered');
+  const html = renderTemplateString(template.body, PROTECTION_EMAIL_PREVIEW_VARS);
+  const subject = renderTemplateString(template.subject, PROTECTION_EMAIL_PREVIEW_VARS);
+  assert.match(subject, /DEMO-1042/);
+  assert.match(html, /A shipment from your protected order is on the way/);
+  assert.match(html, /Example Store has recorded a shipment/);
+  assert.match(html, /Some items may ship separately/);
+  assert.match(html, /Tracking number: DEMO-TRACKING-1042/);
+  assert.match(html, /Carrier: Example carrier/);
+  assert.match(html, /https:\/\/us-seel\.com\/protection/);
+  assert.doesNotMatch(html, /Your order has (?:been delivered|shipped)|insurance|underwrit|resolve\.seel\.com|\{\{/i);
+
+  const withoutTracking = renderTemplateString(template.body, {
+    ...PROTECTION_EMAIL_PREVIEW_VARS, customer_name: '<script>bad</script>', carrier: '', tracking_number: '',
+  });
+  assert.match(withoutTracking, /&lt;script&gt;/);
+  assert.doesNotMatch(withoutTracking, /<script|Tracking number:|Carrier:/);
+});
 
 test('protection template uses own secure portal without asserting carrier delivery', () => {
   const html = renderTemplateString(PROTECTION_COMPLETION_TEMPLATE.body, PROTECTION_EMAIL_PREVIEW_VARS);

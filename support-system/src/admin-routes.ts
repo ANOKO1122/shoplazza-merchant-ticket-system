@@ -1,7 +1,7 @@
 import express from 'express';
 import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
-import { PROTECTION_COMPLETION_EMAIL_TYPE, PROTECTION_COMPLETION_TEMPLATE, PROTECTION_CLAIM_UPDATE_EMAIL_TYPE, PROTECTION_CLAIM_UPDATE_TEMPLATE, PROTECTION_EMAIL_PREVIEW_VARS } from './protection-email-template';
+import { PROTECTION_SHIPMENT_EMAIL_TYPE, PROTECTION_SHIPMENT_TEMPLATE, PROTECTION_COMPLETION_EMAIL_TYPE, PROTECTION_COMPLETION_TEMPLATE, PROTECTION_CLAIM_UPDATE_EMAIL_TYPE, PROTECTION_CLAIM_UPDATE_TEMPLATE, PROTECTION_EMAIL_PREVIEW_VARS } from './protection-email-template';
 import { SESSION_COOKIE_NAME, getRequestAgent, parseSessionCookie, loginAgent, createSession, destroySession, changeAgentPassword } from './auth';
 import { listTickets, getTicketByPublicNo, getTicketMessages, getOrderSnapshot, addAgentMessage, updateTicketStatus, reopenTicket } from './ticket-service';
 import { listStores, createStore, updateStore, deleteStore, getStoreBySubdomain, decryptToken } from './store-service';
@@ -1290,6 +1290,12 @@ export function createAdminRouter(): express.Router {
   });
 
   // GET /api/admin/email-templates/:type
+  router.get('/email-templates/protection_shipment_notice/default', (_req, res) => {
+    res.json({ ok: true, template: {
+      subject_template: PROTECTION_SHIPMENT_TEMPLATE.subject,
+      body_template: PROTECTION_SHIPMENT_TEMPLATE.body,
+    } });
+  });
   router.get('/email-templates/protection_completion_notice/default', (_req, res) => {
     res.json({ ok: true, template: {
       subject_template: PROTECTION_COMPLETION_TEMPLATE.subject,
@@ -1355,7 +1361,7 @@ export function createAdminRouter(): express.Router {
         return;
       }
 
-      const vars = variables || ([PROTECTION_COMPLETION_EMAIL_TYPE, PROTECTION_CLAIM_UPDATE_EMAIL_TYPE].includes(req.params.type) ? PROTECTION_EMAIL_PREVIEW_VARS : {
+      const vars = variables || ([PROTECTION_SHIPMENT_EMAIL_TYPE, PROTECTION_COMPLETION_EMAIL_TYPE, PROTECTION_CLAIM_UPDATE_EMAIL_TYPE].includes(req.params.type) ? PROTECTION_EMAIL_PREVIEW_VARS : {
         store_name: 'Test Store',
         store_domain: 'test.myshoplaza.com',
         order_id: '1001',
@@ -1373,7 +1379,7 @@ export function createAdminRouter(): express.Router {
       });
 
       const subject = renderTemplateString(tpl.subject_template, vars);
-      const baseUrl = [PROTECTION_COMPLETION_EMAIL_TYPE, PROTECTION_CLAIM_UPDATE_EMAIL_TYPE].includes(req.params.type)
+      const baseUrl = [PROTECTION_SHIPMENT_EMAIL_TYPE, PROTECTION_COMPLETION_EMAIL_TYPE, PROTECTION_CLAIM_UPDATE_EMAIL_TYPE].includes(req.params.type)
         ? protectionPublicBaseUrl() : await getEffectivePublicBaseUrl();
       const html = decorateEmailPreviewWithUnsubscribe(renderTemplateString(tpl.body_template, vars), baseUrl);
 

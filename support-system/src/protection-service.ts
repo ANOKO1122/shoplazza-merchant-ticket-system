@@ -4,6 +4,7 @@ import { ACTIVE_CLAIM_STATUSES, CLAIM_REASONS, CLAIM_STATUSES, ProtectionError, 
 import type { ClaimDetail, ClaimStatus, ProtectionClaim, ProtectionList, ProtectionOrder, ProtectionStats } from './protection-types';
 import { enqueueProtectionClaimUpdate } from './protection-notification';
 import { evaluateProtectionCoverage } from './protection-policy';
+import { enqueueProtectionLifecycleNotifications } from './protection-lifecycle-notification';
 
 export interface ProtectionActor { agentId: number; name: string; role: string; }
 export interface ProtectionFilters { q?: string; store?: string; from?: string; to?: string; status?: string; reason?: string; page?: number; page_size?: number; }
@@ -266,7 +267,8 @@ export async function resetProtectionOrderSync():Promise<void>{await query(`UPDA
 async function persistProtectionSnapshot(client:Db,snapshot:Record<string,any>):Promise<boolean>{
   const normalized=normalizeProtectionSnapshot(snapshot,Array.isArray(snapshot.product_ids)?snapshot.product_ids:[]);
   if(!normalized){
-    const result=await client.query(`UPDATE support_protection_orders SET service_fulfillment_status='removed',payment_status=$3,order_status=$4,source_snapshot_id=$5,source_updated_at=$6,synced_at=now() WHERE store_subdomain=$1 AND order_id=$2`,[snapshot.store_subdomain,snapshot.order_id,text(snapshot.payment_status),text(snapshot.order_status),snapshot.id,snapshot.cursor_time]);
+    const result=await client.query(`UPDATE support_protection_orders SET service_fulfillment_status='removed',payment_status=$3,order_status=$4,source_snapshot_id=$5,source_updated_at=$6,synced_at=now() WHERE store_subdomain=$1 AND order_id=$2
+      AND (source_updated_at IS NULL OR source_updated_at<=$6::timestamptz)`,[snapshot.store_subdomain,snapshot.order_id,text(snapshot.payment_status),text(snapshot.order_status),snapshot.id,snapshot.cursor_time]);
     return !!result.rowCount;
   }
   const keys=['store_subdomain','store_name','order_id','order_number','customer_email','customer_name','currency','order_amount_cents','protection_fee_cents','protected_value_cents','refund_amount_cents','payment_status','order_status','fulfillment_status','refund_status','paid_at','items_json','logistics_json','shipping_address_json','service_fulfillment_status','source_snapshot_id','source_updated_at'];
@@ -275,7 +277,10 @@ async function persistProtectionSnapshot(client:Db,snapshot:Record<string,any>):
   keys.push('timeline_json');values.push(JSON.stringify(normalized.timeline));
   const result=await client.query(`INSERT INTO support_protection_orders(${keys.join(',')}) SELECT ${keys.map((_,i)=>`$${i+1}`).join(',')}
     WHERE $${keys.length+1}::boolean OR EXISTS(SELECT 1 FROM support_protection_orders WHERE store_subdomain=$1 AND order_id=$3)
-    ON CONFLICT(store_subdomain,order_id) DO UPDATE SET ${keys.filter(k=>!['store_subdomain','order_id'].includes(k)).map(k=>`${k}=EXCLUDED.${k}`).join(',')},synced_at=now()`,[...values,paidLike]);
+    ON CONFLICT(store_subdomain,order_id) DO UPDATE SET ${keys.filter(k=>!['store_subdomain','order_id'].includes(k)).map(k=>`${k}=EXCLUDED.${k}`).join(',')},synced_at=now()
+    WHERE support_protection_orders.source_updated_at IS NULL OR support_protection_orders.source_updated_at<=EXCLUDED.source_updated_at
+    RETURNING *`,[...values,paidLike]);
+  if(result.rows[0])await enqueueProtectionLifecycleNotifications(client,result.rows[0]);
   return !!result.rowCount;
 }
 export async function syncProtectionOrders(limit=200):Promise<{scanned:number;upserted:number;has_more:boolean}>{

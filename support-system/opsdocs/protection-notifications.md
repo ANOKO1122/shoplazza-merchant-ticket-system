@@ -1,8 +1,24 @@
-# Protection request update emails
+# Protection emails
 
 `protection_claim_update` is an editable English template in the existing mail-template editor. It includes the store, order and request references and a **View update** link to `https://us-seel.com/protection`. It does not include the review decision, internal notes or payment information.
 
-Only a new transition to `needs_info`, `approved`, `rejected` or `closed` inserts an outbox event. The insert shares the claim update transaction. The unique claim/revision key prevents repeated status requests from creating duplicate work. Editing a note without changing the status does not notify. Initialization does not scan or notify historical claims. Completion notices remain an editable draft and are not activated by this worker.
+For claim updates, only a new transition to `needs_info`, `approved`, `rejected` or `closed` inserts an outbox event. The insert shares the claim update transaction. The unique claim/revision key prevents repeated status requests from creating duplicate work. Editing a note without changing the status does not notify. Initialization does not scan or notify historical claims.
+
+The same delivery worker also handles `protection_shipment_notice` and
+`protection_completion_notice`. Snapshot indexing records the first physical
+merchandise shipment and the merchant's recorded order completion, once each per
+protected order. The shipment template accounts for partial shipments. Completion
+means the store marked the order complete, not verified delivery by the carrier.
+Fulfilling the protection service alone does not send a shipment message.
+
+A persistent activation timestamp excludes old milestones when historical
+snapshots are reindexed. Future events on already-indexed paid, unshipped orders
+are eligible. Repeated callbacks and service-fulfillment updates do not create
+another event for the same order/stage. Enqueueing and delivery check the order's
+current identity and eligibility, including cancellation, removed/refunded
+protection, and protection-category email preferences.
+If an unsent shipment notice reaches a retry after the order is already complete,
+it is cancelled and only the completion notice remains eligible.
 
 ## Startup
 
@@ -20,13 +36,16 @@ Set `SUPPORT_PROTECTION_MAIL_MODE` explicitly:
 
 Dedicated mode requires `SUPPORT_PROTECTION_SMTP_HOST`, `SUPPORT_PROTECTION_SMTP_PORT`, `SUPPORT_PROTECTION_SMTP_USER`, `SUPPORT_PROTECTION_SMTP_PASS` and `SUPPORT_PROTECTION_MAIL_FROM`. The From address must use `us-seel.com`. Set `SUPPORT_PROTECTION_SMTP_SECURE=true` for implicit TLS (typically port 465); otherwise STARTTLS is required. `SUPPORT_PROTECTION_MAIL_REPLY_TO` is optional and defaults to From.
 
-The selected sender is `Shipping Protection <support@us-seel.com>` on Alibaba DirectMail. This is independent of the ordinary ticket sender. Each protection notification includes the category-specific unsubscribe link, and both enqueue and final SMTP delivery honor the address's `protection` preference across stores; see [email preferences](email-preferences.md). Existing queued/retry events are cancelled when unsubscribed. The completion draft must use this same category when its delivery trigger is implemented.
+The selected sender is `Shipping Protection <support@us-seel.com>` on Alibaba DirectMail. This is independent of the ordinary ticket sender. Each protection notification includes the category-specific unsubscribe link, and both enqueue and final SMTP delivery honor the address's `protection` preference across stores; see [email preferences](email-preferences.md). Existing queued/retry events are cancelled when unsubscribed. Shipment, completion and claim-update emails all use this same category.
 
 Verify the new domain/sender with the SMTP provider and publish its required SPF/DKIM/other DNS records before enabling dedicated mode. A working website A record or HTTPS certificate does not configure an email sender. `protectionMailReadiness()` reports configuration readiness only; it does not perform an SMTP send or certify provider/DNS verification.
 
 Production now pins `SUPPORT_PROTECTION_MAIL_MODE=dedicated` in the ignored `docker-compose.override.yml`. On 2026-11-04, the user completed sender configuration and authorized a test. Dedicated credentials are stored only in the private `.env`; the endpoint follows the existing Alibaba configuration (`smtpdm.aliyun.com`, port 465, implicit TLS). SMTP authentication and a test send from `support@us-seel.com` were accepted. The ordinary ticket sender was not reused. Changing `.env` alone does not override an explicit compose value.
 
-The original implementation tests use an injected delivery adapter or a fake Nodemailer transport. The first authorized live test used a manually rendered completion template; automatic completion-triggered delivery is still unimplemented. No completion message was inserted into the claim-update outbox.
+Tests use an injected delivery adapter or a fake Nodemailer transport. The first
+authorized live test on November 4 used a manually rendered completion template;
+automatic shipment and completion triggers were added on November 9. The older
+manual test messages are not replayed by activation.
 
 ## Retry, privacy and operations
 
@@ -45,6 +64,13 @@ SELECT status, count(*), min(created_at), max(attempts)
 FROM support_protection_notification_outbox
 GROUP BY status;
 ```
+
+For lifecycle diagnostics, group by `event_type,status`. The persistent cutoff is
+in `support_protection_notification_activation`; do not reset it during ordinary
+restarts or reindexing. If rolling back to an image predating lifecycle support,
+disable protection delivery first: an older worker does not distinguish the new
+shipment/completion rows from claim-update rows. Keep the outbox and activation
+data for a forward repair instead of deleting delivery history.
 
 Validation: isolated PostgreSQL notification/delivery/template suite 12/12; complete repository test command 414 backend passes and 13 environment-dependent skips, frontend 20/20, security checks and TypeScript pass at implementation review. The test database is separate from production.
 
@@ -108,3 +134,34 @@ location without submitting a claim. The browser regressions are reproducible wi
 `node scripts/test-protection-request-windows.cjs` and
 `node scripts/test-protection-customer-location.cjs` from `support-system`, setting
 `PLAYWRIGHT_MODULE` and `CHROMIUM_PATH` when installed outside the project.
+
+## Automatic shipment/completion activation (2026-11-09)
+
+Deployed `support-bridge:protection-lifecycle-mail-20261109` with the existing
+private-app image target. The persisted activation is
+`2026-11-10T02:37:30.157Z` (November 9 in the operator's time zone). The prior image
+is `support-bridge:protection-location-guidance-20261108`; observe the rollback
+delivery precautions above. Pre-migration notification/template data and the
+previous compose override are stored with mode 0600 under the ignored
+`protection-data/backups/20261109-lifecycle/` directory.
+
+Both amao04 and hipkastl were checked against their live webhook subscriptions:
+payment, full/partial shipment, fulfillment creation/update and order completion
+topics are present. The real protected order `OJSGPF62957` was paid and waiting
+for shipment at activation. It had no shipment/completion event to send yet, and
+its customer had not opted out of protection mail. No customer or synthetic order
+status was changed to generate a notification. Existing historical notifications
+were preserved and no historical lifecycle messages were queued.
+
+Location now accepts the first valid fresh reading immediately, with an eight
+second maximum wait, voluntary retry, and the existing coordinates, reported
+accuracy and English permission guidance. The live customer bundle matches the
+verified build.
+
+Validation: full standard tests passed (481 backend, 17 environment-dependent
+skips; 31 frontend), isolated PostgreSQL lifecycle tests 12/12, existing claim
+notification tests 13/13 and protection service tests 10/10. Desktop/mobile
+location browser regressions, security checks, TypeScript and production image
+build passed. Live health and portal are healthy; unauthenticated order access
+remains 401 and staff APIs on the customer domain remain 404. Sender readiness is
+dedicated mode, and all three editable protection templates are registered.

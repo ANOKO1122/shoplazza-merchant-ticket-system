@@ -5,7 +5,7 @@ import { sendSupportEmail } from './mailer';
 import { emailHtmlToText } from './email-text';
 import { createBootstrapToken, createTicketAccessToken, hashToken } from './token';
 import { logOperation } from './log-service';
-import { PROTECTION_COMPLETION_TEMPLATE, PROTECTION_CLAIM_UPDATE_TEMPLATE } from './protection-email-template';
+import { PROTECTION_SHIPMENT_TEMPLATE, PROTECTION_COMPLETION_TEMPLATE, PROTECTION_CLAIM_UPDATE_TEMPLATE } from './protection-email-template';
 import { decorateEmailWithUnsubscribe, isEmailUnsubscribed, withEmailPreferenceGuard } from './email-preferences';
 
 export type EmailJobStatus = 'pending' | 'sending' | 'sent' | 'failed' | 'cancelled' | 'skipped';
@@ -1001,6 +1001,7 @@ export interface EmailTemplate {
 }
 
 const DEFAULT_TEMPLATES: Record<string, { subject: string; body: string }> = {
+  protection_shipment_notice: PROTECTION_SHIPMENT_TEMPLATE,
   protection_completion_notice: PROTECTION_COMPLETION_TEMPLATE,
   protection_claim_update: PROTECTION_CLAIM_UPDATE_TEMPLATE,
   paid_support_invite: {

@@ -5,10 +5,11 @@ import { renderEmailFromTemplate } from './email-service';
 import { emailHtmlToText } from './email-text';
 import type { SupportMail } from './mailer';
 import { digest, PROTECTION_ACCESS_LINK_DAYS, protectionPublicBaseUrl } from './protection-customer-auth';
-import { PROTECTION_CLAIM_UPDATE_EMAIL_TYPE, PROTECTION_CLAIM_UPDATE_TEMPLATE } from './protection-email-template';
+import { PROTECTION_CLAIM_UPDATE_EMAIL_TYPE, PROTECTION_CLAIM_UPDATE_TEMPLATE, PROTECTION_COMPLETION_EMAIL_TYPE, PROTECTION_COMPLETION_TEMPLATE, PROTECTION_SHIPMENT_EMAIL_TYPE, PROTECTION_SHIPMENT_TEMPLATE } from './protection-email-template';
 import { PROTECTION_NOTIFICATION_SCHEMA_SQL } from './protection-notification-schema';
 import { protectionMailReadiness, sendProtectionNotificationEmail } from './protection-notification-mailer';
 import { decorateEmailWithUnsubscribe, isEmailUnsubscribed, normalizePreferenceEmail, withEmailPreferenceGuard } from './email-preferences';
+import { isProtectionLifecycleNotificationCurrent } from './protection-lifecycle-notification';
 
 type Db = Pick<PoolClient, 'query'>;
 export interface ProtectionClaimUpdateEvent { claimId: string; revision: number; previousStatus: string; status: string; }
@@ -17,8 +18,14 @@ const TARGET_STATUSES = ['needs_info', 'approved', 'rejected', 'closed'];
 
 export async function initProtectionNotificationSchema(): Promise<void> {
   await query(PROTECTION_NOTIFICATION_SCHEMA_SQL);
-  await query(`INSERT INTO support_email_templates(email_type,subject_template,body_template) VALUES($1,$2,$3) ON CONFLICT(email_type) DO NOTHING`, [PROTECTION_CLAIM_UPDATE_EMAIL_TYPE, PROTECTION_CLAIM_UPDATE_TEMPLATE.subject, PROTECTION_CLAIM_UPDATE_TEMPLATE.body]);
-  await query(`INSERT INTO support_email_template_presets(email_type,preset_name,subject_template,body_template) VALUES($1,'申请更新通知（物流保障）',$2,$3) ON CONFLICT(email_type,preset_name) DO NOTHING`, [PROTECTION_CLAIM_UPDATE_EMAIL_TYPE, PROTECTION_CLAIM_UPDATE_TEMPLATE.subject, PROTECTION_CLAIM_UPDATE_TEMPLATE.body]);
+  for (const [type, name, template] of [
+    [PROTECTION_CLAIM_UPDATE_EMAIL_TYPE,'申请更新通知（物流保障）',PROTECTION_CLAIM_UPDATE_TEMPLATE],
+    [PROTECTION_SHIPMENT_EMAIL_TYPE,'发货通知（物流保障）',PROTECTION_SHIPMENT_TEMPLATE],
+    [PROTECTION_COMPLETION_EMAIL_TYPE,'完成模板（物流保障）',PROTECTION_COMPLETION_TEMPLATE],
+  ] as const) {
+    await query(`INSERT INTO support_email_templates(email_type,subject_template,body_template) VALUES($1,$2,$3) ON CONFLICT(email_type) DO NOTHING`, [type,template.subject,template.body]);
+    await query(`INSERT INTO support_email_template_presets(email_type,preset_name,subject_template,body_template) VALUES($1,$2,$3,$4) ON CONFLICT(email_type,preset_name) DO NOTHING`, [type,name,template.subject,template.body]);
+  }
 }
 
 /** The caller must use the SAME transaction as the successful claim status update. */
@@ -41,7 +48,7 @@ async function prepareMail(client: PoolClient, job: any, leaseToken: string): Pr
   await client.query('BEGIN');
   try {
     // Match the claim writer's lock order: order first, then its outbox row.
-    const order = (await client.query('SELECT customer_email FROM support_protection_orders WHERE id=$1 FOR UPDATE', [job.protection_order_id])).rows[0];
+    const order = (await client.query('SELECT * FROM support_protection_orders WHERE id=$1 FOR UPDATE', [job.protection_order_id])).rows[0];
     const current = (await client.query("SELECT * FROM support_protection_notification_outbox WHERE id=$1 AND status='sending' AND lease_token=$2 FOR UPDATE", [job.id, leaseToken])).rows[0];
     if (!current) { await client.query('COMMIT'); return null; }
     if (!order || String(order.customer_email).trim().toLowerCase() !== job.recipient_email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(job.recipient_email)) {
@@ -52,13 +59,18 @@ async function prepareMail(client: PoolClient, job: any, leaseToken: string): Pr
       await client.query("UPDATE support_protection_notification_outbox SET status='cancelled',last_error='email_unsubscribed:protection',lease_token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1",[job.id]);
       await client.query('COMMIT'); return null;
     }
+    if (!await isProtectionLifecycleNotificationCurrent(client,current,order)) {
+      await client.query("UPDATE support_protection_notification_outbox SET status='cancelled',last_error='order_no_longer_eligible_for_event',lease_token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1",[job.id]);
+      await client.query('COMMIT'); return null;
+    }
     let subject = current.subject_snapshot, html = current.body_snapshot;
     const validToken = current.access_token_hash ? (await client.query("SELECT 1 FROM support_protection_access_tokens WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>now()+interval '1 day'", [current.access_token_hash])).rowCount : 0;
     if (!subject || !html || !validToken) {
       const token = `pa_${crypto.randomBytes(32).toString('base64url')}`;
       const tokenHash = digest(token);
       const link = `${protectionPublicBaseUrl()}/protection#access=${token}`;
-      const rendered = await renderEmailFromTemplate(PROTECTION_CLAIM_UPDATE_EMAIL_TYPE, { ...current.context_json, customer_name: current.context_json.customer_name?.trim() || 'Customer', protection_link: link });
+      const type = current.event_type === 'shipment' ? PROTECTION_SHIPMENT_EMAIL_TYPE : current.event_type === 'completion' ? PROTECTION_COMPLETION_EMAIL_TYPE : PROTECTION_CLAIM_UPDATE_EMAIL_TYPE;
+      const rendered = await renderEmailFromTemplate(type, { ...current.context_json, customer_name: current.context_json.customer_name?.trim() || 'Customer', protection_link: link });
       subject = rendered.subject; html = rendered.html;
       if (!subject.trim() || !html.includes(link)) throw new Error('Protection notification template must contain its secure link');
       const tokenRow = (await client.query(`INSERT INTO support_protection_access_tokens(token_hash,protection_order_id,customer_email,expires_at) VALUES($1,$2,$3,now()+make_interval(days=>$4::int)) RETURNING expires_at`, [tokenHash, job.protection_order_id, job.recipient_email,PROTECTION_ACCESS_LINK_DAYS])).rows[0];
@@ -93,12 +105,13 @@ export async function processProtectionNotifications(options: { limit?: number; 
       if (!mail) { result.cancelled++; continue; }
       const guarded = await withEmailPreferenceGuard(job.recipient_email,'protection',async()=>{
         // Recheck identity after any wait for the recipient/category lock too.
-        const identity = await client.query('SELECT 1 FROM support_protection_orders WHERE id=$1 AND lower(trim(customer_email))=$2', [job.protection_order_id, job.recipient_email]);
+        const identity = await client.query('SELECT * FROM support_protection_orders WHERE id=$1 AND lower(trim(customer_email))=$2', [job.protection_order_id, job.recipient_email]);
         if (!identity.rowCount) return null;
+        if (!await isProtectionLifecycleNotificationCurrent(client,job,identity.rows[0])) return null;
         const receipt = await delivery.send(mail); accepted = true; return receipt;
       });
       if (guarded.suppressed || !guarded.value) {
-        await client.query("UPDATE support_protection_notification_outbox SET status='cancelled',last_error=$3,lease_token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1 AND lease_token=$2",[job.id,leaseToken,guarded.suppressed?'email_unsubscribed:protection':'recipient_changed']);
+        await client.query("UPDATE support_protection_notification_outbox SET status='cancelled',last_error=$3,lease_token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1 AND lease_token=$2",[job.id,leaseToken,guarded.suppressed?'email_unsubscribed:protection':'recipient_or_order_changed']);
         result.cancelled++; continue;
       }
       await client.query("UPDATE support_protection_notification_outbox SET status='sent',sent_at=now(),provider_message_id=$3,last_error=NULL,lease_token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1 AND lease_token=$2", [job.id, leaseToken, guarded.value.messageId]);
