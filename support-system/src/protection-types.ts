@@ -35,3 +35,13 @@ export interface ProtectionStore {
 }
 export interface ProtectionInstallJob { id: string; store_subdomain: string; action: 'check' | 'install' | 'disable'; status: 'queued' | 'running' | 'succeeded' | 'failed'; message: string; created_at: string; finished_at: string | null; }
 export interface ProtectionList<T> { ok: true; items: T[]; total: number; page: number; page_size: number; }
+export type ProtectionEmailEventType = 'shipment' | 'completion' | 'claim_update';
+export type ProtectionEmailStatus = 'pending' | 'sending' | 'sent' | 'cancelled';
+export interface ProtectionEmailRecord {
+ id: string; event_type: ProtectionEmailEventType; status: ProtectionEmailStatus;
+ protection_order_id: string; protection_public_no: string; claim_id: string | null; claim_public_no: string | null;
+ store_subdomain: string; store_name: string; order_number: string; recipient_email: string;
+ target_status: ClaimStatus | null; attempts: number;
+ created_at: string; updated_at: string; sent_at: string | null; next_attempt_at: string | null;
+ manual_requested_at: string | null; last_error_code: string | null;
+}

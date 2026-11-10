@@ -1,6 +1,8 @@
 # 运输保障管理后台：运行与维护
 
-本模块接入现有工单系统，页面入口为 `/thinkpro-admin/protection`，复用客服登录。React + TypeScript 提供统计、保障订单、赔付审核、店铺组件四个工作区；Express/PostgreSQL 保存业务状态。它目前仍是内部部署与管理能力，不会在店匠应用列表中新增独立的 OAuth 应用入口。
+本模块接入现有工单系统，页面入口为 `/thinkpro-admin/protection`，复用客服登录。React + TypeScript 提供统计、保障订单、赔付审核、邮件记录、店铺组件五个工作区；Express/PostgreSQL 保存业务状态。它目前仍是内部部署与管理能力，不会在店匠应用列表中新增独立的 OAuth 应用入口。本文后续部分保留了早期实施时的描述；邮件及客户入口的当前规则以 [运输保障邮件运行说明](../support-system/opsdocs/protection-notifications.md) 等后续运维文档为准。
+
+邮件记录入口为 `/thinkpro-admin/protection?tab=emails`，显示运输保障发货、订单完成与申请更新通知的发送状态。支持按店铺、类型、状态、创建日期和编号／收件邮箱筛选；仅供查看，不会触发发送。普通工单邮件仍在原邮件管理页面。
 
 ## 已实现的业务范围
 

@@ -1,5 +1,25 @@
 # Protection emails
 
+## Admin delivery records (2026-11-10)
+
+The Shipping Protection admin page now has an **邮件记录** tab at
+`/thinkpro-admin/protection?tab=emails`; the ordinary Email Management page
+links to it. It reads the separate protection
+outbox through authenticated `GET /api/admin/protection/emails`. Staff can
+filter by store, event type (shipment, order completion, claim update),
+delivery status, created date, or order/request number and recipient address.
+The table shows the recipient, linked references, attempt count, sent/retry
+time, and a safe reason for cancellation or retry. It has pagination and a
+refresh button. `pending` after one or more attempts means a retry is due;
+`sent` means SMTP accepted the message, not that the customer read it.
+
+The API explicitly selects metadata. It never returns rendered mail, subject
+snapshots, access credentials, message IDs, or raw provider errors. The page is
+read-only: opening or refreshing it cannot queue, retry, or send mail. Claim
+update delivery remains an explicit action on the claim review page; shipment
+and completion delivery retain their existing automatic triggers. Existing
+ticket email records remain in the ordinary Email Management page.
+
 `protection_claim_update` is an editable English template in the existing mail-template editor. It includes the store, order and request references and a **View update** link to `https://us-seel.com/protection`. It does not include the review decision, internal notes or payment information.
 
 Saving a claim status or customer-visible reply does not queue mail. Staff can click **Send claim update notification** in a saved claim whose status is `needs_info`, `approved`, `rejected` or `closed`. That explicit action queues the current revision and starts its delivery attempt. The claim/revision key prevents a repeated click from sending the same update twice. Unsent automatic claim notices from the old flow are cancelled during migration; previously sent mail is left intact. Shipment and completion notices remain automatic.

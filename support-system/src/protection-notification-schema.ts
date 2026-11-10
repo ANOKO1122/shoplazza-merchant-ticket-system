@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS support_protection_notification_outbox (
   UNIQUE(claim_id,revision)
 );
 CREATE INDEX IF NOT EXISTS idx_protection_notification_due ON support_protection_notification_outbox(next_attempt_at,id) WHERE status IN ('pending','sending');
+CREATE INDEX IF NOT EXISTS idx_protection_notification_history ON support_protection_notification_outbox(created_at DESC,id DESC);
 
 ALTER TABLE support_protection_notification_outbox ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT 'claim_update';
 ALTER TABLE support_protection_notification_outbox ADD COLUMN IF NOT EXISTS manual_requested_at TIMESTAMPTZ;

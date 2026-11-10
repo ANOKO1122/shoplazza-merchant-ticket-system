@@ -5,6 +5,7 @@ import { ProtectionError, csvCell, isSameOriginMutation } from './protection-dom
 import { createProtectionClaim, updateProtectionClaim, listProtectionOrders, listProtectionClaims, getProtectionOrder, getProtectionClaim, getProtectionStats, type ProtectionFilters } from './protection-service';
 import { getCustomerClaimForAdmin } from './protection-customer-service';
 import { processProtectionNotifications, requestProtectionClaimUpdate } from './protection-notification';
+import { listProtectionEmailRecords } from './protection-email-records';
 
 function filters(req:express.Request):ProtectionFilters {
   const result:ProtectionFilters={};
@@ -42,6 +43,11 @@ export function createProtectionRouter():express.Router {
     }catch{res.status(500).json({ok:false,error:'暂时无法验证登录状态'});}
   });
   router.get('/stats',handler(async(req,res)=>res.json({ok:true,...await getProtectionStats(filters(req))})));
+  router.get('/emails',handler(async(req,res)=>{
+    const selected=filters(req),eventType=req.query.event_type;
+    if(eventType!==undefined&&typeof eventType!=='string')throw new ProtectionError('邮件类型无效');
+    res.json(await listProtectionEmailRecords({...selected,event_type:eventType}));
+  }));
   router.get('/agents',handler(async(_req,res)=>{
     const rows=await query('SELECT id,name FROM support_agents WHERE enabled=true ORDER BY name,id');
     res.json({ok:true,items:rows.rows.map(row=>({id:Number(row.id),name:row.name}))});

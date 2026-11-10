@@ -6,9 +6,10 @@ import { Claims, type Agent } from './Claims';
 import { Orders } from './Orders';
 import { Overview } from './Overview';
 import { ErrorNotice, Loading } from './shared';
+import { EmailRecords } from './EmailRecords';
 import { Stores } from './Stores';
 import './styles.css';
-const tabs = [{ id: 'overview', label: '概览' }, { id: 'orders', label: '保障订单' }, { id: 'claims', label: '赔付审核' }, { id: 'stores', label: '店铺接入' }] as const;
+const tabs = [{ id: 'overview', label: '概览' }, { id: 'orders', label: '保障订单' }, { id: 'claims', label: '赔付审核' }, { id: 'emails', label: '邮件记录' }, { id: 'stores', label: '店铺接入' }] as const;
 type Tab = typeof tabs[number]['id'];
 function fromLocation(): { tab: Tab; claim: string | null } {
   const params = new URLSearchParams(location.search);
@@ -42,6 +43,7 @@ function App() {
         {navigation.tab === 'overview' && <Overview stores={stores.data?.items || []} onClaims={() => navigate('claims')} />}
         {navigation.tab === 'orders' && <Orders stores={stores.data?.items || []} onClaim={id => navigate('claims', id)} />}
         {navigation.tab === 'claims' && <Claims stores={stores.data?.items || []} agents={agents.data?.items || []} selected={navigation.claim} onSelect={id => navigate('claims', id)} />}
+        {navigation.tab === 'emails' && <EmailRecords stores={stores.data?.items || []} onClaim={id => navigate('claims', id)} />}
         {navigation.tab === 'stores' && (!stores.data && stores.loading ? <Loading /> : stores.data && <Stores stores={stores.data.items} isAdmin={me.data.agent.role === 'admin'} onReload={stores.reload} />)}
       </>}
     </main></div>;
