@@ -2,18 +2,16 @@ import type { CustomerLocation } from '../../src/protection-customer-types';
 type Callbacks = { onComplete(value: CustomerLocation): void; onError(message: string): void };
 type LocationDevice = Pick<Geolocation, 'watchPosition' | 'clearWatch'>;
 export type LocationCaptureHandle = { cancel(): void };
-const timeoutMessage = 'The location request timed out without a usable reading. Enable location services and try again.';
+const timeoutMessage = 'The location request timed out without a usable reading. Permission alone does not provide a position. Try again near a window or outdoors if safe.';
 
 /** Preserve raw device readings. A smaller reported radius is not proof of real-world accuracy. */
 export function startLocationCapture(geo: LocationDevice, callbacks: Callbacks): LocationCaptureHandle {
   const started = Date.now(); let active = true, watch: number | undefined;
-  let deadline: ReturnType<typeof setTimeout>;
   function stop() {
-    active = false; clearTimeout(deadline);
+    active = false;
     if (watch !== undefined) { geo.clearWatch(watch); watch = undefined; }
   }
   function fail(message: string) { if (!active) return; stop(); callbacks.onError(message); }
-  deadline = setTimeout(() => fail(timeoutMessage), 8000);
   try {
     watch = geo.watchPosition(position => {
       if (!active) return;

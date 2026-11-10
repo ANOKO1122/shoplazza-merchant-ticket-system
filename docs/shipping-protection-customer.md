@@ -21,7 +21,7 @@ submitted/reviewing/needs_info 状态支持在原 CL 下继续补资料。
 
 没有退货、自动打款或退款 API。保障时限与完成后服务商品履约已配置，见
 `support-system/opsdocs/protection-service-rules.md`；申诉状态通知使用独立发信地址，见
-`support-system/opsdocs/protection-notifications.md`。完成邮件模板仍未接入自动事件调度。
+`support-system/opsdocs/protection-notifications.md`。发货、完成与申请状态更新邮件已接入自动通知。
 店匠 `finished` 只展示商家系统完成记录，不冒充承运商真实签收时间。
 
 ## 邮件与访问链接
@@ -33,9 +33,10 @@ submitted/reviewing/needs_info 状态支持在原 CL 下继续补资料。
 默认预览使用合成资料和不含访问权限的 us-seel.com URL。
 
 后台「保障订单」详情可主动生成、复制并打开顾客访问链接。生成不会发送邮件。
-后续邮件流程应调用 `createProtectionAccessLink(protectionOrderId)`，将其结果传给
-`protection_link`，不能调用工单 `bt_`/`ta_` 令牌生成器。邮件类型暂未加入
-自动发送类型或订单事件调度。申诉更新邮件已使用 `support@us-seel.com` 独立发送。
+自动邮件流程调用 `createProtectionAccessLink(protectionOrderId)`，将其结果传给
+`protection_link`，不能调用工单 `bt_`/`ta_` 令牌生成器。保障邮件使用
+`support@us-seel.com` 独立发送；最新启用时间与队列规则以
+`support-system/opsdocs/protection-notifications.md` 为准。
 
 ## 安全边界
 
@@ -68,7 +69,7 @@ protection-data 挂载；不会存进公开 `/uploads`。
   已收到包裹分支仍可跳过，旧申诉查看与补资料不受影响。浏览器坐标可被伪造，
   只能作为辅助证据，不能作为顾客诚实或包裹签收的独立证明。
 
-### 2026-11-08 定位结果与权限指引
+### 2026-11-08 定位结果与权限指引（历史实现）
 
 顾客采集页、提交确认页及已提交申诉详情均展示经纬度、设备报告的估计精度和采集
 时间；客服页面也明确标为设备估计，不能解释成已核实的实际误差范围。后端继续保存
@@ -97,11 +98,35 @@ protection-data 挂载；不会存进公开 `/uploads`。
 原图完整加载、顾客路由与后台隔离。测试使用模拟定位，不代表已验证实体手机的
 实际误差。未创建真实申诉或重新发送邮件。
 
+### 2026-11-09 移动端相机与 Chrome 定位修正
+
+定位当前使用 `watchPosition` 的首个有效、新鲜读数，保持
+`enableHighAccuracy: true`、`maximumAge: 0`、`timeout: 8000`。用户点授权前
+不再运行页面自设的 8 秒计时器；按 [W3C Geolocation](https://www.w3.org/TR/geolocation/)
+规范，浏览器的定位超时只计算获取坐标的时间，不计算等待页面可见或用户授权的时间。
+授权成功仍可能因设备定位服务、信号或网络而没有可用坐标；超时后可重试，未收到
+包裹分支仍必须取得定位才能提交。`enableHighAccuracy` 只是请求高精度的提示，
+Chrome／系统的“精确位置”选择由用户控制，网页不能固定或越过该选择。
+
+Android／iPhone 手机浏览器的破损举证入口现在使用
+`<input type="file" accept="image/*" capture="environment">` 请求后置系统相机，
+返回后在页面预览、重拍或采用，再沿用绑定订单／会话／类别的短期拍摄凭证上传。
+桌面浏览器仍使用下方描述的 `getUserMedia()` 页面内预览。移动端浏览器或系统
+可能提供相册选择；[HTML Media Capture](https://www.w3.org/TR/html-media-capture/)
+将 `capture` 定义为请求方式，不能保证只来自现拍。后台的拍摄会话
+记录与图片处理仍只作为审核辅助，不把来源标记当成照片真实性证明。其他问题
+分支仍使用普通附件上传。
+
+自动化验证覆盖定位授权前等待、浏览器超时、取消／迟到回调、手机文件选择回到
+页面后的预览和拍摄凭证上传。桌面 Chromium 的手机模拟只能验证网页流程，不能
+代替实体 Android Chrome 或 iPhone 相机应用的最终验收。
+
 ### 破损照片的现场拍摄
 
-破损问题在页面内调用 `getUserMedia()`，优先使用后置摄像头，只请求视频流，
+以下是 2026-11-03 的页面内拍摄实现；当前手机入口见上方 2026-11-09 更新。
+桌面浏览器仍在页面内调用 `getUserMedia()`，优先使用后置摄像头，只请求视频流，
 不请求麦克风。顾客拍摄静态照片后可以预览、重拍、采用照片；采用后才进入现有
-私有上传流程并转为 WebP。破损新申诉及其补充资料均不显示相册/文件选择入口。
+私有上传流程并转为 WebP。破损新申诉及其补充资料不显示普通附件入口。
 其他问题仍使用原有图片/视频上传方式。
 
 拍摄类别为商品破损处、外包装、运输标签、其他照片。新破损申诉至少需要一张

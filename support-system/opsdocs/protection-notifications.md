@@ -165,3 +165,31 @@ location browser regressions, security checks, TypeScript and production image
 build passed. Live health and portal are healthy; unauthenticated order access
 remains 401 and staff APIs on the customer domain remain 404. Sender readiness is
 dedicated mode, and all three editable protection templates are registered.
+
+## Mobile camera and location permission timing (2026-11-09)
+
+The current production image is `support-bridge:protection-mobile-capture-location-20261109`,
+built with the private Shoplazza app target. This customer portal update does
+not change notification scheduling, sender settings, templates or the persisted
+automatic mail activation time above. Per the operator's request, no new
+pre-deployment backup was taken.
+
+Mobile damage photos request the phone camera through HTML capture, followed by
+the existing preview, capture session and private upload flow. The browser may
+still offer a library choice; the capture session is an audit aid rather than
+proof that a photo was newly taken. Desktop retains its in-page camera flow.
+Location no longer counts time spent answering the Chrome permission prompt
+against its eight-second browser acquisition timeout. A successful permission
+grant alone cannot guarantee a position fix. Precise versus approximate access
+remains the user's browser/OS choice. Details and historical location behavior
+are recorded in `docs/shipping-protection-customer.md`.
+
+Verification: standard tests 481 backend passed and 17 environment-dependent
+skipped; 31 frontend passed. TypeScript and production build, private-app Docker
+build, isolated desktop/mobile location browser flow, and simulated mobile
+camera handoff/preview/upload/cancel flow passed. After deployment the health
+endpoint reported 12 stores, customer page returned 200, anonymous order API
+returned 401, staff API on the customer domain returned 404, and the live
+customer bundle matched the local build hash. No test mail was sent and no real
+order state was changed. Physical phone camera and GPS behavior still requires
+observation on a real device.

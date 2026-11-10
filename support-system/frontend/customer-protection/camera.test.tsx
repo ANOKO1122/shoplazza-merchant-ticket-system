@@ -33,10 +33,10 @@ test('damage evidence needs the damaged item and cannot use ordinary uploads eve
   assert.ok(damageEvidenceProblem([], 'broken'));
   assert.ok(damageEvidenceProblem([{ ...evidence, source: 'upload', capture: undefined }], 'My camera is broken and cannot focus.'));
 });
-test('camera evidence has no gallery input while other issue types retain ordinary attachments', () => {
+test('camera evidence requests the phone camera while other issue types retain ordinary attachments', () => {
   const props = { limits: { max_files: 6, max_file_bytes: 25 * 1024 * 1024, max_total_bytes: 100 * 1024 * 1024 }, onChange: () => {}, onBlocked: () => {}, preserve: { current: false } };
   const camera = renderToStaticMarkup(<CameraEvidence {...props} active requireDamaged />);
-  assert.ok(!camera.includes('type="file"'));
+  assert.match(camera, /type="file"[^>]*accept="image\/\*"[^>]*capture="environment"[^>]*hidden=""/);
   assert.ok(camera.includes('Open camera for damaged item'));
   assert.ok(camera.includes('Outer packaging') && camera.includes('Shipping label'));
   assert.ok(camera.indexOf('Camera permission help') < camera.indexOf('cp-capture-slots'));

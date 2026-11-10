@@ -127,7 +127,7 @@ async function lockEvidence(client:PoolClient,identity:ProtectionCustomerIdentit
   return rows.rows;
 }
 function assertDamageEvidence(files:Record<string,any>[],initial:boolean,exception?:string|null){
-  if(files.some(file=>file.kind!=='image'||evidenceView(file).source!=='camera'))throw new ProtectionError('Damage requests accept photos taken through the camera flow only. Please remove gallery uploads.');
+  if(files.some(file=>file.kind!=='image'||evidenceView(file).source!=='camera'))throw new ProtectionError('Damage requests accept photos submitted through the camera flow only. Please remove ordinary attachments.');
   if(initial&&!exception&&!files.some(file=>file.capture_category==='damaged_item'))throw new ProtectionError('Take at least one photo of the damaged item, or explain why you cannot use the camera for manual review.');
 }
 export async function createCustomerClaim(identity:ProtectionCustomerIdentity,input:unknown):Promise<CustomerClaim>{

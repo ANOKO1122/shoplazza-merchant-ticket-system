@@ -19,16 +19,16 @@ test('the first fresh fix is accepted immediately and later readings are ignored
   f.emit(1, 0); t.mock.timers.tick(8000);
   assert.equal(f.completed.length, 1); assert.equal(f.completed[0].longitude, -73.99); assert.equal(f.errors.length, 0);
 });
-test('a silent location provider stops after eight seconds and cannot save a late fix', t => {
+test('the browser acquisition timeout starts after permission, not when the prompt opens', t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: epoch }); const f = fixture();
-  t.mock.timers.tick(7999); assert.equal(f.errors.length, 0);
-  t.mock.timers.tick(1); assert.match(f.errors[0], /timed out/); assert.deepEqual(f.cleared, [7]);
+  t.mock.timers.tick(12000); assert.equal(f.errors.length, 0);
+  f.fail(3); assert.match(f.errors[0], /timed out/); assert.deepEqual(f.cleared, [7]);
   f.emit(10); assert.equal(f.completed.length, 0);
 });
 test('stale, future and malformed readings cannot become a saved location', t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: epoch }); const f = fixture();
   f.emit(1, -74, epoch - 60000); f.emit(1, -74, epoch + 60000); f.emit(NaN); f.emit(1, 181);
-  t.mock.timers.tick(8000); assert.equal(f.completed.length, 0); assert.equal(f.errors.length, 1);
+  f.fail(3); assert.equal(f.completed.length, 0); assert.equal(f.errors.length, 1);
 });
 test('cancel ignores late callbacks and a new request can capture another location', t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: epoch }); const f = fixture();

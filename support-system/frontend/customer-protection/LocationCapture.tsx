@@ -37,6 +37,6 @@ export function LocationCapture({ value, onChange, onBusy, required, active }: {
     <div className="cp-inline-actions">{!busy && <button className="cp-button" type="button" onClick={begin}><span>{value ? 'Try again for a better location' : 'Share current location'}</span></button>}
       {busy && <button className="cp-text-button" type="button" onClick={() => { cancel(); setNotice('Location request cancelled.'); }}><span>Cancel location request</span></button>}
       {!busy && value && <button className="cp-text-button" type="button" onClick={() => { onChange(null); setNotice(''); }}><span>Remove location</span></button>}
-    </div><p className="cp-location-status" role="status">{busy ? 'Getting your location… You can continue as soon as it is available. This can take up to 8 seconds.' : notice || (required ? 'Location must be included before you can continue or submit this request.' : 'You can continue without sharing your location.')}</p>
+    </div><p className="cp-location-status" role="status">{busy ? 'Getting your location… You can continue as soon as it is available. After you allow access, finding a location can take up to 8 seconds.' : notice || (required ? 'Location must be included before you can continue or submit this request.' : 'You can continue without sharing your location.')}</p>
   </section>;
 }
