@@ -1,0 +1,393 @@
+工单系统与运输保障系统：新对话交接总结
+整理日期：2026-11-09（America/New_York；最新部署时间为 UTC 2026-11-10）
+业务代码基线：1802344e2e262e4fe592a9d87c448e5e6060085f
+
+本文件的用途
+这是上一对话的上下文交接，不是一份待重新执行的开发清单。下面标为完成的工作已经上线，不要重复部署、重发测试邮件、重建测试订单或修改真实订单状态。先阅读并理解，再按用户的新需求继续。快照中的订单、队列状态可能随业务变化，执行后续工作前应按需要重新核实。
+本文件不包含 SMTP 密码、店铺令牌、数据库生产密码或可直接访问顾客订单的链接。不要把这些凭证从私密配置复制进对话、日志或 Git。
+
+1. 项目目标与边界
+
+在现有店匠多店铺工单系统中集成自营 Shipping Protection / 运输保障业务。管理后台复用现有客服系统，顾客赔付申请页面与邮件使用独立域名。Seel 的截图、邮件和流程只作为交互参考。
+
+业务完整流程：
+  已支付订单包含本系统配置的运输保障商品
+  → 同步进入本系统并生成保障记录（SP 编号）
+  → 首次实物商品发货时发送保障发货邮件
+  → 店铺将订单标记完成时发送保障完成邮件，并按规则单独完成保障服务商品履约
+  → 顾客通过邮件中的私有链接查看订单、申请退款、提交说明与证据
+  → 客服要求补充资料、通过或拒绝
+  → 审核通过后由外部渠道实际打款
+  → 客服在本系统记录外部处理结果、赔付金额和备注，完成申请。
+
+本系统只做审核与外部赔付记录，不调用支付、退款或打款接口。
+顾客流程只提供退款申请，不提供退货流程。
+面向顾客的文字使用英文，品牌文案采用 Shipping Protection，避免“保险、承保”等词。
+目前不提供额外在线客服入口；过期或未开放提示不要加 Contact Support。
+
+2. 用户已经确认的业务规则（以后不要退回旧方案）
+
+同一份保障合同/订单记录可以有多次申诉：
+  SP 保障编号不变，每次新申请产生新的 CL 问题/申请编号。
+  拒绝后可以重新提交，但仍必须符合对应时间窗口、剩余可申请金额及其他约束。
+  同一商品存在重叠的处理中申请时需要拦截，已批准/已赔付的金额不能被重复使用。
+  不是一份合同只能创建一次问题，也不能每次申诉都重新建合同。
+
+保障商品履约规则的最终决定：跟随“订单完成”，不跟随“发货”。
+  早期讨论过“任何商品完成交付就跟随完成”，后来用户明确改为订单完成。
+  只能处理配置中的保障商品行，不能把普通实物商品或混合包裹强行标记完成。
+  保障商品和普通商品混在同一履约包裹时需人工处理，不擅自完成混合包裹。
+
+不要把店匠的订单完成状态等同于物流商真实签收。
+  我们没有稳定获取承运商实际签收日期的能力。
+  破损/被盗窗口以店铺记录的订单完成日期替代送达日期。
+  邮件只能说店铺把订单标记为完成，不能声称承运商已确认送达。
+  不能用今天或任意后续更新时间猜测历史完成时间。
+
+3. 保障范围及时间窗口
+
+延误：所选实物商品发货记录 +30 天开放；订单创建 +90 天截止。
+丢失/缺失：所选实物商品发货记录 +60 天开放；订单创建 +90 天截止。
+破损：订单记录的完成日期开放；完成后 +7 天截止。
+被盗：订单记录的完成日期开放；完成后 +7 天截止。
+
+用户明确选择：只用订单完成日期替代送达日期，延误和丢失仍以店匠发货记录起算。
+不能把四类全部改成从完成日计算，否则一直未完成的丢件订单无法申请。
+
+计算使用 UTC 实际经过时间，顾客端显示具体日期、时间和 UTC。
+多个商品跨包裹发货，使用所选商品对应的有效发货记录；数量映射或日期不足时不能臆测。
+后端也会校验时间窗口，不是仅前端禁用按钮。
+超过窗口、未开放或日期未知时显示英文解释及返回/关闭操作，不能白屏。
+若一部分商品仍在窗口内，可选择符合条件的商品。
+在窗口内已经提交的申请，过了新申请截止日期后仍可以继续审核、补资料。
+顾客链接是否有效与是否还允许新申请，是两回事。
+
+商店购物车、结账组件及顾客页已有 i 信息提示，支持鼠标悬停、键盘聚焦和手机点按。提示内容不能撑高组件或改变顾客勾选状态。
+
+4. 店铺组件与独立店匠应用
+
+涉及的试点店铺：
+  amao04.myshoplaza.com
+  hipkastl.myshoplaza.com
+
+用户已在 hipkastl 的 Seel 面板关闭购物车和结账组件，保留其应用及历史订单。此前 amao04 也是此接管方式。
+存在独立店匠应用/安装器代码，不能把这理解为已经发布到店匠应用市场的公共应用。普通“已安装应用”页面是否展示，也不能与现有私有接入方式混为一谈。
+不要承诺任意主题都完全无需适配；已有共享逻辑、各店配置与安装/检查流程，遇到不同主题的插入点、购物车结构仍需验证。
+当前购物车脚本由共享源码构建，再由安装器写入各店主题的 assets；运行时使用店铺同源购物车 API。因此不是顾客每次打开主页都要从我们的工单服务器下载这段组件脚本。结账部分是单独的平台扩展；共享源码更新后仍需按店铺发布/安装并验证，不是只改服务器一个文件就自动覆盖所有主题。
+现有店铺配置记录为 amao04 的 Hero 主题与 hipkastl 的 Nova 主题；新主题或主题更换都需要检查插入点和购物车行为。
+
+用户的计价决定：$2.00–$4.99 保留原有精确计价，高金额采用类似 Seel 的价格档位，允许小幅取整，以适应单商品最多 300 规格的限制、减少后台商品数量。
+当前定价逻辑按折后普通商品金额的 3%、最低 USD 2，再匹配最近价格档。非 USD、不可靠报价、目标费用超过 $250 或没有普通商品时不添加；未来改定价要核对配置与实际代码。
+取消选择目前保存在同一浏览器 localStorage，不是跨设备偏好；前台隐藏保障商品/限制单独购买不能视为服务端绝对防绕过。
+用户最初反馈无保障商品/未勾选时也频繁出现 Updating，且导致卡片高度变化；方向是减少不必要同步、后台静默更新，避免把 Updating 文字显示在卡片里。
+组件历史测试分阶段：11 月 3 日记录两店购物车到结账等检查通过且没有付款；11 月 4 日规则升级后已核对版本/资源指纹，但完整浏览器结账回归受到 Cloudflare、网络变化或空购物车阻碍。不要把上一版本的完整浏览器通过，当成所有最新主题版本都已重新完整验收。
+
+独立应用工作树：
+  /root/work/amao04-shipping-protection
+  分支 codex/amao04-shipping-protection
+  最近核实提交 6e38c75，作者 ANOKO1122；工作树干净。
+
+主仓库中的 /shipping-protection/ 是被忽略的私有应用构建资源。不要误提交或删除，生产镜像里的安装器仍依赖它。
+店匠应用部分：只做本地 Git 保存，不推送远端。不要把该分支/历史合并进系统 main。
+
+5. 管理后台已具备的方向和功能
+
+运输保障功能与原工单系统集成，包含统计、保障订单/合同、店铺组件管理/安装/状态检查、赔付申请列表及详情等模块。
+管理页面使用 TypeScript/React 等现有工程结构，不受原来纯 HTML+JS 页面限制。
+需要能查看店铺是否启用组件、主题是否待适配，以及安装/检查任务结果。
+审核详情保留订单、商品、物流、顾客提交内容、图片/视频证据、定位、申请历史、审核/处理记录等信息。
+统计金额应按币种分别汇总，不把不同币种直接相加。
+
+状态主要包括 submitted、reviewing、needs_info、approved、rejected、closed。
+closed 对应外部已处理记录，不表示本系统执行了打款。
+代码当前存储的是 approved_amount_cents（批准金额）、结案说明与 external_reference（外部凭证/编号）；approved → closed 需要说明及外部编号。已批准金额不能随意改写，拒绝/结案不能直接回退审核。
+重要实现边界：当前没有独立的“实际到账金额”字段或分次打款明细台账，不验证真实到账。用户目标是记录赔付多少，目前通过批准金额与外部已处理记录表达；如果后续需要实际付款与批准金额不同、部分付款或多笔付款，应在此基础上继续设计，不能声称这些已经实现。
+安装、停用、远程组件检测限管理员；普通客服能处理申请。目前没有按店铺隔离普通客服权限的完整机制。
+
+曾发生客服菜单里的“赔付管理”消失，已经做过恢复与保存；不要因为旧文件或旧 README 写“未开发”就再重建一套。
+
+6. 顾客端与访问控制
+
+顾客站点：https://us-seel.com/protection
+员工系统：https://server.clientservice-center.com
+顾客前端域名、证书及路由边界已完成，早期 NXDOMAIN/待配置状态已经过时。
+
+顾客入口包括订单信息、商品、包裹/物流信息、保障时间窗口、申请与申请状态/补充资料。
+流程先问是否收到包裹，再显示对应问题分支、商品和数量选择、说明、证据及定位，再确认提交。
+
+邮件里的订单访问链接使用不透明能力令牌，形如：
+  https://us-seel.com/protection#access=pa_...
+原始令牌不要写入日志、Git或交接文档。数据库访问令牌表存摘要；邮件快照内必然包含私有链接，需按敏感数据保护。
+新链接有效期 90 天；已有旧链接按自己原来的期限，不会自动延长。
+顾客会话最长 12 小时且不能超过链接有效期。链接撤销/过期会使其会话失效。
+链接只能访问绑定订单，不能任意传邮箱/订单号读取其他订单。
+当前验证：顾客页 200，匿名订单 API 401，员工管理 API 在顾客域名下 404。
+
+之前“未到申请窗口时点击原因白屏”的问题已修复，其中一个根因是浏览器自动翻译改变文本节点后 React 删除节点失败。继续修改标签、条件渲染或教程 tabs 时，要保留已有对翻译 DOM 的兼容处理。
+
+7. 图片、视频与手机现拍
+
+破损举证已有浏览器摄像头现拍流程：通过 getUserMedia 获取摄像头、拍摄、重拍、确认，停止/离开时释放流；不是简单用文件 input 的 capture 属性就声称绝对只能现拍。
+服务端保存采集会话、类别、请求/接收时间等信息，证据绑定订单/会话/申请，便于审核追溯。
+对无法使用摄像头的情况保留明确原因的人工复核例外；不要把“无法拍照”静默变成正常现拍证据。
+其他问题分支仍有适用的文件上传。不能概括为所有证据都完全禁止从相册上传。
+摄像头现拍、采集令牌和定位只能作为审核辅助，不应承诺彻底防住 AI 图片、虚拟摄像头或位置伪造。
+
+当前通用附件限制：每次提交最多 6 个文件，单个 25 MiB、合计 100 MiB，单保障订单累计 500 MiB；支持 JPEG、PNG、WebP、MP4、WebM。
+图片用 Sharp 解码校验，限制输入像素，处理方向，最长边不超过 2400，转换 WebP（quality 90），使用随机文件名；不是把上传原图直接公开。
+视频验证文件头并用 ffprobe 检查实际视频流及容器；验证后保存 MP4/WebM，当前不是统一压缩转码服务。
+临时文件会清理；超过 24 小时且未绑定申请的孤立证据有批量清理任务。不要删除已正式提交的证据。
+证据位于私有持久目录，通过带身份/订单校验的接口读取，不是公共静态目录。
+生产目录主要在 support-system/protection-data/customer-evidence，可通过相关环境变量覆盖。
+
+8. 定位功能最终状态（最新需求已经完成）
+
+未收到包裹类申请必须带定位，前后端都校验；收到包裹类定位可以是可选。
+只在用户明确点击后请求位置，提交申请时才把位置一并送到服务端，不在后台持续跟踪。
+顾客端显示获取到的经纬度、设备上报的估计精度和采集时间；审核端也能查看。
+保留原始设备坐标和精度值，不把估计 30 米描述成实际误差保证，也不擅自偏移坐标去对齐地图。
+浏览器定位不能保证排除欺诈。国内地图坐标体系/底图问题与设备精度问题需要分别判断，不能凭截图断言只有一种原因。
+
+最初改成等待更好的多次采样，最长 20 秒；用户认为体验太慢，最新已改为：
+  首个有效且足够新鲜的读数立即接受。
+  enableHighAccuracy: true，maximumAge: 0。
+  没有可用结果时最多等 8 秒，不固定等满 8 秒。
+  不强制等待第二个定位或额外点击“采用此位置”。
+  保留“Try again for a better location”主动重试。
+  取消、离开页面/步骤、超时后停止监听，忽略迟到回调。
+
+iOS/Android 英文定位权限教程已经放进流程，支持 tabs、放大和错误时展开。
+公开教程资源：
+  /assets/protection-location-ios.png
+  /assets/protection-location-android.png
+这些公开教学图与顾客私有证据不是一类资源。
+
+9. 邮件与自动通知（最新状态）
+
+发送服务继续使用阿里云邮件推送 Alibaba DirectMail。
+运输保障独立发件地址：Shipping Protection <support@us-seel.com>
+SMTP 与原系统同区域端点：smtpdm.aliyun.com，465，隐式 TLS。
+专用密码已存私密配置；不要从早期用户消息复制到代码或总结。
+原工单发件账号保持独立；禁止因为保障账号配置错误就自动回退到工单发件账号。
+仅有 DirectMail 发送账号不等于已建立可接收来信的客服邮箱，不要自行开放未建设的收件/客服能力。
+
+当前 SUPPORT_PROTECTION_MAIL_MODE=dedicated，已启用，并非 disabled。
+顾客邮件入口全部使用 us-seel.com。
+
+已有三个可编辑模板：
+  protection_shipment_notice：发货通知（物流保障）
+  protection_completion_notice：完成通知（物流保障）
+  protection_claim_update：申请更新（物流保障）
+
+发货自动通知：首次真实实物商品发货，包括部分发货，每单一次。保障服务商品自己履约不能触发。
+完成自动通知：基于可信的订单完成状态和完成时间，每单一次；文案不声称承运商签收。
+补资料、审核通过、拒绝、记录外部已处理等申请状态变化用一个通用模板，只说申请有更新，顾客点进去看详情。无需给每一种决定另建邮件正文。
+submitted/reviewing 或同状态仅改备注不应重复发申请更新邮件。
+
+发货/完成通知在保障订单快照入库事务中写入持久 outbox；按订单+阶段唯一去重。
+申请更新按 claim+revision 去重。失败重试有退避、租约和并发锁；稳定 Message-ID 有助关联重试，但 SMTP 与数据库无法原子提交，不应承诺绝对 exactly-once。
+发送前再次检查收件人、最新订单、保障商品、退款/取消和退订状态。
+若发货邮件一直未发成功，重试时订单已经完成，则取消过时发货通知，只保留完成通知。
+记录持久启用时间，避免部署、重启、重新索引时批量补发历史订单。
+
+持久启用时间：2026-11-10T02:37:30.157Z。
+对应纽约时间是 2026-11-09，当地日期与 UTC 日期不要混淆。
+
+QQ 手机邮箱按钮空白问题已修复：浅底色、深色且带下划线的链接文字，表格结构，并提供普通备用链接。不要恢复成背景被客户端去掉后看不见的白色文字。
+
+10. 退订机制
+
+以规范化邮箱 + 邮件类别独立保存，跨同类系统的所有店铺生效。
+  ticket：退订所有工单相关邮件。
+  protection：退订所有运输保障相关邮件（发货、完成、申请更新）。
+退订一个类别不影响另一个；不关闭工单/申诉，也不撤销顾客查看订单的权限。
+
+邮件底部链接文字就是 Unsubscribe。
+链接使用不透明 eu_... 令牌，服务端查绑定邮箱与类别，不靠顾客可随意修改的 email 参数授权退订。
+GET/HEAD 只展示确认页，防止邮件扫描器打开链接就自动退订；显式 POST 确认后生效。
+建任务及实际发送前都检查；已排队的同类邮件也会被取消/跳过。
+已交给 SMTP 的邮件不能撤回。
+退订 token 和订单访问 token 是独立能力，不可混用。
+
+客服菜单已有“邮件退订”页面：按邮箱合并展示，分别列出工单/保障类别与时间，支持搜索、筛选和分页。
+路径：/thinkpro-admin/email-preferences；API：/api/admin/email-preferences。
+现有页面用于查看，不包含通用恢复订阅编辑按钮。
+用户曾要求取消测试邮箱的退订；后续若再要求，应只处理明确指定邮箱/类别，保留其他人的偏好。
+
+模板编辑器的预览会显示系统附加的退订页脚；正文编辑区里没有手写 footer 并不表示实际邮件缺失。预览链接不产生真实顾客退订 token。
+
+11. Webhook 与订单完成/履约
+
+最新只读检查确认 amao04、hipkastl 都已订阅：
+  orders/paid
+  orders/fulfilled
+  orders/partially_fulfilled
+  fulfillments/create
+  fulfillments/update
+  orders/partially_refunded
+  orders/refunded
+  orders/cancelled
+  orders/finished
+回调进入 server.clientservice-center.com 上的现有系统。
+
+订单、发货、退款/取消/完成变化进入快照，再同步保障订单。保障后台周期任务约每 10 秒处理索引、通知、安装和保障商品履约。
+订单完成时间保留来源，支持订单 finished_at 或 orders/finished 对应的可信完成记录；普通更新时间不是送达/完成时间。
+没有另建一个已经验证可用的“承运商实际签收”链路，不要在新对话里误认为已有。
+保障商品自动履约 worker 已启用；只处理开启后的可信完成事件，不扫历史完成订单。
+第一次真实保障订单完成后的店匠写入接受结果仍需实际业务发生后观察，之前主要靠隔离假服务测试，并未为了测试去改真实订单。
+
+12. 当前真实订单与隔离测试订单
+
+截至最新上线检查：
+  真实保障订单：OJSGPF62957
+  店铺：amao04.myshoplaza.com
+  保障记录 id=2，编号 SP-0000000002
+  paid，order_status=placed，fulfillment_status=waiting
+  保障费 200 分（USD 2.00）
+  没有发货时间、没有完成时间；邮箱存在且未退订保障邮件。
+  因此没有发货/完成通知需要立刻发送，等后续实际事件自动触发。
+  不要把“自动通知已接通”描述成“已经向这个顾客发了两封邮件”。
+
+隔离端到端测试记录：
+  TEST-20261104-QQ-01，SP-0000000001，id=1
+  合成店铺 protection-mail-test.invalid
+  指定测试收件邮箱为用户提供的 QQ 邮箱，私密测试台账中可查询。
+  商品和时间来自订单数据复制，但原订单邮箱、地址等联系信息没有复制，所有平台标识/保障商品标识均为合成。
+  没有给这个测试店配置真实店匠店铺、订单同步或履约写入路径。
+  该订单已手工发送过完成模板测试邮件及 QQ 修复后的 v2，不要重新发。
+  已完成时间是 2026-11-04T10:05:01Z；发货时间是 2026-10-18T03:58:12Z。
+  用户可能已自行提交申诉/修改测试状态，不能按旧“零申请”假设重置或删除。
+
+最近通知 outbox 快照只有 1 条已发送的 claim_update，没有历史发货/完成补发。该状态不是永久不变；后续查看应读当前数据库。
+私密测试台账在 support-system/protection-data/test-runs/ 下，可能包含访问能力链接，不要公开。
+
+13. 代码位置与关键文件
+
+系统工作区：/root/work/shoplazza-merchant-ticket-system
+应用子目录：/root/work/shoplazza-merchant-ticket-system/support-system
+系统分支：main
+业务代码提交：1802344（已推 origin/main）
+远端：https://github.com/ThinkPro-GZ/shoplazza-merchant-ticket-system.git
+
+顾客前端：support-system/frontend/customer-protection/
+  location.ts、LocationCapture.tsx、LocationResult.tsx、LocationPermissions.tsx
+管理前端：support-system/frontend/protection/
+旧客服页面及模板编辑：support-system/public/
+
+关键后端文件（相对于 support-system/src/）：
+  protection-service.ts：保障订单同步、审核、金额/状态约束等。
+  protection-domain.ts：快照标准化与业务校验。
+  protection-policy.ts：时间窗口与日期来源。
+  protection-fulfillment.ts：保障商品单独履约。
+  protection-lifecycle-notification.ts：发货/完成通知触发与有效性检查。
+  protection-notification.ts、protection-notification-schema.ts：统一保障通知 outbox、worker、迁移。
+  protection-notification-mailer.ts：独立发件配置与发送。
+  protection-email-template.ts：三个保障模板。
+  protection-customer-auth.ts：顾客链接、令牌/会话。
+  protection-customer-service.ts、protection-customer-routes.ts：顾客流程/API。
+  protection-customer-media.ts、protection-customer-schema.ts：证据处理及元数据。
+  email-preferences.ts、email-preferences-routes.ts：独立类别退订。
+  order-status-webhook.ts、fulfillment-webhook.ts：现有平台事件链路。
+  protection-host.ts：顾客域名路由边界。
+
+最新运维说明优先读：
+  support-system/opsdocs/protection-notifications.md，特别是 Automatic shipment/completion activation (2026-11-09)。
+  docs/superpowers/plans/2026-11-09-protection-lifecycle-mail.md。
+
+旧文档有历史快照，不能无条件照做：
+  protection-service-rules.md 中旧镜像、MAIL_MODE=disabled、完成模板仅草稿等段落已被最新部署取代。
+  email-preferences.md 的早期发布段落也还记录 disabled、未实现自动完成邮件；最新实际状态以本总结、当前代码和 protection-notifications.md 最新章节为准。
+  私有应用 README 中“后台尚未开发”不是当前系统事实。
+  docs/shipping-protection-customer.md 中 11 月 8 日的 20 秒/至少 5 秒/20 米目标定位策略也已经被最新即时接受、8 秒上限替代。
+  阅读旧文档时先核对日期，不要据此把线上 dedicated 发送关闭或重新开发后台。
+
+14. 部署与运行环境
+
+当前生产镜像：support-bridge:protection-lifecycle-mail-20261109
+前一个镜像：support-bridge:protection-location-guidance-20261108
+容器：support-system-support-bridge-1
+Nginx：support-system-support-nginx-1
+生产 PostgreSQL：support-system-postgres-1
+项目 Compose 工作目录：/root/work/shoplazza-merchant-ticket-system/support-system
+健康检查：http://127.0.0.1:4001/health（最近 ok=true，12 家店）
+
+关键配置：
+  SUPPORT_PROTECTION_PUBLIC_BASE_URL=https://us-seel.com
+  SUPPORT_PROTECTION_POLICY_BASIS=shipment
+  SUPPORT_PROTECTION_MAIL_MODE=dedicated
+  SUPPORT_PROTECTION_MAIL_FROM=Shipping Protection <support@us-seel.com>
+  SUPPORT_PROTECTION_FULFILLMENT_ENABLED=true
+
+.env 与 docker-compose.override.yml 是私密/忽略文件。不要打印完整环境变量、完整 docker inspect Env 或提交它们。
+Compose 显式 environment 会覆盖 .env，仅改 .env 不一定改变运行状态。
+protection-data 是持久目录，不要替换镜像时丢失证据、台账和配置。
+
+当前 Dockerfile 有 system、with-shoplazza-app、runtime 等目标。
+生产应构建 --target with-shoplazza-app，保证私有店匠安装器在 /opt/shipping-protection 可用。
+只构建默认纯系统镜像可能让安装功能丢失。
+
+构建示例（仓库根目录）：
+  docker build --target with-shoplazza-app -f support-system/Dockerfile -t support-bridge:新标签 .
+更新示例（support-system 目录）：
+  docker compose -p support-system --env-file .env -f docker-compose.support.yml -f docker-compose.override.yml config --quiet
+  docker compose -p support-system --env-file .env -f docker-compose.support.yml -f docker-compose.override.yml up -d --no-deps --no-build support-bridge
+没有修改 Nginx 配置就不必重启它；若有改动，先 nginx -t。
+
+本次迁移前私密备份：
+  support-system/protection-data/backups/20261109-lifecycle/notification-before.sql
+  同目录 docker-compose.override.before.yml
+  权限 0600，可能含邮件快照，不公开。
+
+回滚注意：新旧 outbox 共表。旧版本 worker 不认识 shipment/completion，会按旧的 claim_update 方式解释任务；回滚到旧镜像前必须先停保障发送，保留队列与启用时间做前向修复，不能盲回滚后继续发。
+
+15. 测试与验证证据
+
+最新标准测试：481 个后端通过、17 个依赖环境的跳过；31 个前端通过。
+相关隔离 PostgreSQL 测试：生命周期通知 12/12、原申请通知 13/13、保障服务 10/10。
+TypeScript、生产构建、Docker 构建、前端安全检查通过。
+桌面/Android 浏览器定位回归通过，覆盖即时接受、主动重试、错误、必填、离页/离步骤清理、英文教程、翻译兼容及确认页。
+线上确认顾客 JS 与已构建产物一致，健康接口正常，域名隔离正常，三个邮件模板存在，专用发件模式就绪，后台同步周期在运行。
+这是程序与隔离环境验证，不是已经观察到了真实订单发货/完成后的收件箱送达。
+SMTP 接受也不等于保证最终进入顾客收件箱。
+
+日常命令（support-system 目录）：
+  npm test
+  npm run build
+  npm run test:frontend
+
+相关浏览器脚本：
+  scripts/test-protection-customer-location.cjs
+  scripts/test-protection-request-windows.cjs
+Playwright 在 /tmp/amao04-browser/node_modules/playwright；Chromium 在 /root/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome。调用时可设置 PLAYWRIGHT_MODULE 和 CHROMIUM_PATH。
+
+隔离数据库容器 protection-customer-test-db，端口 55440。集成测试文件通过各自的 *_TEST_DATABASE_URL 指定测试库并要求数据库名以 _test 结尾。某些测试会 DROP SCHEMA，绝不能把这些变量指向生产库！
+
+本轮日志：
+  /tmp/protection-lifecycle-1109-tests.log
+  /tmp/protection-lifecycle-1109-build.log
+  /tmp/protection-lifecycle-1109-service-db.log
+  /tmp/protection-lifecycle-1109-notification-db.log
+  /tmp/protection-lifecycle-1109-lifecycle-db.log
+  /tmp/protection-lifecycle-1109-browser.log
+  /tmp/protection-lifecycle-1109-image.log
+
+16. Git 与工作习惯约定
+
+作者统一 ANOKO1122 <1203364600@qq.com>。
+系统代码需要提交 Git 并推送 origin/main，正常推送不 force、不乱推其他分支/标签。
+已用过的安全推送命令：git -c push.followTags=false push origin HEAD:main。
+店匠私有应用代码只本地 Git 保存，不推远端，不混入系统 main。
+用户之前因为未跟踪/未保存代码导致功能丢失很不满意，后续要保持明确提交，别留下大量未跟踪功能文件。
+不要覆盖用户后来改过的主题、模板或配置；模板初始化 ON CONFLICT DO NOTHING，保留已有自定义内容。
+用户不喜欢不必要的确认；已授权的可逆开发、测试、修复继续完成，真正缺少信息或授权时才问。
+不要无理由重发邮件、批量回填历史、重置退订、生成真实赔付、或者为测试推进真实订单状态。
+
+17. 新对话如何接续
+
+上一轮明确要求的两件事（缩短定位等待、接通发货/完成保障邮件）都已完成并部署，没有尚未提交的功能补丁。
+下一轮以用户的新要求为准；不要自动把历史所有需求再次执行一遍。
+若用户要求检查实际运行，优先只读查看 OJSGPF62957 的当前状态、事件记录、通知队列和保障履约任务，再判断是否需要补救。
+仍需在真实业务发生后观察的事项：首笔真实发货/完成邮件的实际投递与接收，以及首笔真实订单完成后保障商品履约的店匠接受结果。
+不同新主题的兼容、更多店铺安装、后续顾客体验和后台信息优化可以继续做，但并非本交接授权立即扩大范围。
+
+结束。
