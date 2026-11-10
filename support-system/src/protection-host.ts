@@ -11,6 +11,7 @@ export function isProtectionPublicPath(path: string): boolean {
   if (path === '/' || path === '/protection' || path === '/email-preferences') return true;
   if (path === '/assets/customer-protection.js' || path === '/assets/customer-protection.css') return true;
   if (path === '/assets/protection-location-ios.png' || path === '/assets/protection-location-android.png') return true;
+  if (path === '/assets/protection-photo-guidelines.png' || path === '/assets/protection-camera-ios.png' || path === '/assets/protection-camera-android.png') return true;
   return /^\/api\/protection\/[A-Za-z0-9_/-]+$/.test(path) && !path.includes('//');
 }
 

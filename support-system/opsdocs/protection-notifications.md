@@ -193,3 +193,23 @@ returned 401, staff API on the customer domain returned 404, and the live
 customer bundle matched the local build hash. No test mail was sent and no real
 order state was changed. Physical phone camera and GPS behavior still requires
 observation on a real device.
+
+## Damage photo layout and camera guides (2026-11-09)
+
+The current production image is `support-bridge:protection-camera-guides-20261109`,
+built with the private Shoplazza app target. The four existing photo categories
+now appear in one horizontal row, scrollable on phones. Photo guidelines open on
+mouse hover or click/tap. The camera help area has iOS and Android tabs with the
+provided permission tutorial images. This update does not change the photo
+limits, required damaged-item photo, manual camera exception, notification
+schedule, sender or templates. No new pre-deployment backup was taken, as
+requested by the operator.
+
+Verification: standard tests passed (481 backend, 17 environment-dependent
+skips; 32 frontend), production build, private-app Docker build, Nginx syntax
+check and isolated mobile/desktop Chromium camera flow. The live customer page
+returned 200. Its JavaScript, CSS and all three new tutorial images matched
+the verified local SHA-256 hashes. Unlisted assets and staff routes remained
+404 on the customer domain; anonymous order access remained 401. No test mail
+was sent and no real order state was changed. Physical phone behavior still
+needs observation on a real device.

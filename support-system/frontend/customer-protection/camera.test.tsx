@@ -4,6 +4,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { CameraStreamGuard, damageEvidenceProblem } from './camera';
 import { CameraEvidence, CameraException } from './CameraEvidence';
+import { CameraPermissions } from './CameraPermissions';
 import { Uploads } from './Uploads';
 import type { CustomerEvidence } from '../../src/protection-customer-types';
 
@@ -39,8 +40,17 @@ test('camera evidence requests the phone camera while other issue types retain o
   assert.match(camera, /type="file"[^>]*accept="image\/\*"[^>]*capture="environment"[^>]*hidden=""/);
   assert.ok(camera.includes('Open camera for damaged item'));
   assert.ok(camera.includes('Outer packaging') && camera.includes('Shipping label'));
-  assert.ok(camera.indexOf('Camera permission help') < camera.indexOf('cp-capture-slots'));
+  assert.ok(camera.includes('cp-capture-rail'));
+  assert.ok(camera.includes('Photo guidelines'));
+  assert.ok(camera.includes('/assets/protection-photo-guidelines.png'));
+  assert.ok(camera.includes('Camera permission help'));
   assert.ok(renderToStaticMarkup(<Uploads {...props} />).includes('type="file"'));
+});
+test('camera permission help includes supplied iOS and Android guides', () => {
+  const html = renderToStaticMarkup(<CameraPermissions />);
+  assert.ok(html.includes('/assets/protection-camera-ios.png'));
+  assert.ok(html.includes('/assets/protection-camera-android.png'));
+  assert.ok(html.includes('Enlarge image'));
 });
 test('the camera exception field keeps its accessible name after a reason has been entered', () => {
   for (const value of ['', 'My camera lens is broken and cannot take pictures.']) {
