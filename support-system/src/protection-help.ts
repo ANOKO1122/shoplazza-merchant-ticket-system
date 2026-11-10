@@ -2,10 +2,10 @@
 const articles = {
   'report-an-issue': {
     title: 'How to report a package issue',
-    lead: 'Use the secure order link from your email to tell the store what happened to your shipment or delivery.',
+    lead: 'Shipping Protection helps with shipping and delivery loss, damage, theft or major delays. With sufficient evidence and an approved request, you may receive a full or partial refund for affected items.',
     body: `<h2>Start from your order</h2>
       <ol><li>Open the order link in your email and choose <strong>Request a refund</strong>.</li><li>Say whether you received the package, then choose the closest issue.</li><li>Select the affected items and quantities. The form shows the request dates for each item.</li><li>Describe what happened, add any useful documents, and review your answers before submitting.</li></ol>
-      <p>If you have not received the package, the form asks you to share your current location. It requests location only when you choose to share it.</p>
+      <p>Use the secure order link from your email to get started. If you have not received the package, the form asks you to share your current location. It requests location only when you choose to share it.</p>
       <div class="help-note"><strong>After you submit</strong><p>The store reviews your request. Submitting it does not send a refund or decide the outcome.</p></div>
       <h2>Which issue should I choose?</h2><p>Choose damage when an item arrived damaged. Choose missing items when the package arrived without everything ordered. If the package has not arrived, choose the option that matches its current status. You can explain uncertain details in the description.</p>
       <p>Read <a href="/protection/help?article=lost-or-not-received">how to tell a missing shipment from a delivery you cannot find</a> or <a href="/protection/help?article=request-status">how to check your request status</a>.</p>`,
@@ -40,7 +40,7 @@ const articles = {
     lead: 'A carrier email, letter, or case record can help clarify where a package is, especially when tracking is unclear.',
     body: `<h2>Contact the carrier</h2><p>Use the carrier shown with your tracking number. Ask its support team to investigate the shipment and provide the result in writing, if available. The carrier may need the tracking number, recipient name, delivery address, and shipment date to locate the record.</p>
       <h2>What to ask them to include</h2><ul><li>The tracking number and their inquiry or case number.</li><li>The latest scan or delivery status, with the date and place if known.</li><li>Whether they can confirm delivery, loss, a return to sender, or an unresolved trace.</li><li>Where the package was left, if their records say it was delivered.</li></ul>
-      <p>If the carrier only answers by phone, write down the date, case number, and the information they gave you. Add that summary to your request. You can also ask the store if the carrier requires the sender to open the inquiry.</p>
+      <p>If the carrier only answers by phone, write down the date, case number, and the information they gave you. Add that summary to your request. If the carrier says the sender must open the inquiry, include that detail too.</p>
       <div class="help-note"><strong>Keep private details private</strong><p>Do not send payment card numbers or identity documents as supporting files.</p></div>`,
   },
   'damaged-photos': {

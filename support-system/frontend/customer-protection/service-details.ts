@@ -3,7 +3,7 @@ export type ServicePolicyBasis = 'shipment' | 'completion';
 export interface ServiceIssue { key: 'damaged' | 'lost' | 'stolen' | 'delayed'; title: string; description: string; }
 export const serviceDetails = Object.freeze<{ title: string; introduction: string; issues: ServiceIssue[]; completionNote: string; footer: string }>({
   title: 'Shipping Protection',
-  introduction: 'Submit a request for these shipping and delivery issues:',
+  introduction: 'Shipping Protection helps with these shipping and delivery issues. With sufficient evidence and an approved request, you may receive a full or partial refund for affected items:',
   issues: [
     { key: 'damaged', title: 'Damage', description: 'An item is damaged during shipping or delivery.' },
     { key: 'lost', title: 'Loss', description: 'Your package has not arrived, or items are missing from it.' },
@@ -11,7 +11,7 @@ export const serviceDetails = Object.freeze<{ title: string; introduction: strin
     { key: 'delayed', title: 'Delay', description: 'Your shipment is significantly delayed.' },
   ],
   completionNote: 'Store completion is a status recorded by the store. It does not confirm that you received the package.',
-  footer: 'Requests are reviewed by the store. A refund is not automatic. Other product issues are outside this service.',
+  footer: 'The store reviews each request and decides any refund amount. Approval does not mean funds have already been sent. Other product issues are outside this service.',
 });
 
 export function serviceWindowRules(basis?: ServicePolicyBasis): Partial<Record<ServiceIssue['key'], string>> {

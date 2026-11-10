@@ -18,6 +18,7 @@ test('public help articles use the customer portal rules and keep readers on thi
   assert.match(renderProtectionHelp('delivery-not-received-documents')!, /does not require a police report or carrier letter up front/);
   assert.match(renderProtectionHelp('police-report')!, /If the department will not take a report/);
   assert.match(renderProtectionHelp('damaged-photos')!, /I cannot use a camera/);
+  assert.match(renderProtectionHelp('report-an-issue')!, /sufficient evidence.*full or partial refund/i);
 });
 
 test('help only renders known articles and the old photo URL can use the same page', () => {

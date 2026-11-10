@@ -72,5 +72,7 @@ test('the reusable service information has an explicit button and remains outsid
   assert.match(html, /aria-haspopup="dialog"/);
   assert.match(html, /role="dialog"/);
   assert.match(html, /type="button"/);
+  assert.match(html, /sufficient evidence.*full or partial refund/i);
+  assert.doesNotMatch(html, /contact us directly|request support from the store/i);
   assert.doesNotMatch(html, /<label|\b(?:insurance|insured|underwriting|policyholder|seel)\b|承保|保险/i);
 });

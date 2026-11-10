@@ -278,3 +278,27 @@ Chromium flow, Nginx syntax and live route checks passed. The live article HTML
 and CSS matched the verified build. Unknown articles and staff routes returned
 404, anonymous order access returned 401, and bridge health returned 200 with
 12 stores. No backup, test email or real-order mutation was performed.
+
+## Shipping Protection service copy (2026-11-10)
+
+The cart and checkout summaries, detail popover, protection product description,
+managed product page, customer service details and first help article now explain
+covered shipping and delivery issues. They say sufficient evidence and an approved
+request may lead to a full or partial refund for affected items. The popover keeps
+the existing request windows and says the store reviews the amount. The old
+"contact the store for help" call to action is removed from these surfaces.
+
+Shoplazza checkout versions `1.9` (amao04) and `1.3` (hipkastl) were published.
+Both live cart assets, managed product pages and four product descriptions were
+updated and read back. `verify-install.mjs` passed for both stores, including
+asset fingerprints, published version, product identities and theme patch.
+This copy update did not change prices, tiers, carts, orders, emails or refund
+decisions. No deployment backup was created.
+
+The customer bridge runs `support-bridge:protection-service-copy-20261110`.
+The full bridge suite passed 483 tests with 17 environment-dependent skips;
+the frontend suite passed 32 tests, the help article suite passed 2 tests, the
+private app passed 39 tests, and the production build passed. Live bridge health
+returned 200 with 12 stores, the help page returned 200, and the served customer
+bundle includes the revised service copy. Physical device presentation was not
+rechecked in this text-only release.
