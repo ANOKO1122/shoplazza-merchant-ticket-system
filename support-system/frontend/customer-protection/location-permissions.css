@@ -14,47 +14,6 @@
 }
 .cp-location-help-content { padding: 0 16px 16px; min-width: 0; }
 .cp-location-help-content > p { font-size: 14px; line-height: 1.65; }
-.cp-location-help-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  margin-block: 16px 8px;
-}
-.cp-location-device-tabs { display: flex; gap: 4px; }
-.cp-location-device-tabs > button {
-  min-width: 68px;
-  min-height: 44px;
-  padding: 9px 12px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--cp-muted);
-  font-size: 14px;
-}
-.cp-location-device-tabs > button[aria-selected="true"] {
-  border-color: #abc4dc;
-  background: #e9f2fa;
-  color: #184e7e;
-  font-weight: 600;
-}
-.cp-location-device-tabs > button:hover { background: #e9f2fa; }
-.cp-location-image-toggle {
-  min-height: 44px;
-  padding: 8px 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border: 0;
-  background: transparent;
-  color: var(--cp-blue);
-  font-size: 14px;
-}
-.cp-location-image-toggle:hover { text-decoration: underline; text-underline-offset: 3px; }
-.cp-location-guide-image { overflow: auto; border-radius: 6px; background: #fafafa; max-width: 100%; }
-.cp-location-guide-image > img { display: block; width: 100%; height: auto; }
-.cp-location-guide-zoomed > img { width: 1340px; max-width: none; }
 .cp-location-help-content .cp-location-help-caption { margin-block-start: 10px; color: var(--cp-muted); font-size: 14px; }
 .cp-location-help-steps { margin: 20px 0; padding-inline-start: 22px; font-size: 14px; line-height: 1.7; }
 .cp-location-help-steps > li { padding-inline-start: 4px; margin-block-end: 14px; }

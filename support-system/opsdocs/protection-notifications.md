@@ -213,3 +213,22 @@ the verified local SHA-256 hashes. Unlisted assets and staff routes remained
 404 on the customer domain; anonymous order access remained 401. No test mail
 was sent and no real order state was changed. Physical phone behavior still
 needs observation on a real device.
+
+## Permission guide layout and photo guidelines sizing (2026-11-10)
+
+The current production image is `support-bridge:protection-guide-layout-20261110`,
+built with the private Shoplazza app target. Location and camera permission
+tutorials now share one card layout, segmented iOS/Android tabs and a compact
+expand control. The photo guidelines open on hover over the text button only;
+the sample image fits its container without an internal scrollbar, with a link
+to the full-size image. Photo requirements, capture and location behavior,
+notification schedules, sender and templates are unchanged. No pre-deployment
+backup was taken, as previously requested by the operator.
+
+Verification: standard tests passed (481 backend, 17 environment-dependent
+skips; 32 frontend), isolated camera and location browser flows passed on
+desktop and simulated mobile Chrome, production build and private-app Docker
+build passed. The live bridge health check returned 200 with 12 stores, the
+customer page returned 200, and the served JavaScript/CSS SHA-256 hashes
+matched the verified local build. No test mail was sent and no real order
+state was changed. Physical phone presentation still needs observation.
