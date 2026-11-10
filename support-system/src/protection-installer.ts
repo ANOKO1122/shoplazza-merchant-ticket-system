@@ -5,11 +5,17 @@ import { spawn } from 'node:child_process';
 export const protectionPackageDir = () => process.env.SUPPORT_PROTECTION_PACKAGE_DIR || path.resolve(__dirname, '../../shipping-protection');
 const safeId = /^[a-z0-9-]+$/;
 export function validateProtectionManifest(value: any, domain: string): void {
+  const products = Array.isArray(value?.products) ? value.products : [];
+  const retiredProducts = Array.isArray(value?.retiredProducts) ? value.retiredProducts : [];
+  const activeIds = new Set(products.map((p: any) => p.id));
+  const managedIds = new Set([...products, ...retiredProducts].map((p: any) => p.id));
   if (!value || value.store !== domain || !/^[a-z0-9-]+\.myshoplaza\.com$/.test(domain)
     || !safeId.test(value.themeId) || !/^\d+$/.test(value.shopId) || !['hero','nova'].includes(value.themeFamily)
-    || !/^[a-z0-9-]+\.js$/.test(value.asset) || !Array.isArray(value.products) || !value.products.length
-    || value.products.some((p: any) => !safeId.test(p.id) || !safeId.test(p.handle))
-    || !Array.isArray(value.tiers) || !value.tiers.length || value.tiers.some((t: any) => !safeId.test(t.variantId) || !value.products.some((p: any) => p.id === t.productId) || !Number.isSafeInteger(t.cents) || t.cents < 200)
+    || !/^[a-z0-9-]+\.js$/.test(value.asset) || !products.length
+    || (value.retiredProducts !== undefined && !Array.isArray(value.retiredProducts))
+    || [...products, ...retiredProducts].some((p: any) => !safeId.test(p.id) || !safeId.test(p.handle))
+    || managedIds.size !== products.length + retiredProducts.length
+    || !Array.isArray(value.tiers) || !value.tiers.length || value.tiers.some((t: any) => !safeId.test(t.variantId) || !managedIds.has(t.productId) || (t.active !== false && !activeIds.has(t.productId)) || (t.active !== undefined && typeof t.active !== 'boolean') || !Number.isSafeInteger(t.cents) || t.cents < 200)
     || !Array.isArray(value.hostnames) || !value.hostnames.includes(domain)) throw new Error('安装配置不完整或与店铺不符，需要先完成主题适配');
 }
 export function redactInstallerOutput(output: string, token: string): string {

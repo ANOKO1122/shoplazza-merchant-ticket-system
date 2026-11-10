@@ -302,3 +302,30 @@ private app passed 39 tests, and the production build passed. Live bridge health
 returned 200 with 12 stores, the help page returned 200, and the served customer
 bundle includes the revised service copy. Physical device presentation was not
 rechecked in this text-only release.
+
+## Shipping Protection price tiers (2026-11-10)
+
+Both stores retain their original low and high protection products. The low
+product has 300 one-cent tiers from $2.00 through $4.99. The original high
+product now uses all 300 variant slots: $5.00 through $7.00 in one-cent steps
+(201), followed by $7.08 through $16.88 in ten-cent steps (99). Quotes select
+the first available tier at or above the rounded 3% target; for example, a
+$7.16 target charges $7.18. Targets above $16.88 charge the top tier instead
+of failing. A temporary third product created during migration was deleted
+from each store after checking that no orders created since the migration
+referenced it. Retired variant IDs remain in the browser configuration so old
+cart lines can be recognized and replaced, but they cannot receive new quotes.
+No existing order, email or refund decision was changed.
+
+Shoplazza checkout versions `1.11` (amao04) and `1.5` (hipkastl) and both
+cart assets were published. `verify-install.mjs` passed for both stores after
+the temporary product deletion. The customer bridge runs
+`support-bridge:protection-pricing-20261110`; its installer validation now
+accepts inactive variant IDs belonging to a retired product while requiring
+all active variants to belong to current products. The production database
+manifests and `product_ids` were updated in one transaction to the two active
+products per store. Production health returned 200 with 12 stores, and a
+readback confirmed the deployed versions, two products and 600 active tiers
+per store. The private app passed 41 tests, the installer validator passed
+four targeted tests, and the production Docker build passed. No deployment
+backup or test email was created.
