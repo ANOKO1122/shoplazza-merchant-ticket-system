@@ -30,6 +30,7 @@ import { createProtectionStoreRouter } from './protection-store-routes';
 import { processProtectionInstallJobs, seedProtectionStores } from './protection-store-service';
 import { syncProtectionOrders } from './protection-service';
 import { isProtectionHost, protectionHostBoundary, protectionPageHeaders } from './protection-host';
+import { renderProtectionHelp } from './protection-help';
 import { createProtectionCustomerRouter, createProtectionCustomerAdminRouter } from './protection-customer-routes';
 import { cleanupProtectionOrphanEvidence } from './protection-customer-media';
 import { initProtectionNotificationSchema, processProtectionNotifications } from './protection-notification';
@@ -167,7 +168,13 @@ app.get('/protection', protectionPageHeaders, (_req, res) => {
 });
 
 app.get('/protection/photo-requirements', protectionPageHeaders, (_req, res) => {
-  res.sendFile(path.join(publicDir, 'protection-photo-requirements.html'));
+  res.type('html').send(renderProtectionHelp('damaged-photos'));
+});
+
+app.get('/protection/help', protectionPageHeaders, (req, res) => {
+  const page = renderProtectionHelp(req.query.article);
+  if (!page) { res.status(404).type('text/plain').send('Article not found'); return; }
+  res.type('html').send(page);
 });
 
 app.use(express.static(publicDir, {

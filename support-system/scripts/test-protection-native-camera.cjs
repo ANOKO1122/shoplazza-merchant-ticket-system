@@ -8,6 +8,7 @@ const sharp = require('sharp');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 
 const root = path.resolve(__dirname, '..');
+const { renderProtectionHelp } = require(path.join(root, 'dist/protection-help.js'));
 const captureId = '10c83620-b938-4c13-a5d4-93c6737a1877';
 let server, browser;
 (async () => {
@@ -25,9 +26,14 @@ let server, browser;
     createRoot(document.getElementById('root')).render(<dialog className="cp-dialog" open><div className="cp-dialog-content"><Fixture /></div></dialog>);
   `, resolveDir: root, loader: 'tsx' }, bundle: true, write: false, outfile: 'camera.js', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' } });
   server = http.createServer((req, res) => {
-    if (req.url === '/protection/photo-requirements') {
+    const requestUrl = new URL(req.url, 'http://localhost');
+    if (requestUrl.pathname === '/protection/photo-requirements' || requestUrl.pathname === '/protection/help') {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      return res.end(fs.readFileSync(path.join(root, 'public/protection-photo-requirements.html')));
+      return res.end(renderProtectionHelp(requestUrl.pathname === '/protection/photo-requirements' ? 'damaged-photos' : requestUrl.searchParams.get('article') || undefined));
+    }
+    if (requestUrl.pathname === '/assets/protection-help.css') {
+      res.setHeader('Content-Type', 'text/css');
+      return res.end(fs.readFileSync(path.join(root, 'public/assets/protection-help.css')));
     }
     if (['protection-example-package.jpg', 'protection-example-item.jpg'].some(name => req.url === `/assets/${name}`)) {
       res.setHeader('Content-Type', 'image/jpeg');
@@ -118,14 +124,23 @@ let server, browser;
   const article = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await article.goto(`http://127.0.0.1:${server.address().port}/protection/photo-requirements`);
   assert.equal(await article.getByRole('heading', { name: 'Photos for a damaged item' }).isVisible(), true);
+  assert.equal(await article.getByText('Browse articles').isVisible(), true);
   assert.equal(await article.locator('figure img').count(), 2);
   for (const image of await article.locator('figure img').all()) assert.ok(await image.evaluate(async element => { await element.decode(); return element.naturalWidth; }) > 0);
-  assert.equal(await article.locator('main').evaluate(element => /\b(insurance|insured|coverage|underwritten)\b/i.test(element.innerText)), false);
+  assert.equal(await article.locator('main').evaluate(element => /\b(insurance|insured|coverage|underwritten|Seel)\b/i.test(element.innerText)), false);
+  assert.equal(await article.locator('a[href^="http"]').count(), 0);
   await article.screenshot({ path: '/tmp/protection-photo-requirements-mobile.png', fullPage: true });
+  await article.getByText('Browse articles').click();
+  await article.getByRole('navigation', { name: 'Articles in this section' }).last().getByRole('link', { name: 'How to file a police incident report' }).click();
+  assert.equal(await article.getByRole('heading', { name: 'How to file a police incident report' }).isVisible(), true);
+  assert.equal(new URL(article.url()).searchParams.get('article'), 'police-report');
+  await article.screenshot({ path: '/tmp/protection-help-police-mobile.png', fullPage: true });
   await article.close();
   const desktopArticle = await browser.newPage({ viewport: { width: 1200, height: 900 } });
   await desktopArticle.goto(`http://127.0.0.1:${server.address().port}/protection/photo-requirements`);
   assert.equal(await desktopArticle.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Photo article fits desktop width');
+  assert.equal(await desktopArticle.locator('.help-nav-desktop').isVisible(), true);
+  assert.ok((await desktopArticle.locator('article').boundingBox()).x > (await desktopArticle.locator('.help-nav-desktop').boundingBox()).x, 'Article appears beside the sidebar');
   await desktopArticle.screenshot({ path: '/tmp/protection-photo-requirements-desktop.png' });
   await desktopArticle.close();
   const desktop = await browser.newPage({ viewport: { width: 1200, height: 900 } });

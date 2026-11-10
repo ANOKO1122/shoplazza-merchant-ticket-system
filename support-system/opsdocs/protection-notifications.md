@@ -259,3 +259,22 @@ private-app Docker build and Nginx syntax check passed. Live health returned
 JavaScript, CSS and example JPG hashes matched the local build. Unlisted assets
 and staff routes returned 404 on the customer host; anonymous order access
 remained 401. Physical phone presentation still needs observation.
+
+## Customer help article library (2026-11-10)
+
+The public customer help page now has eight original articles with a desktop
+sidebar and a collapsible mobile article list. The existing form URL
+`/protection/photo-requirements` remains the damage-photo entry. Other articles
+use the exact `/protection/help` path with a validated `article` query value.
+The customer page no longer links to the reference support site. Article rules
+match this portal's request windows, required location and camera exception;
+carrier letters and police incident reports are optional context unless the
+store asks for them. The customer host permits the new page and its CSS only
+through exact paths. No email, order or notification settings were changed.
+
+Deployed image: `support-bridge:protection-help-20261110`, built with the private
+Shoplazza app target. Standard tests, production build, isolated mobile/desktop
+Chromium flow, Nginx syntax and live route checks passed. The live article HTML
+and CSS matched the verified build. Unknown articles and staff routes returned
+404, anonymous order access returned 401, and bridge health returned 200 with
+12 stores. No backup, test email or real-order mutation was performed.
