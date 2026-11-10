@@ -2,7 +2,7 @@
 
 `protection_claim_update` is an editable English template in the existing mail-template editor. It includes the store, order and request references and a **View update** link to `https://us-seel.com/protection`. It does not include the review decision, internal notes or payment information.
 
-For claim updates, only a new transition to `needs_info`, `approved`, `rejected` or `closed` inserts an outbox event. The insert shares the claim update transaction. The unique claim/revision key prevents repeated status requests from creating duplicate work. Editing a note without changing the status does not notify. Initialization does not scan or notify historical claims.
+Saving a claim status or customer-visible reply does not queue mail. Staff can click **Send claim update notification** in a saved claim whose status is `needs_info`, `approved`, `rejected` or `closed`. That explicit action queues the current revision and starts its delivery attempt. The claim/revision key prevents a repeated click from sending the same update twice. Unsent automatic claim notices from the old flow are cancelled during migration; previously sent mail is left intact. Shipment and completion notices remain automatic.
 
 The same delivery worker also handles `protection_shipment_notice` and
 `protection_completion_notice`. Snapshot indexing records the first physical
@@ -24,7 +24,7 @@ it is cancelled and only the completion notice remains eligible.
 
 After `ensureTables()`, await `initProtectionNotificationSchema()` from `src/protection-notification.ts`. Run `processProtectionNotifications({ limit: 10 })` on the background-worker cadence. Its result reports picked, sent, failed, cancelled and disabled counts without message bodies or access credentials.
 
-Delivery defaults to disabled. New status events are still stored while disabled; enabling delivery processes those already-recorded events, not pre-deployment claim history.
+Delivery defaults to disabled. An explicit claim send request made while delivery is unavailable stays queued for retry when delivery is enabled. Saving a status alone does not create a queued claim notice.
 
 ## Separate sender configuration
 
@@ -329,3 +329,27 @@ readback confirmed the deployed versions, two products and 600 active tiers
 per store. The private app passed 41 tests, the installer validator passed
 four targeted tests, and the production Docker build passed. No deployment
 backup or test email was created.
+
+## Manual claim update notifications (2026-11-10)
+
+Claim review status and customer-visible reply saves no longer enqueue mail.
+In the claim detail, staff save the update and then explicitly click **Send claim
+update notification email**. The server requires the currently saved revision
+and an eligible status (`needs_info`, `approved`, `rejected` or `closed`), checks
+the protection email preference, and starts only that notification job. A
+second click for the same revision cannot send another copy; a later saved
+revision can be notified separately. SMTP failures continue through the
+existing retry worker after the explicit request. Shipment and completion
+notices remain automatic.
+
+The new schema marks unsent claim notifications from the old automatic flow
+as cancelled and leaves sent history unchanged. Before deployment, production
+had one sent claim notice and no pending claim notices. After deploying
+`support-bridge:protection-manual-claim-mail-20261110`, the readback still
+showed exactly one sent claim notice and no pending claim notices. The bridge
+health endpoint returned 200 with 12 stores, and the served admin JavaScript
+matched the verified build. The complete backend suite passed 484 tests with
+17 environment-dependent skips, and the frontend suite passed 32 tests.
+Isolated database tests passed 10 service, 15 claim notification and 12
+automatic shipment/completion notification cases. No backup,
+test email or real-order mutation was performed.

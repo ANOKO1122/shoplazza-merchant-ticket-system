@@ -127,6 +127,13 @@ test('protection data and review lifecycle retain one contract and serialize com
         const exportResponse=await fetch(base+'/api/admin/protection/orders/export',{headers});
         assert.equal(exportResponse.status,200);assert.match(await exportResponse.text(),/"'=SUM\(A1\)"/);
         const agents=await fetch(base+'/api/admin/protection/agents',{headers});assert.equal((await agents.json() as any).items[0].name,'Fixture reviewer');
+        const reviewed=(await getProtectionClaim(claim.id))!.claim;
+        const send=()=>fetch(base+`/api/admin/protection/claims/${claim.id}/notify-email`,{method:'POST',headers:{...headers,Origin:base,'content-type':'application/json'},body:JSON.stringify({revision:reviewed.revision})});
+        const notice=await send();assert.equal(notice.status,200);
+        const firstJob=(await notice.json() as any).job_id;
+        assert.equal((await (await send()).json() as any).job_id,firstJob);
+        const outbox=await pool.query('SELECT id,manual_requested_at FROM support_protection_notification_outbox WHERE claim_id=$1',[claim.id]);
+        assert.equal(outbox.rows.length,1);assert.ok(outbox.rows[0].manual_requested_at);
       }finally{await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}
     });
     await t.test('aggregate money is unknown when one of the included orders has an unknown amount', async () => {
@@ -165,7 +172,7 @@ test('protection data and review lifecycle retain one contract and serialize com
       assert.equal(approved.status,'approved');
       const evidence=(await pool.query('SELECT policy_snapshot_json FROM support_protection_claims WHERE id=$1',[created.id])).rows[0].policy_snapshot_json;
       assert.equal(evidence.window.status,'open');assert.equal(evidence.window.reason,'lost');
-      assert.equal(Number((await pool.query('SELECT count(*) FROM support_protection_notification_outbox WHERE claim_id=$1',[created.id])).rows[0].count),1);
+      assert.equal(Number((await pool.query('SELECT count(*) FROM support_protection_notification_outbox WHERE claim_id=$1',[created.id])).rows[0].count),0,'Saving an approval must not send or queue mail');
     });
   } finally { await pool.end(); await closeDatabasePools(); }
 });

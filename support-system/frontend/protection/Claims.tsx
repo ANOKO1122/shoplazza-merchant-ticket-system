@@ -55,7 +55,21 @@ function ReviewForm({ claim, order, agents, refreshing, onReload, onSaved }: { c
     if (!dirty.current.customerMessage) setCustomerMessage(claim.customer_message || '');
   }, [claim.revision, claim.approved_amount_cents, claim.requested_amount_cents, claim.assignee_id, claim.external_reference, claim.customer_message]);
   const editable = ['submitted', 'reviewing', 'needs_info'].includes(claim.status);
+  const canNotify = ['needs_info', 'approved', 'rejected', 'closed'].includes(claim.status);
+  const unsaved = !!note.trim() || dirty.current.amount || dirty.current.assignee || dirty.current.reference || dirty.current.customerMessage;
   const unknownMoney = order.protected_value_cents == null || order.order_amount_cents == null || order.refund_amount_cents == null || order.items.filter(item => claim.item_ids.includes(item.id)).some(item => item.amount_cents == null);
+  async function notifyCustomer() {
+    if (busyRef.current || refreshing || conflict || unsaved || !canNotify) return;
+    if (!window.confirm('确认给顾客发送申请更新通知邮件？')) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice('');
+    try {
+      const result = await request<{status:string}>(`/claims/${encodeURIComponent(claim.id)}/notify-email`, { method:'POST', body:JSON.stringify({revision:claim.revision}) });
+      setNotice(result.status==='sent' ? '申请更新通知已发送；同一次更新不会重复发送。' : '通知已提交；如发送失败，系统会重试。');
+    } catch (error) {
+      if (error instanceof ApiError && error.status===409 && /更新|刷新/.test(error.message)) setConflict(true);
+      setError(error as Error);
+    } finally { busyRef.current=false; setBusy(false); }
+  }
   async function save(status?: ClaimStatus) {
     if (busyRef.current || refreshing || conflict) return;
     if ((status === 'rejected' || status === 'needs_info' || status === 'closed') && !note.trim()) { setError('请填写处理备注，说明原因或需要补充的资料。'); return; }
@@ -73,7 +87,7 @@ function ReviewForm({ claim, order, agents, refreshing, onReload, onSaved }: { c
       else setError(error as Error);
     } finally { busyRef.current = false; setBusy(false); }
   }
-  return <Section title={claim.status === 'approved' ? '记录外部处理结果' : '审核与内部备注'}><div className="p-form"><p className="p-muted">审核通过仅表示审核结果。款项由外部系统处理。</p>
+  return <Section title={claim.status === 'approved' ? '记录外部处理结果' : '审核与内部备注'}><div className="p-form"><p className="p-muted">审核通过仅表示审核结果。款项由外部系统处理。保存状态或回复不会自动发送邮件。</p>
     <Field label="负责人"><select value={assignee} disabled={busy || refreshing} onChange={event => { dirty.current.assignee = true; setAssignee(event.target.value); }}><option value="">未分配</option>{claim.assignee_id != null && !agents.some(agent => agent.id === claim.assignee_id) && <option value={claim.assignee_id}>{claim.assignee_name || `客服 ${claim.assignee_id}`}</option>}{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></Field>
     {editable && <><Field label={`审核通过金额（${claim.currency}）`}><input inputMode="decimal" value={amount} disabled={busy || refreshing} onChange={event => { dirty.current.amount = true; setAmount(event.target.value); }} /></Field><p className="p-muted">申请金额 {money(claim.requested_amount_cents, claim.currency)}；剩余可赔额度会在提交时再次校验。</p>{unknownMoney && <p className="p-notice">订单、退款或商品金额尚未完整同步，目前不可审核通过。</p>}</>}
     {claim.status === 'approved' && <Field label="外部处理凭据"><input value={reference} maxLength={500} disabled={busy || refreshing} placeholder="外部退款单号、转账记录编号等" onChange={event => { dirty.current.reference = true; setReference(event.target.value); }} /></Field>}
@@ -83,6 +97,6 @@ function ReviewForm({ claim, order, agents, refreshing, onReload, onSaved }: { c
     {notice && <p className="p-notice" role="status">{notice}</p>}
     <div className="p-actions">{editable && <><button className="p-button p-primary" disabled={busy || refreshing || conflict || unknownMoney} onClick={() => save('approved')}>审核通过</button><button className="p-button p-danger" disabled={busy || refreshing || conflict} onClick={() => save('rejected')}>拒绝申诉</button><button className="p-button" disabled={busy || refreshing || conflict} onClick={() => save('needs_info')}>要求补充资料</button>{claim.status !== 'reviewing' && <button className="p-button" disabled={busy || refreshing || conflict} onClick={() => save('reviewing')}>开始审核</button>}</>}
     {claim.status === 'approved' && <button className="p-button p-primary" disabled={busy || refreshing || conflict} onClick={() => save('closed')}>保存外部处理并结案</button>}
-    <button className="p-button" disabled={busy || refreshing || conflict} onClick={() => save()}>保存备注 / 回复 / 负责人</button>{busy && <span role="status">正在保存…</span>}{refreshing && <span role="status">正在更新详情…</span>}</div>
+    <button className="p-button" disabled={busy || refreshing || conflict} onClick={() => save()}>保存备注 / 回复 / 负责人</button>{canNotify && <button className="p-button" disabled={busy || refreshing || conflict || unsaved} onClick={() => void notifyCustomer()}>发送申请更新通知邮件</button>}{busy && <span role="status">正在处理…</span>}{refreshing && <span role="status">正在更新详情…</span>}</div>
   </div></Section>;
 }

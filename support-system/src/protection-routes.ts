@@ -4,6 +4,7 @@ import { query } from './pg';
 import { ProtectionError, csvCell, isSameOriginMutation } from './protection-domain';
 import { createProtectionClaim, updateProtectionClaim, listProtectionOrders, listProtectionClaims, getProtectionOrder, getProtectionClaim, getProtectionStats, type ProtectionFilters } from './protection-service';
 import { getCustomerClaimForAdmin } from './protection-customer-service';
+import { processProtectionNotifications, requestProtectionClaimUpdate } from './protection-notification';
 
 function filters(req:express.Request):ProtectionFilters {
   const result:ProtectionFilters={};
@@ -82,5 +83,11 @@ export function createProtectionRouter():express.Router {
   }));
   router.post('/claims',handler(async(req,res)=>res.status(201).json({ok:true,claim:await createProtectionClaim(req.body,(req as any).protectionAgent)})));
   router.patch('/claims/:id',handler(async(req,res)=>res.json({ok:true,claim:await updateProtectionClaim(req.params.id,req.body,(req as any).protectionAgent)})));
+  router.post('/claims/:id/notify-email',handler(async(req,res)=>{
+    const job=await requestProtectionClaimUpdate(req.params.id,req.body?.revision);
+    if(job.status==='pending') await processProtectionNotifications({limit:1,onlyJobId:job.id});
+    const latest=(await query('SELECT status FROM support_protection_notification_outbox WHERE id=$1',[job.id])).rows[0];
+    res.json({ok:true,job_id:job.id,status:latest?.status||job.status});
+  }));
   return router;
 }

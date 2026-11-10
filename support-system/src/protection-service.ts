@@ -2,7 +2,6 @@ import type { PoolClient } from 'pg';
 import { getClient, query } from './pg';
 import { ACTIVE_CLAIM_STATUSES, CLAIM_REASONS, CLAIM_STATUSES, ProtectionError, claimAllocation, normalizeProtectionSnapshot, record, text, validateClaimTransition } from './protection-domain';
 import type { ClaimDetail, ClaimStatus, ProtectionClaim, ProtectionList, ProtectionOrder, ProtectionStats } from './protection-types';
-import { enqueueProtectionClaimUpdate } from './protection-notification';
 import { evaluateProtectionCoverage } from './protection-policy';
 import { enqueueProtectionLifecycleNotifications } from './protection-lifecycle-notification';
 
@@ -225,7 +224,6 @@ export async function updateProtectionClaim(id:unknown,input:unknown,actor:Prote
     await client.query(`UPDATE support_protection_claims SET status=$2,approved_amount_cents=$3,allocation_json=$4,assignee_id=$5,
       resolution_note=$6,external_reference=$7,customer_message=$8,revision=revision+1,updated_at=now() WHERE id=$1`,[claimId,status,amount,JSON.stringify(allocation),assignee,reasonNote,external,body.customer_message===undefined?current.customer_message:text(body.customer_message)||null]);
     await audit(client,claimId,actor,status===current.status?'updated':'status_changed',note,{before:{status:current.status,assignee_id:current.assignee_id,revision:current.revision},after:{status,assignee_id:assignee,approved_amount_cents:amount,external_reference:external,customer_message:body.customer_message===undefined?current.customer_message:text(body.customer_message)||null,revision:current.revision+1}});
-    await enqueueProtectionClaimUpdate(client,{claimId,revision:current.revision+1,previousStatus:current.status,status});
     return readClaim(client,claimId);
   });
 }

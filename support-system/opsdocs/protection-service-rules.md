@@ -29,7 +29,7 @@ Cart, checkout and customer pages share English service descriptions and timing 
 
 Customer links remain usable independently of request eligibility. Selecting an expired issue shows an English explanation with the affected item's request dates and UTC deadline, with Back/Close actions only. There is no customer-support entry or referral. Mixed item windows permit selection of still-eligible items; existing requests and supplements remain accessible. New links last 90 days; prior links and the 12-hour session limit are unchanged.
 
-`protection_claim_update` is the generic editable notification for needs_info/approved/rejected/externally handled transitions. It is queued in the same database transaction as the status change. Per the user's decision, delivery remains disabled until a dedicated us-seel.com sender is configured. See `protection-notifications.md`. No real mail was sent during this deployment. Completion notices remain a separate editable draft; this change does not schedule them.
+`protection_claim_update` is the generic editable notification for needs_info/approved/rejected/externally handled transitions. As of 2026-11-10, saving a claim no longer queues this email. Staff must use the explicit send action in the claim detail; the dedicated us-seel.com sender is configured. Shipment and completion notices remain automatic. See `protection-notifications.md` for the current delivery rules. Earlier deployment notes below describe historical stages and should not be used as current operating instructions.
 
 ## Service fulfillment
 

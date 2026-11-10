@@ -5,7 +5,7 @@ import { Pool } from 'pg';
 import { PROTECTION_SCHEMA_SQL } from './protection-schema';
 import { PROTECTION_CUSTOMER_SCHEMA_SQL } from './protection-customer-schema';
 import { closeDatabasePools } from './pg';
-import { initProtectionNotificationSchema, enqueueProtectionClaimUpdate, processProtectionNotifications } from './protection-notification';
+import { initProtectionNotificationSchema, enqueueProtectionClaimUpdate, processProtectionNotifications, requestProtectionClaimUpdate } from './protection-notification';
 import type { SupportMail } from './mailer';
 import { EMAIL_PREFERENCES_SCHEMA_SQL } from './email-preferences-schema';
 import { decorateEmailWithUnsubscribe, getEmailUnsubscribePreference, unsubscribeEmailByToken, withEmailPreferenceGuard } from './email-preferences';
@@ -183,6 +183,32 @@ test('claim notification outbox preserves transaction, identity, dedupe and retr
       const claimId=await createClaim('submitted',await addOrder('not<a@valid.example'));
       await change(claimId,'submitted','needs_info',2);
       assert.equal((await pool.query('SELECT count(*)::int n FROM support_protection_notification_outbox WHERE claim_id=$1',[claimId])).rows[0].n,0);
+    });
+    await t.test('claim mail requires a current manual request and a repeat click cannot duplicate it', async () => {
+      const manual = await createClaim();
+      await pool.query("UPDATE support_protection_claims SET status='needs_info',revision=2 WHERE id=$1",[manual]);
+      assert.equal((await pool.query('SELECT count(*)::int n FROM support_protection_notification_outbox WHERE claim_id=$1',[manual])).rows[0].n,0);
+      await assert.rejects(requestProtectionClaimUpdate(manual,1),/更新|刷新/);
+      const first=await requestProtectionClaimUpdate(manual,2);
+      const again=await requestProtectionClaimUpdate(manual,2);
+      assert.equal(first.id,again.id);
+      const other=await createClaim();await change(other,'submitted','needs_info',2);
+      const before=sent.length;
+      assert.equal((await processProtectionNotifications({onlyJobId:first.id,delivery})).sent,1);
+      assert.equal(sent.length,before+1);
+      assert.equal((await pool.query('SELECT status FROM support_protection_notification_outbox WHERE claim_id=$1',[other])).rows[0].status,'pending');
+      assert.equal((await requestProtectionClaimUpdate(manual,2)).status,'sent');
+      assert.equal(sent.length,before+1);
+    });
+    await t.test('old automatic claim notices are cancelled at startup and need an explicit click', async () => {
+      const legacy=await createClaim();await change(legacy,'submitted','needs_info',2);
+      await pool.query('UPDATE support_protection_notification_outbox SET manual_requested_at=NULL WHERE claim_id=$1',[legacy]);
+      await initProtectionNotificationSchema();
+      const oldJob=(await pool.query('SELECT id,status FROM support_protection_notification_outbox WHERE claim_id=$1',[legacy])).rows[0];
+      assert.equal(oldJob.status,'cancelled');
+      assert.equal((await processProtectionNotifications({onlyJobId:Number(oldJob.id),delivery})).sent,0);
+      assert.equal((await requestProtectionClaimUpdate(legacy,2)).status,'pending');
+      assert.equal((await processProtectionNotifications({onlyJobId:Number(oldJob.id),delivery})).sent,1);
     });
   } finally { await pool.end(); await closeDatabasePools(); }
 });

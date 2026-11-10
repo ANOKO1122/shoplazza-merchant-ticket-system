@@ -31,7 +31,7 @@ submitted/reviewing/needs_info 状态支持在原 CL 下继续补资料。
 
 没有退货、自动打款或退款 API。保障时限与完成后服务商品履约已配置，见
 `support-system/opsdocs/protection-service-rules.md`；申诉状态通知使用独立发信地址，见
-`support-system/opsdocs/protection-notifications.md`。发货、完成与申请状态更新邮件已接入自动通知。
+`support-system/opsdocs/protection-notifications.md`。发货和完成邮件自动通知；申请更新邮件由客服在保存状态或回复后手动发送。
 店匠 `finished` 只展示商家系统完成记录，不冒充承运商真实签收时间。
 
 ## 邮件与访问链接

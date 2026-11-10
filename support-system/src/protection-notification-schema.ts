@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS support_protection_notification_outbox (
 CREATE INDEX IF NOT EXISTS idx_protection_notification_due ON support_protection_notification_outbox(next_attempt_at,id) WHERE status IN ('pending','sending');
 
 ALTER TABLE support_protection_notification_outbox ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT 'claim_update';
+ALTER TABLE support_protection_notification_outbox ADD COLUMN IF NOT EXISTS manual_requested_at TIMESTAMPTZ;
+UPDATE support_protection_notification_outbox SET status='cancelled',last_error='manual_delivery_enabled',lease_token=NULL,lease_until=NULL,updated_at=now()
+  WHERE event_type='claim_update' AND manual_requested_at IS NULL AND status IN ('pending','sending');
 ALTER TABLE support_protection_notification_outbox ALTER COLUMN claim_id DROP NOT NULL;
 ALTER TABLE support_protection_notification_outbox ALTER COLUMN revision DROP NOT NULL;
 ALTER TABLE support_protection_notification_outbox ALTER COLUMN target_status DROP NOT NULL;

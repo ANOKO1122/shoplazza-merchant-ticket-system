@@ -10,6 +10,7 @@ import { PROTECTION_NOTIFICATION_SCHEMA_SQL } from './protection-notification-sc
 import { protectionMailReadiness, sendProtectionNotificationEmail } from './protection-notification-mailer';
 import { decorateEmailWithUnsubscribe, isEmailUnsubscribed, normalizePreferenceEmail, withEmailPreferenceGuard } from './email-preferences';
 import { isProtectionLifecycleNotificationCurrent } from './protection-lifecycle-notification';
+import { ProtectionError } from './protection-domain';
 
 type Db = Pick<PoolClient, 'query'>;
 export interface ProtectionClaimUpdateEvent { claimId: string; revision: number; previousStatus: string; status: string; }
@@ -28,7 +29,7 @@ export async function initProtectionNotificationSchema(): Promise<void> {
   }
 }
 
-/** The caller must use the SAME transaction as the successful claim status update. */
+/** Only an explicit staff request may create a claim notification. */
 export async function enqueueProtectionClaimUpdate(client: Db, event: ProtectionClaimUpdateEvent): Promise<void> {
   if (event.previousStatus === event.status || !TARGET_STATUSES.includes(event.status)) return;
   if (!/^[1-9]\d*$/.test(event.claimId) || !Number.isSafeInteger(event.revision) || event.revision < 2) throw new Error('Invalid protection notification event');
@@ -37,11 +38,45 @@ export async function enqueueProtectionClaimUpdate(client: Db, event: Protection
     [event.claimId,event.revision,event.status])).rows[0]?.customer_email;
   let recipient:string;try{recipient=normalizePreferenceEmail(rawRecipient);}catch{return;}
   if (await isEmailUnsubscribed(recipient,'protection',client)) return;
-  await client.query(`INSERT INTO support_protection_notification_outbox(event_key,claim_id,protection_order_id,revision,target_status,recipient_email,context_json,message_id)
-    SELECT $4,c.id,o.id,$2,$3,lower(trim(o.customer_email)),jsonb_build_object('store_name',o.store_name,'order_number',o.order_number,'customer_name',o.customer_name,'claim_no',c.public_no,'protection_no',o.public_no),$5
+  await client.query(`INSERT INTO support_protection_notification_outbox(event_key,claim_id,protection_order_id,revision,target_status,recipient_email,context_json,message_id,manual_requested_at)
+    SELECT $4,c.id,o.id,$2,$3,lower(trim(o.customer_email)),jsonb_build_object('store_name',o.store_name,'order_number',o.order_number,'customer_name',o.customer_name,'claim_no',c.public_no,'protection_no',o.public_no),$5,now()
     FROM support_protection_claims c JOIN support_protection_orders o ON o.id=c.protection_order_id
     WHERE c.id=$1 AND c.revision=$2 AND c.status=$3
     ON CONFLICT(claim_id,revision) DO NOTHING`, [event.claimId, event.revision, event.status, `protection_claim_update:${event.claimId}:${event.revision}`, `<protection-claim-${event.claimId}-${event.revision}@us-seel.com>`]);
+}
+
+export async function requestProtectionClaimUpdate(claimId: string, revision: number): Promise<{id:number;status:string}> {
+  if (!/^[1-9]\d{0,18}$/.test(claimId)) throw new ProtectionError('无效的申请编号');
+  if (!Number.isSafeInteger(revision) || revision < 2) throw new ProtectionError('请先保存申请更新');
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const claim=(await client.query(`SELECT c.id,c.revision,c.status,o.customer_email
+      FROM support_protection_claims c JOIN support_protection_orders o ON o.id=c.protection_order_id
+      WHERE c.id=$1 FOR UPDATE OF c`,[claimId])).rows[0];
+    if (!claim) throw new ProtectionError('申请不存在',404);
+    if (claim.revision !== revision) throw new ProtectionError('申请已被更新，请刷新后再发送通知',409);
+    if (!TARGET_STATUSES.includes(claim.status)) throw new ProtectionError('当前申请状态无需发送更新通知',409);
+    let recipient:string;try{recipient=normalizePreferenceEmail(claim.customer_email);}catch{throw new ProtectionError('顾客邮箱无效，无法发送通知',409);}
+    if (await isEmailUnsubscribed(recipient,'protection',client)) throw new ProtectionError('顾客已退订物流保障邮件，未发送通知',409);
+    let job=(await client.query('SELECT id,status,manual_requested_at,last_error FROM support_protection_notification_outbox WHERE claim_id=$1 AND revision=$2',[claimId,revision])).rows[0];
+    if (job?.status==='cancelled' && job.last_error==='manual_delivery_enabled') {
+      job=(await client.query(`UPDATE support_protection_notification_outbox SET status='pending',manual_requested_at=now(),recipient_email=$3,
+        attempts=0,next_attempt_at=now(),subject_snapshot=NULL,body_snapshot=NULL,access_token_hash=NULL,token_expires_at=NULL,
+        last_error=NULL,lease_token=NULL,lease_until=NULL,updated_at=now() WHERE claim_id=$1 AND revision=$2 RETURNING id,status`,[claimId,revision,recipient])).rows[0];
+    } else if (job?.status==='pending' && !job.manual_requested_at) {
+      job=(await client.query(`UPDATE support_protection_notification_outbox SET manual_requested_at=now(),updated_at=now()
+        WHERE claim_id=$1 AND revision=$2 RETURNING id,status`,[claimId,revision])).rows[0];
+    } else if (!job) {
+      await enqueueProtectionClaimUpdate(client,{claimId,revision,previousStatus:'manual-request',status:claim.status});
+      job=(await client.query('SELECT id,status FROM support_protection_notification_outbox WHERE claim_id=$1 AND revision=$2',[claimId,revision])).rows[0];
+    }
+    if (!job) throw new ProtectionError('未能创建通知，顾客邮箱可能已失效',409);
+    if (job.status==='cancelled') throw new ProtectionError('这次通知已取消，请保存新更新后再发送',409);
+    await client.query('COMMIT');
+    return {id:Number(job.id),status:job.status};
+  } catch (error) { await client.query('ROLLBACK'); throw error; }
+  finally { client.release(); }
 }
 
 async function prepareMail(client: PoolClient, job: any, leaseToken: string): Promise<SupportMail | null> {
@@ -84,12 +119,16 @@ async function prepareMail(client: PoolClient, job: any, leaseToken: string): Pr
 }
 
 /** Separate from ticket mail settings/jobs. The default delivery mode is disabled. */
-export async function processProtectionNotifications(options: { limit?: number; delivery?: ProtectionNotificationDelivery } = {}): Promise<{ picked: number; sent: number; failed: number; cancelled: number; disabled: boolean }> {
+export async function processProtectionNotifications(options: { limit?: number; onlyJobId?: number; delivery?: ProtectionNotificationDelivery } = {}): Promise<{ picked: number; sent: number; failed: number; cancelled: number; disabled: boolean }> {
   const delivery = options.delivery || { ready: protectionMailReadiness().ready, send: sendProtectionNotificationEmail };
   const result = { picked: 0, sent: 0, failed: 0, cancelled: 0, disabled: !delivery.ready };
   if (!delivery.ready) return result;
   const limit = Math.max(1, Math.min(50, Math.floor(options.limit || 10)));
-  const candidates = await query(`SELECT id FROM support_protection_notification_outbox WHERE (status='pending' AND next_attempt_at<=now()) OR (status='sending' AND lease_until<now()) ORDER BY next_attempt_at,id LIMIT $1`, [limit]);
+  const candidates = await query(`SELECT id FROM support_protection_notification_outbox
+    WHERE ((status='pending' AND next_attempt_at<=now()) OR (status='sending' AND lease_until<now()))
+      AND (event_type<>'claim_update' OR manual_requested_at IS NOT NULL)
+      AND ($2::bigint IS NULL OR id=$2)
+    ORDER BY next_attempt_at,id LIMIT $1`, [limit,options.onlyJobId ?? null]);
   for (const candidate of candidates.rows) {
     const client = await getClient(); const leaseToken = crypto.randomUUID(); let locked = false, accepted = false;
     try {
@@ -98,7 +137,8 @@ export async function processProtectionNotifications(options: { limit?: number; 
       locked = (await client.query("SELECT pg_try_advisory_lock(hashtextextended('protection-notification:' || $1::text,0)) AS locked", [String(candidate.id)])).rows[0].locked;
       if (!locked) continue;
       const job = (await client.query(`UPDATE support_protection_notification_outbox SET status='sending',lease_token=$2,lease_until=now()+interval '5 minutes',attempts=attempts+1,updated_at=now()
-        WHERE id=$1 AND ((status='pending' AND next_attempt_at<=now()) OR (status='sending' AND lease_until<now())) RETURNING *`, [candidate.id, leaseToken])).rows[0];
+        WHERE id=$1 AND (event_type<>'claim_update' OR manual_requested_at IS NOT NULL)
+          AND ((status='pending' AND next_attempt_at<=now()) OR (status='sending' AND lease_until<now())) RETURNING *`, [candidate.id, leaseToken])).rows[0];
       if (!job) continue;
       result.picked++;
       const mail = await prepareMail(client, job, leaseToken);
