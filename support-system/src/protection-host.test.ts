@@ -53,9 +53,12 @@ test('customer pages allow their own camera and keep microphone and unrelated ro
     assert.equal(page.status, 200);
     assert.equal(page.headers['permissions-policy'], 'geolocation=(self), camera=(self), microphone=()');
     assert.match(String(page.headers['content-security-policy'] || ''), /media-src 'self' blob:/);
+    assert.match(String(page.headers['content-security-policy'] || ''), /frame-src https:\/\/extcall\.17track\.net/);
+    assert.match(String(page.headers['content-security-policy'] || ''), /script-src 'self';/);
     const article = await customerRequest('/protection/photo-requirements');
     assert.equal(article.status, 200);
     assert.match(String(article.headers['content-security-policy'] || ''), /frame-ancestors 'none'/);
+    assert.doesNotMatch(String(article.headers['content-security-policy'] || ''), /frame-src/);
     assert.equal((await customerRequest('/protection/help?article=police-report')).status, 200);
     assert.equal((await customerRequest('/assets/protection-help.css')).status, 200);
     assert.equal((await customerRequest('/api/admin/me')).status, 404);

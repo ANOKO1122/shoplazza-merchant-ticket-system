@@ -29,10 +29,11 @@ export const protectionHostBoundary: RequestHandler = (req, res, next) => {
   next();
 };
 
-export const protectionPageHeaders: RequestHandler = (_req, res, next) => {
+export const protectionPageHeaders: RequestHandler = (req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Permissions-Policy', protectionPermissionsPolicy);
   res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; media-src 'self' blob:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+  const trackingFrame = req.path === '/protection' || req.path === '/' ? '; frame-src https://extcall.17track.net' : '';
+  res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; media-src 'self' blob:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'" + trackingFrame);
   next();
 };
