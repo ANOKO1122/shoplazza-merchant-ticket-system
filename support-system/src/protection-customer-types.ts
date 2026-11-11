@@ -23,7 +23,7 @@ export interface CustomerClaim {
   messages: Array<{ id: string; description: string; created_at: string; evidence: CustomerEvidence[] }>;
 }
 export interface CustomerProtectionOrder {
-  protection_no: string; order_number: string; store_name: string; currency: string; purchased_at: string | null;
+  protection_no: string; order_number: string; currency: string; purchased_at: string | null;
   customer_name: string; protection_fee_cents: number | null; remaining_amount_cents: number | null;
   shipping_address: { address1: string; address2: string; city: string; province: string; postal_code: string; country: string };
   items: Array<{ id: string; title: string; image_url: string | null; quantity: number; amount_cents: number | null; available_quantity: number; available_amount_cents: number | null; has_active_claim: boolean; request_windows?: ProtectionRequestWindow[] }>;

@@ -67,7 +67,7 @@ export async function enqueueProtectionLifecycleNotifications(client: Db, row: R
   for (const event of milestones) {
     if (Date.parse(event.occurred_at) < new Date(activation.activated_at).getTime()) continue;
     // Record suppression too: reindexing after resubscribe must not send an old event.
-    const context = { store_name:row.store_name, order_number:row.order_number, customer_name:row.customer_name,
+    const context = { order_number:row.order_number, customer_name:row.customer_name,
       protection_no:row.public_no, ...event };
     const obsoleteShipment = event.event_type === 'shipment' && milestones.some(value => value.event_type === 'completion');
     const cancellationReason = unsubscribed ? 'email_unsubscribed:protection' : obsoleteShipment ? 'order_already_completed' : null;

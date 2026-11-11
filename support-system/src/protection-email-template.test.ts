@@ -4,6 +4,13 @@ import { PROTECTION_COMPLETION_TEMPLATE, PROTECTION_EMAIL_PREVIEW_VARS } from '.
 import { renderTemplateString } from './email-service';
 import * as protectionTemplates from './protection-email-template';
 
+test('protection mail defaults omit merchant names in subjects and bodies', () => {
+  for (const template of [protectionTemplates.PROTECTION_SHIPMENT_TEMPLATE, protectionTemplates.PROTECTION_COMPLETION_TEMPLATE, protectionTemplates.PROTECTION_CLAIM_UPDATE_TEMPLATE]) {
+    const rendered = renderTemplateString(template.subject + template.body, { ...PROTECTION_EMAIL_PREVIEW_VARS, store_name: 'Actual Merchant' });
+    assert.doesNotMatch(rendered, /Actual Merchant|\{\{store_name\}\}/);
+  }
+});
+
 // Simulate a mail sanitizer dropping fills while preserving link text colors.
 // This is the reported failure mode, not an emulation of a specific QQ version.
 function stripEmailBackgrounds(html: string): string {
@@ -58,7 +65,7 @@ test('shipment notification describes a partial shipment and uses the private pr
   const subject = renderTemplateString(template.subject, PROTECTION_EMAIL_PREVIEW_VARS);
   assert.match(subject, /DEMO-1042/);
   assert.match(html, /A shipment from your protected order is on the way/);
-  assert.match(html, /Example Store has recorded a shipment/);
+  assert.match(html, /A shipment has been recorded/);
   assert.match(html, /Some items may ship separately/);
   assert.match(html, /Tracking number: DEMO-TRACKING-1042/);
   assert.match(html, /Carrier: Example carrier/);

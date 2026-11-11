@@ -69,7 +69,7 @@ test('claim notification outbox preserves transaction, identity, dedupe and retr
       assert.equal(sent[0].messageId, failedMail!.messageId); assert.equal(sent[0].html, failedMail!.html);assert.equal(sent[0].text,failedMail!.text);
       assert.match(sent[0].html,/unsubscribe/i); assert.match(sent[0].text,/unsubscribe/i);
       assert.equal((await getEmailUnsubscribePreference(footerToken(sent[0].html)))?.category,'protection');
-      assert.match(sent[0].html, /&lt;Fixture Store&gt;/); assert.doesNotMatch(sent[0].html, /PRIVATE INTERNAL INFORMATION|approved|rejected|insurance|underwrit|\/ticket\?/i);
+      assert.doesNotMatch(sent[0].html, /Fixture Store|PRIVATE INTERNAL INFORMATION|approved|rejected|insurance|underwrit|\/ticket\?/i);
       const raw = sent[0].html.match(/https:\/\/us-seel\.com\/protection#access=(pa_[A-Za-z0-9_-]+)/)![1];
       const token = (await pool.query('SELECT * FROM support_protection_access_tokens WHERE token_hash=$1', [crypto.createHash('sha256').update(raw).digest('hex')])).rows[0];
       assert.equal(String(token.protection_order_id), String(order)); assert.equal(token.customer_email, 'customer@example.invalid');
@@ -92,6 +92,7 @@ test('claim notification outbox preserves transaction, identity, dedupe and retr
       await initProtectionNotificationSchema();
       const other = await createClaim(); await change(other, 'submitted', 'rejected', 2);
       await processProtectionNotifications({ delivery }); assert.equal(sent.length, 3); assert.match(sent[2].subject, /^Store update CL-/); assert.match(sent[2].html, /View update CL-/);
+      assert.match(sent[2].html, /Shipping Protection/); assert.doesNotMatch(sent[2].html, /Fixture Store/);
     });
     await t.test('approved and closed transitions each notify once while same-status edits remain silent', async () => {
       const other = await createClaim();

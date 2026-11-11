@@ -174,6 +174,7 @@ test('customer portal isolation, evidence, repeated claims and review quantities
     });
     await t.test('customer windows expose verified dates and cannot be bypassed with unsupported issues or an unopened date',async()=>{
       const view=await(await request('/api/protection/order',first)).json() as any;
+      assert.equal('store_name' in view.order,false,'Customer order response must not expose the merchant name');
       assert.equal(view.coverage.policy_version,'2026-11-03:shipment');assert.ok(view.order.items[0].request_windows.every((w:any)=>w.status==='open'));
       const unsupported=await request('/api/protection/claims',first,{...submission,submission_id:crypto.randomUUID(),received_package:true,issue_code:'wrong_item'});
       assert.equal(unsupported.status,400);assert.match(((await unsupported.json()) as any).error,/outside shipping protection/);

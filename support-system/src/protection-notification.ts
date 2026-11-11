@@ -16,6 +16,16 @@ type Db = Pick<PoolClient, 'query'>;
 export interface ProtectionClaimUpdateEvent { claimId: string; revision: number; previousStatus: string; status: string; }
 export interface ProtectionNotificationDelivery { ready: boolean; send: (mail: SupportMail) => Promise<{ messageId: string }>; }
 const TARGET_STATUSES = ['needs_info', 'approved', 'rejected', 'closed'];
+// The original default templates were copied into editable database rows. Upgrade
+// only those exact defaults; leave every staff-edited template and preset intact.
+const LEGACY_DEFAULT_HASHES: Record<string, string> = {
+  [PROTECTION_SHIPMENT_EMAIL_TYPE]: '791c67a1d8f5d48ea03570c3e306212abf710c92449b997008143abc409b878a',
+  [PROTECTION_COMPLETION_EMAIL_TYPE]: '930c480bb98439bb6505e0ab754de331d79dc57823adf12342fdd181a449643e',
+  [PROTECTION_CLAIM_UPDATE_EMAIL_TYPE]: 'a5926a93aec93f1016d5b59531e85f3e46e14985b8cb8db4bafc6f08135de33b',
+};
+function isLegacyDefault(type: string, subject: string, body: string): boolean {
+  return crypto.createHash('sha256').update(`${subject}\0${body}`).digest('hex') === LEGACY_DEFAULT_HASHES[type];
+}
 
 export async function initProtectionNotificationSchema(): Promise<void> {
   await query(PROTECTION_NOTIFICATION_SCHEMA_SQL);
@@ -26,6 +36,13 @@ export async function initProtectionNotificationSchema(): Promise<void> {
   ] as const) {
     await query(`INSERT INTO support_email_templates(email_type,subject_template,body_template) VALUES($1,$2,$3) ON CONFLICT(email_type) DO NOTHING`, [type,template.subject,template.body]);
     await query(`INSERT INTO support_email_template_presets(email_type,preset_name,subject_template,body_template) VALUES($1,$2,$3,$4) ON CONFLICT(email_type,preset_name) DO NOTHING`, [type,name,template.subject,template.body]);
+    for (const table of ['support_email_templates', 'support_email_template_presets'] as const) {
+      const rows = await query(`SELECT subject_template,body_template FROM ${table} WHERE email_type=$1${table.endsWith('presets') ? ' AND preset_name=$2' : ''}`, table.endsWith('presets') ? [type,name] : [type]);
+      const old = rows.rows[0];
+      if (old && isLegacyDefault(type,old.subject_template,old.body_template)) {
+        await query(`UPDATE ${table} SET subject_template=$2,body_template=$3 WHERE email_type=$1 AND subject_template=$4 AND body_template=$5${table.endsWith('presets') ? ' AND preset_name=$6' : ''}`, table.endsWith('presets') ? [type,template.subject,template.body,old.subject_template,old.body_template,name] : [type,template.subject,template.body,old.subject_template,old.body_template]);
+      }
+    }
   }
 }
 
@@ -39,7 +56,7 @@ export async function enqueueProtectionClaimUpdate(client: Db, event: Protection
   let recipient:string;try{recipient=normalizePreferenceEmail(rawRecipient);}catch{return;}
   if (await isEmailUnsubscribed(recipient,'protection',client)) return;
   await client.query(`INSERT INTO support_protection_notification_outbox(event_key,claim_id,protection_order_id,revision,target_status,recipient_email,context_json,message_id,manual_requested_at)
-    SELECT $4,c.id,o.id,$2,$3,lower(trim(o.customer_email)),jsonb_build_object('store_name',o.store_name,'order_number',o.order_number,'customer_name',o.customer_name,'claim_no',c.public_no,'protection_no',o.public_no),$5,now()
+    SELECT $4,c.id,o.id,$2,$3,lower(trim(o.customer_email)),jsonb_build_object('order_number',o.order_number,'customer_name',o.customer_name,'claim_no',c.public_no,'protection_no',o.public_no),$5,now()
     FROM support_protection_claims c JOIN support_protection_orders o ON o.id=c.protection_order_id
     WHERE c.id=$1 AND c.revision=$2 AND c.status=$3
     ON CONFLICT(claim_id,revision) DO NOTHING`, [event.claimId, event.revision, event.status, `protection_claim_update:${event.claimId}:${event.revision}`, `<protection-claim-${event.claimId}-${event.revision}@us-seel.com>`]);
@@ -105,7 +122,7 @@ async function prepareMail(client: PoolClient, job: any, leaseToken: string): Pr
       const tokenHash = digest(token);
       const link = `${protectionPublicBaseUrl()}/protection#access=${token}`;
       const type = current.event_type === 'shipment' ? PROTECTION_SHIPMENT_EMAIL_TYPE : current.event_type === 'completion' ? PROTECTION_COMPLETION_EMAIL_TYPE : PROTECTION_CLAIM_UPDATE_EMAIL_TYPE;
-      const rendered = await renderEmailFromTemplate(type, { ...current.context_json, customer_name: current.context_json.customer_name?.trim() || 'Customer', protection_link: link });
+      const rendered = await renderEmailFromTemplate(type, { ...current.context_json, store_name: 'Shipping Protection', customer_name: current.context_json.customer_name?.trim() || 'Customer', protection_link: link });
       subject = rendered.subject; html = rendered.html;
       if (!subject.trim() || !html.includes(link)) throw new Error('Protection notification template must contain its secure link');
       const tokenRow = (await client.query(`INSERT INTO support_protection_access_tokens(token_hash,protection_order_id,customer_email,expires_at) VALUES($1,$2,$3,now()+make_interval(days=>$4::int)) RETURNING expires_at`, [tokenHash, job.protection_order_id, job.recipient_email,PROTECTION_ACCESS_LINK_DAYS])).rows[0];
