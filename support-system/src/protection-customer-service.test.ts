@@ -133,11 +133,20 @@ test('customer portal isolation, evidence, repeated claims and review quantities
       }
       assert.equal(Number((await pool.query('SELECT count(*)::int n FROM support_protection_claims')).rows[0].n),before);
     });
-    await t.test('new access links last 90 days while legacy expiry, 12-hour sessions and revocation remain enforced',async()=>{
+    await t.test('new access links last 120 days, stay unique per order, and preserve legacy expiry and 12-hour sessions',async()=>{
       const tokenFrom=(url:string)=>new URLSearchParams(new URL(url).hash.slice(1)).get('access')!;
       const token=tokenFrom(await createProtectionAccessLink(String(orders[0].id)));
       const row=(await pool.query('SELECT * FROM support_protection_access_tokens WHERE token_hash=$1',[digest(token)])).rows[0];
-      assert.equal(row.expires_at.getTime()-row.created_at.getTime(),90*86400000);
+      assert.equal(row.expires_at.getTime()-row.created_at.getTime(),120*86400000);
+      const otherToken=tokenFrom(await createProtectionAccessLink(String(orders[1].id)));
+      assert.notEqual(otherToken,token);
+      const otherRow=(await pool.query('SELECT protection_order_id,expires_at,created_at FROM support_protection_access_tokens WHERE token_hash=$1',[digest(otherToken)])).rows[0];
+      assert.equal(String(row.protection_order_id),String(orders[0].id));
+      assert.equal(String(otherRow.protection_order_id),String(orders[1].id));
+      assert.equal(otherRow.expires_at.getTime()-otherRow.created_at.getTime(),120*86400000);
+      assert.equal((await exchangeProtectionAccessToken(otherToken)).protection_no,orders[1].public_no);
+      await assert.rejects(pool.query(`INSERT INTO support_protection_access_tokens(token_hash,protection_order_id,customer_email,expires_at)
+        VALUES($1,$2,'second@example.invalid',now()+interval '120 days')`,[digest(token),orders[1].id]),(error:any)=>error.code==='23505');
       const {session}=await exchangeProtectionAccessToken(token);
       const sessionRow=(await pool.query('SELECT * FROM support_protection_customer_sessions WHERE session_hash=$1',[digest(session)])).rows[0];
       assert.equal(sessionRow.expires_at.getTime()-sessionRow.created_at.getTime(),12*3600000);
@@ -151,6 +160,11 @@ test('customer portal isolation, evidence, repeated claims and review quantities
         VALUES($1,$2,'first@example.invalid',now()+interval '30 days') RETURNING expires_at`,[digest(legacy),orders[0].id])).rows[0];
       await exchangeProtectionAccessToken(legacy);await createProtectionAccessLink(String(orders[0].id));
       assert.equal((await pool.query('SELECT expires_at FROM support_protection_access_tokens WHERE token_hash=$1',[digest(legacy)])).rows[0].expires_at.getTime(),legacyRow.expires_at.getTime());
+      const previous90=`pa_${crypto.randomBytes(32).toString('base64url')}`;
+      const previous90Row=(await pool.query(`INSERT INTO support_protection_access_tokens(token_hash,protection_order_id,customer_email,expires_at)
+        VALUES($1,$2,'first@example.invalid',now()+interval '90 days') RETURNING expires_at`,[digest(previous90),orders[0].id])).rows[0];
+      await createProtectionAccessLink(String(orders[0].id));
+      assert.equal((await pool.query('SELECT expires_at FROM support_protection_access_tokens WHERE token_hash=$1',[digest(previous90)])).rows[0].expires_at.getTime(),previous90Row.expires_at.getTime());
       const short=(await pool.query("UPDATE support_protection_access_tokens SET expires_at=now()+interval '1 hour' WHERE token_hash=$1 RETURNING expires_at",[digest(legacy)])).rows[0];
       const clipped=await exchangeProtectionAccessToken(legacy);
       assert.equal((await pool.query('SELECT expires_at FROM support_protection_customer_sessions WHERE session_hash=$1',[digest(clipped.session)])).rows[0].expires_at.getTime(),short.expires_at.getTime());
@@ -258,7 +272,7 @@ test('customer portal isolation, evidence, repeated claims and review quantities
       assert.equal((await submit({})).status,400);
       assert.equal((await submit({camera_exception_reason:'no'})).status,400);
       const exception='This device has no working camera. Please review my request manually.';
-      const forbidden=await submit({evidence_ids:[generic.id],camera_exception_reason:exception,source:'camera'});assert.equal(forbidden.status,400);assert.match(((await forbidden.json()) as any).error,/gallery/);
+      const forbidden=await submit({evidence_ids:[generic.id],camera_exception_reason:exception,source:'camera'});assert.equal(forbidden.status,400);assert.match(((await forbidden.json()) as any).error,/ordinary attachments/);
       const exceptionResponse=await submit({camera_exception_reason:exception});assert.equal(exceptionResponse.status,201,await exceptionResponse.clone().text());const exceptionClaim=((await exceptionResponse.json()) as any).claim;
       assert.equal(exceptionClaim.camera_exception_reason,exception);assert.equal(exceptionClaim.status,'submitted');
       const exceptionRow=(await pool.query('SELECT id,revision FROM support_protection_claims WHERE public_no=$1',[exceptionClaim.public_no])).rows[0];

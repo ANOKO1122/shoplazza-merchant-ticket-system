@@ -4,7 +4,7 @@ import { query } from './pg';
 import { ProtectionError } from './protection-domain';
 
 export const PROTECTION_COOKIE='protection_customer';
-export const PROTECTION_ACCESS_LINK_DAYS=90;
+export const PROTECTION_ACCESS_LINK_DAYS=120;
 export const digest=(value:string)=>crypto.createHash('sha256').update(value).digest('hex');
 export interface ProtectionCustomerIdentity { orderId:string; publicNo:string; email:string; sessionHash:string; }
 export function protectionPublicBaseUrl():string {

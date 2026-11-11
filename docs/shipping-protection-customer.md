@@ -43,15 +43,15 @@ submitted/reviewing/needs_info 状态支持在原 CL 下继续补资料。
 默认预览使用合成资料和不含访问权限的 us-seel.com URL。
 
 后台「保障订单」详情可主动生成、复制并打开顾客访问链接。生成不会发送邮件。
-自动邮件流程调用 `createProtectionAccessLink(protectionOrderId)`，将其结果传给
-`protection_link`，不能调用工单 `bt_`/`ta_` 令牌生成器。保障邮件使用
+自动邮件在通知队列准备发送时生成独立的订单访问链接，并与手动生成流程共用
+`PROTECTION_ACCESS_LINK_DAYS` 有效期；`protection_link` 不使用工单 `bt_`/`ta_` 令牌。保障邮件使用
 `support@us-seel.com` 独立发送；最新启用时间与队列规则以
 `support-system/opsdocs/protection-notifications.md` 为准。
 
 ## 安全边界
 
 - `pa_` 随机访问令牌在数据库中只保存 SHA-256，绑定一个保障订单及当前邮箱，
-  新签发链接默认 90 天有效，历史链接保持原到期日；`ps_` 会话最多 12 小时，邮箱改变或令牌撤销立即失效。
+  2026-11-10 起新签发的手动及邮件链接均为 120 天有效；已发出的 30／90 天链接保持原到期日。`ps_` 会话最多 12 小时，邮箱改变或令牌撤销立即失效。
   这两个时间属于访问凭证有效期，不代表赔付申请期限。
 - token 仅通过 URL fragment 传入，脚本立即移除并以 POST 换取 HttpOnly、
   SameSite=Lax、HTTPS Secure 的 host-only cookie，path 为 `/api/protection`。

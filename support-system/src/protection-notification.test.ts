@@ -73,7 +73,7 @@ test('claim notification outbox preserves transaction, identity, dedupe and retr
       const raw = sent[0].html.match(/https:\/\/us-seel\.com\/protection#access=(pa_[A-Za-z0-9_-]+)/)![1];
       const token = (await pool.query('SELECT * FROM support_protection_access_tokens WHERE token_hash=$1', [crypto.createHash('sha256').update(raw).digest('hex')])).rows[0];
       assert.equal(String(token.protection_order_id), String(order)); assert.equal(token.customer_email, 'customer@example.invalid');
-      assert.equal(token.expires_at.getTime()-token.created_at.getTime(),90*86400000);
+      assert.equal(token.expires_at.getTime()-token.created_at.getTime(),120*86400000);
       assert.equal(token.expires_at.getTime(),failed.token_expires_at.getTime(),'Retry keeps the original capability expiry');
       assert.equal((await pool.query('SELECT status FROM support_protection_notification_outbox')).rows[0].status, 'sent');
       await processProtectionNotifications({ delivery }); assert.equal(sent.length, 1);
