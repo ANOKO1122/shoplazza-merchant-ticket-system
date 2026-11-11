@@ -167,7 +167,8 @@ test('protection data and review lifecycle retain one contract and serialize com
       await assert.rejects(createProtectionClaim(input,actor),/not opened/);
       await pool.query(`UPDATE support_protection_orders SET timeline_json=jsonb_set(timeline_json,'{items,coat,shipped_at}',to_jsonb((now()-interval '70 days')::text)) WHERE id=$1`,[subject.id]);
       const created=await createProtectionClaim(input,actor);
-      await pool.query(`UPDATE support_protection_orders SET timeline_json=jsonb_set(timeline_json,'{ordered_at}',to_jsonb((now()-interval '100 days')::text)) WHERE id=$1`,[subject.id]);
+      await pool.query(`UPDATE support_protection_orders SET paid_at=now()-interval '121 days' WHERE id=$1`,[subject.id]);
+      await assert.rejects(createProtectionClaim({...input,item_ids:['hat'],requested_amount_cents:1000},actor),/ended/);
       const approved=await updateProtectionClaim(created.id,{revision:created.revision,status:'approved',approved_amount_cents:4000,note:'Eligible when submitted'},actor);
       assert.equal(approved.status,'approved');
       const evidence=(await pool.query('SELECT policy_snapshot_json FROM support_protection_claims WHERE id=$1',[created.id])).rows[0].policy_snapshot_json;

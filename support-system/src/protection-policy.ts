@@ -57,23 +57,24 @@ export function extractProtectionTimeline(value: unknown, physicalItems: Array<s
 const DAY = 24 * 60 * 60 * 1000;
 const REASONS: CoveredReason[] = ['delayed', 'lost', 'damaged', 'stolen'];
 /** Missing dates are a verification requirement; they never start a clock at today's date. */
-export function evaluateProtectionCoverage(order: { timeline?: ProtectionTimeline; items: Array<{ id: string; is_protection: boolean }> }, options: {
+export function evaluateProtectionCoverage(order: { paid_at: string | null; timeline?: ProtectionTimeline; items: Array<{ id: string; is_protection: boolean }> }, options: {
   mode?: ProtectionPolicyMode | null; now?: number; itemIds?: string[];
 } = {}): ProtectionCoverage {
   const mode = options.mode === undefined ? configuredProtectionPolicyMode() : options.mode;
   const now = options.now ?? Date.now(), timeline = order.timeline || extractProtectionTimeline({}, []);
   const ids = options.itemIds || order.items.filter(item => !item.is_protection).map(item => item.id);
-  const completion = date(timeline.completed_at), ordered = date(timeline.ordered_at);
+  const completion = date(timeline.completed_at), paid = date(order.paid_at);
   const windows = REASONS.map((reason): ProtectionRequestWindow => {
     const isArrival = reason === 'damaged' || reason === 'stolen';
+    const useShipment = isArrival || mode === 'shipment';
     let anchor: string | null = completion;
-    if (!isArrival && mode === 'shipment') {
+    if (useShipment) {
       const dates = ids.map(id => date(timeline.items?.[id]?.shipped_at));
       anchor = dates.length > 0 && dates.every(Boolean) ? dates.sort().slice(-1)[0]! : null;
     }
-    const basis = isArrival || mode === 'completion' ? 'Based on the store’s recorded order completion date.' : 'Based on the selected items’ recorded shipment dates.';
-    const opens = anchor ? Date.parse(anchor) + (reason === 'delayed' ? 30 : reason === 'lost' ? 60 : 0) * DAY : null;
-    const closes = isArrival ? (completion ? Date.parse(completion) + 7 * DAY : null) : (ordered ? Date.parse(ordered) + 90 * DAY : null);
+    const basis = useShipment ? 'Based on the selected items’ recorded shipment dates.' : 'Based on the store’s recorded order completion date.';
+    const opens = anchor ? Date.parse(anchor) + (isArrival ? 20 : reason === 'delayed' ? 30 : 60) * DAY : null;
+    const closes = paid ? Date.parse(paid) + 120 * DAY : null;
     let status: ProtectionRequestWindow['status'] = !mode || opens === null || closes === null || !ids.length ? 'unknown'
       : now > closes || opens > closes ? 'expired' : now < opens ? 'not_open' : 'open';
     const message = status === 'unknown' ? 'The dates for this request are not available yet. A new request cannot be submitted until these dates are confirmed.'
@@ -83,5 +84,5 @@ export function evaluateProtectionCoverage(order: { timeline?: ProtectionTimelin
       : status === 'not_open' ? 'This request window has not opened yet.' : 'You can submit this type of request now.';
     return { reason, status, opens_at: opens === null ? null : new Date(opens).toISOString(), closes_at: closes === null ? null : new Date(closes).toISOString(), basis, message };
   });
-  return { policy_version: `2026-11-03:${mode || 'unconfigured'}`, evaluated_at: new Date(now).toISOString(), windows, timestamps: timeline };
+  return { policy_version: `2026-11-11:${mode || 'unconfigured'}`, evaluated_at: new Date(now).toISOString(), windows, timestamps: timeline };
 }
