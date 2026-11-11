@@ -19,5 +19,6 @@ test('tracking results stay in an isolated modal frame', () => {
   assert.match(html, /<dialog[^>]*cp-tracking-dialog/);
   assert.match(html, /<iframe[^>]*sandbox="allow-scripts allow-forms allow-popups allow-same-origin"/);
   assert.match(html, /referrerPolicy="no-referrer"/);
+  assert.match(html, /open tracking in a new tab/);
   assert.doesNotMatch(html, /externalcall\.js/);
 });
