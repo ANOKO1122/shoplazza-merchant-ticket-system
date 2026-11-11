@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { validateProtectionManifest, redactInstallerOutput, parseInstallerResult } from './protection-installer';
 
 test('installer rejects cross-store and path-injected configuration', () => {
-  const manifest = { store: 'pilot.myshoplaza.com', shopId: '123', themeId: 'theme-a', themeFamily: 'hero', asset: 'protection.js', products: [{ id: 'p1', handle: 'protection-low' }], tiers: [{ productId: 'p1', variantId: 'v1', cents: 200 }], hostnames: ['pilot.myshoplaza.com'], enabled: true };
+  const manifest = { store: 'pilot.myshoplaza.com', shopId: '123', themeId: 'theme-a', themeFamily: 'hero', asset: 'protection.js', products: [{ id: 'p1', handle: 'protection-low' }], tiers: [{ productId: 'p1', variantId: 'v1', cents: 198 }], hostnames: ['pilot.myshoplaza.com'], enabled: true };
   assert.doesNotThrow(() => validateProtectionManifest(manifest, manifest.store));
+  assert.throws(() => validateProtectionManifest({ ...manifest, tiers: [{ ...manifest.tiers[0], cents: 197 }] }, manifest.store));
   assert.throws(() => validateProtectionManifest(manifest, 'other.myshoplaza.com'));
   assert.throws(() => validateProtectionManifest({ ...manifest, asset: '../../secrets.js' }, manifest.store));
   assert.throws(() => validateProtectionManifest({ ...manifest, themeFamily: 'unknown' }, manifest.store));

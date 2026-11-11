@@ -15,7 +15,7 @@ export function validateProtectionManifest(value: any, domain: string): void {
     || (value.retiredProducts !== undefined && !Array.isArray(value.retiredProducts))
     || [...products, ...retiredProducts].some((p: any) => !safeId.test(p.id) || !safeId.test(p.handle))
     || managedIds.size !== products.length + retiredProducts.length
-    || !Array.isArray(value.tiers) || !value.tiers.length || value.tiers.some((t: any) => !safeId.test(t.variantId) || !managedIds.has(t.productId) || (t.active !== false && !activeIds.has(t.productId)) || (t.active !== undefined && typeof t.active !== 'boolean') || !Number.isSafeInteger(t.cents) || t.cents < 200)
+    || !Array.isArray(value.tiers) || !value.tiers.length || value.tiers.some((t: any) => !safeId.test(t.variantId) || !managedIds.has(t.productId) || (t.active !== false && !activeIds.has(t.productId)) || (t.active !== undefined && typeof t.active !== 'boolean') || !Number.isSafeInteger(t.cents) || t.cents < 198)
     || !Array.isArray(value.hostnames) || !value.hostnames.includes(domain)) throw new Error('安装配置不完整或与店铺不符，需要先完成主题适配');
 }
 export function redactInstallerOutput(output: string, token: string): string {
