@@ -99,9 +99,9 @@ test('template escapes customer text and hides absent shipment fields', () => {
 test('claim update email links to the private request without exposing a decision or internal details', () => {
   const template = (protectionTemplates as any).PROTECTION_CLAIM_UPDATE_TEMPLATE;
   assert.ok(template, 'The claim update template must be registered');
-  const html = renderTemplateString(template.body, { ...PROTECTION_EMAIL_PREVIEW_VARS, claim_no: 'CL-DEMO-1042' });
+  const html = renderTemplateString(template.body, PROTECTION_EMAIL_PREVIEW_VARS);
   assert.match(html, /Your request has been updated/);
-  assert.match(html, /CL-DEMO-1042/);
+  assert.match(html, /CL-[0-9A-F]{20}/);
   assert.match(html, /DEMO-1042/);
   assert.match(html, /View update/);
   assert.match(html, /https:\/\/us-seel\.com\/protection/);

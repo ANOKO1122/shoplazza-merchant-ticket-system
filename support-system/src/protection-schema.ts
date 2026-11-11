@@ -1,8 +1,30 @@
-/** Additive tables only. Claim events are retained with the claim, independently of transient system logs. */
+const randomReference = (prefix: 'SP' | 'CL') =>
+  `('${prefix}-' || upper(left(replace(gen_random_uuid()::text, '-', ''), 12) || left(replace(gen_random_uuid()::text, '-', ''), 8)))`;
+
+/** Preserve existing generated values while assigning opaque references to future rows. */
+export const PROTECTION_PUBLIC_NO_MIGRATION_SQL = `
+DO $protection_public_no$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='support_protection_orders'::regclass AND attname='public_no' AND attgenerated='s') THEN
+    ALTER TABLE support_protection_orders ALTER COLUMN public_no DROP EXPRESSION;
+  END IF;
+  ALTER TABLE support_protection_orders ALTER COLUMN public_no SET DEFAULT ${randomReference('SP')};
+  ALTER TABLE support_protection_orders ALTER COLUMN public_no SET NOT NULL;
+
+  IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='support_protection_claims'::regclass AND attname='public_no' AND attgenerated='s') THEN
+    ALTER TABLE support_protection_claims ALTER COLUMN public_no DROP EXPRESSION;
+  END IF;
+  ALTER TABLE support_protection_claims ALTER COLUMN public_no SET DEFAULT ${randomReference('CL')};
+  ALTER TABLE support_protection_claims ALTER COLUMN public_no SET NOT NULL;
+END;
+$protection_public_no$;
+`;
+
+/** Protection schema and idempotent reference migration. Claim events outlive transient system logs. */
 export const PROTECTION_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS support_protection_orders (
   id BIGSERIAL PRIMARY KEY,
-  public_no TEXT GENERATED ALWAYS AS ('SP-' || lpad(id::text, 10, '0')) STORED UNIQUE,
+  public_no TEXT NOT NULL DEFAULT ${randomReference('SP')} UNIQUE,
   store_subdomain TEXT NOT NULL,
   store_name TEXT NOT NULL,
   order_id TEXT NOT NULL,
@@ -44,7 +66,7 @@ $protection_timeline$;
 
 CREATE TABLE IF NOT EXISTS support_protection_claims (
   id BIGSERIAL PRIMARY KEY,
-  public_no TEXT GENERATED ALWAYS AS ('CL-' || lpad(id::text, 10, '0')) STORED UNIQUE,
+  public_no TEXT NOT NULL DEFAULT ${randomReference('CL')} UNIQUE,
   protection_order_id BIGINT NOT NULL REFERENCES support_protection_orders(id),
   reason TEXT NOT NULL CHECK (reason IN ('lost','damaged','stolen','delayed','other')),
   description TEXT NOT NULL,
@@ -118,4 +140,5 @@ BEGIN
   END IF;
 END;
 $protection_trigger$;
+${PROTECTION_PUBLIC_NO_MIGRATION_SQL}
 `;

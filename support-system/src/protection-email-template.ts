@@ -74,6 +74,6 @@ export const PROTECTION_COMPLETION_TEMPLATE = {
 export const PROTECTION_EMAIL_PREVIEW_VARS: Record<string, string> = {
   store_name: 'example.invalid', store_domain: 'example.invalid', order_id: 'example-order',
   order_number: 'DEMO-1042', customer_name: 'Alex', customer_email: 'alex@example.invalid',
-  protection_no: 'SP-DEMO-1042', claim_no: 'CL-DEMO-1042', protection_link: 'https://us-seel.com/protection',
+  protection_no: 'SP-91A7C30D8E54B6F20A4C', claim_no: 'CL-C4F0A12B53D9E8076B2F', protection_link: 'https://us-seel.com/protection',
   client_link: 'https://us-seel.com/protection', tracking_number: 'DEMO-TRACKING-1042', carrier: 'Example carrier',
 };

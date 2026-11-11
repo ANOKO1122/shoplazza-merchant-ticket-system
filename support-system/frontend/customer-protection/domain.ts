@@ -1,8 +1,11 @@
 import type { CustomerIssueCode, CustomerSelection } from '../../src/protection-customer-types';
 export const issueLabels: Record<CustomerIssueCode, string> = { damaged: 'My item arrived damaged', missing_items: 'Items are missing from my package', wrong_item: 'I received the wrong item', delivered_not_received: 'My order is marked complete, but I have not received my package', not_arrived: 'My package has not arrived', delayed: 'My shipment is significantly delayed', other: 'Another delivery or product issue' };
+export function issueLabel(issue: CustomerIssueCode, received: boolean | null | undefined): string {
+  return issue === 'delayed' && received === true ? 'My package arrived significantly late' : issueLabels[issue];
+}
 export function issueOptions(received: boolean) {
-  const keys: CustomerIssueCode[] = received ? ['damaged', 'missing_items'] : ['delivered_not_received', 'not_arrived', 'delayed'];
-  return keys.map(value => ({ value, label: issueLabels[value] }));
+  const keys: CustomerIssueCode[] = received ? ['damaged', 'missing_items', 'delayed'] : ['delivered_not_received', 'not_arrived', 'delayed'];
+  return keys.map(value => ({ value, label: issueLabel(value, received) }));
 }
 type SelectionItem = { id: string; quantity: number; amount_cents: number | null; available_quantity: number; available_amount_cents: number | null; has_active_claim: boolean };
 export function groupShipmentItems<T extends { id: string; quantity: number }>(items: T[], shipments: Array<{ item_quantities: CustomerSelection[] }>) {

@@ -287,7 +287,8 @@ sidebar and a collapsible mobile article list. The existing form URL
 `/protection/photo-requirements` remains the damage-photo entry. Other articles
 use the exact `/protection/help` path with a validated `article` query value.
 The customer page no longer links to the reference support site. Article rules
-match this portal's request windows, required location and camera exception;
+match this portal's request windows, then-required location (made optional
+2026-11-11) and camera exception;
 carrier letters and police incident reports are optional context unless the
 store asks for them. The customer host permits the new page and its CSS only
 through exact paths. No email, order or notification settings were changed.

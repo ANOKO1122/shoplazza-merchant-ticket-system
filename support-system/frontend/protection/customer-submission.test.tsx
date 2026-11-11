@@ -32,7 +32,7 @@ test('staff location review shows original coordinates and qualifies the device 
   assert.ok(!html.includes('<iframe') && !html.includes('maps.google'));
 });
 
-test('older claims without a saved location do not imply the current required step is optional', () => {
+test('claims without a saved location show a neutral absence message', () => {
   const html = renderToStaticMarkup(<CustomerSubmission submission={{ ...submission, location: null }} order={order} />);
   assert.ok(html.includes('此申请未记录位置'));
   assert.ok(!html.includes('不影响正常审核'));

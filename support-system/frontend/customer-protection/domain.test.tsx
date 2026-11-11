@@ -18,7 +18,8 @@ test('shipment cards show assigned quantities once and keep unassigned items acc
   assert.deepEqual(groupShipmentItems([{ id: 'split', quantity: 3 }], [{ item_quantities: [{ item_id: 'split', quantity: 1 }, { item_id: 'split', quantity: 9 }] }]).shipped[0].map(({ item, quantity }) => [item.id, quantity]), [['split', 3]]);
 });
 test('received and missing package questions cannot retain an incompatible issue', () => {
-  assert.deepEqual(issueOptions(true).map(option => option.value), ['damaged', 'missing_items']);
+  assert.deepEqual(issueOptions(true).map(option => option.value), ['damaged', 'missing_items', 'delayed']);
+  assert.equal(issueOptions(true).find(option => option.value === 'delayed')?.label, 'My package arrived significantly late');
   assert.deepEqual(issueOptions(false).map(option => option.value), ['delivered_not_received', 'not_arrived', 'delayed']);
 });
 test('quantity selection cannot exceed current available items and unknown money stays unknown', () => {
@@ -53,4 +54,6 @@ test('open claim states accept supplements while closed states show only their r
     assert.ok(!html.includes('<script>'));
     assert.ok(!html.includes('Start a return'));
   }
+  const lateArrival = renderToStaticMarkup(<ClaimDetail claim={{ ...claim, reason: 'delayed', issue_code: 'delayed', received_package: true }} data={data} onClose={() => {}} onUpdated={() => {}} />);
+  assert.ok(lateArrival.includes('My package arrived significantly late'));
 });

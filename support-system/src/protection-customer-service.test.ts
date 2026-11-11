@@ -24,6 +24,7 @@ import { saveProtectionEvidence, evidenceStoragePath, uploadProtectionEvidence, 
 test('customer question branch and optional location validation reject contradictory or malformed input',()=>{
   const body={submission_id:crypto.randomUUID(),received_package:true,issue_code:'damaged',selections:[{item_id:'coat',quantity:1}],description:'Damaged coat',evidence_ids:[],location:null};
   assert.equal(validateCustomerClaim(body).issue_code,'damaged');
+  assert.deepEqual(validateCustomerClaim({...body,issue_code:'delayed'}).location,null);
   assert.throws(()=>validateCustomerClaim({...body,issue_code:'not_arrived'}),/does not match/);
   assert.throws(()=>validateCustomerClaim({...body,received_package:false}),/does not match/);
   assert.throws(()=>validateCustomerClaim({...body,camera_exception_reason:' too short '}),/10 to/);
@@ -34,28 +35,22 @@ test('customer question branch and optional location validation reject contradic
   assert.throws(()=>validateCustomerLocation({latitude:0,longitude:0,accuracy_meters:-1,captured_at:new Date().toISOString()}),/location/);
 });
 
-test('new not-received claims require location for every supported issue',()=>{
+test('new not-received claims accept an omitted location for every supported issue',()=>{
   const base={submission_id:crypto.randomUUID(),received_package:false,selections:[{item_id:'coat',quantity:1}],description:'The package has not arrived.',evidence_ids:[]};
   const location={latitude:0,longitude:0,accuracy_meters:12,captured_at:new Date().toISOString()};
   for(const issue_code of ['delayed','not_arrived','delivered_not_received']){
-    for(const missing of [{},{location:null}])assert.throws(()=>validateCustomerClaim({...base,issue_code,...missing}),error=>{
-      assert.match((error as Error).message,/location.*required|enable.*location/i);
-      assert.doesNotMatch((error as Error).message,/without|skip|optional/i);return true;
-    });
+    for(const missing of [{},{location:null}])assert.equal(validateCustomerClaim({...base,issue_code,...missing}).location,null);
     assert.deepEqual(validateCustomerClaim({...base,issue_code,location}).location,location);
   }
 });
 
-test('invalid required location cannot invite skipping and optional received claims still accept no location',()=>{
+test('a provided location must be valid for both received and not-received claims',()=>{
   const base={submission_id:crypto.randomUUID(),received_package:false,issue_code:'not_arrived',selections:[{item_id:'coat',quantity:1}],description:'No package received.',evidence_ids:[]};
   const now=Date.now(),location={latitude:40.7,longitude:-74,accuracy_meters:25,captured_at:new Date(now).toISOString()};
   for(const invalid of [{},{...location,latitude:91},{...location,longitude:-181},{...location,latitude:NaN},{...location,latitude:'40.7'},{...location,accuracy_meters:-1},{...location,accuracy_meters:100001},{...location,captured_at:new Date(now-25*3600000).toISOString()},{...location,captured_at:new Date(now+11*60000).toISOString()}]){
-    assert.throws(()=>validateCustomerClaim({...base,location:invalid}),error=>{
-      assert.match((error as Error).message,/location/i);
-      assert.doesNotMatch((error as Error).message,/without|skip|optional/i);return true;
-    });
+    for(const received_package of [false,true])assert.throws(()=>validateCustomerClaim({...base,received_package,issue_code:'delayed',location:invalid}),/location/i);
   }
-  for(const issue_code of ['damaged','missing_items'])for(const optional of [{},{location:null}]){
+  for(const issue_code of ['damaged','missing_items','delayed'])for(const optional of [{},{location:null}]){
     assert.equal(validateCustomerClaim({...base,received_package:true,issue_code,...optional}).location,null);
   }
 });
@@ -125,11 +120,11 @@ test('customer portal isolation, evidence, repeated claims and review quantities
     const request=(url:string,cookie:string,body?:unknown,method=body?'POST':'GET')=>fetch(base+url,{method,headers:{Cookie:cookie,...(cookie===first?{'X-Protection-Reference':orders[0].public_no}:cookie===second?{'X-Protection-Reference':orders[1].public_no}:{}),...(body?{'Content-Type':'application/json',Origin:base}:{})},...(body?{body:JSON.stringify(body)}:{})});
     let evidenceId:string,claim:any,cameraFixture:any;
     const submission={submission_id:crypto.randomUUID(),received_package:false,issue_code:'delayed',selections:[{item_id:'coat',quantity:1}],description:'Fixture incorrect coat',evidence_ids:[] as string[],location:{latitude:40.7,longitude:-74,accuracy_meters:25,captured_at:new Date().toISOString()}};
-    await t.test('HTTP new not-received claims reject missing or invalid location without writing a claim',async()=>{
+    await t.test('HTTP new not-received claims reject malformed provided location without writing a claim',async()=>{
       const before=Number((await pool.query('SELECT count(*)::int n FROM support_protection_claims')).rows[0].n);
-      for(const location of [undefined,null,{...submission.location,longitude:181}]){
+      for(const location of [{...submission.location,longitude:181},{...submission.location,accuracy_meters:-1}]){
         const response=await fetch(base+'/api/protection/claims',{method:'POST',headers:{Cookie:first,Origin:base,'Content-Type':'application/json','X-Protection-Reference':orders[0].public_no,'X-Forwarded-For':'10.23.0.8'},body:JSON.stringify({...submission,submission_id:crypto.randomUUID(),location})});
-        assert.equal(response.status,400);const body=await response.json() as any;assert.match(body.error,/location/i);assert.doesNotMatch(body.error,/without|skip|optional/i);
+        assert.equal(response.status,400);const body=await response.json() as any;assert.match(body.error,/location/i);
       }
       assert.equal(Number((await pool.query('SELECT count(*)::int n FROM support_protection_claims')).rows[0].n),before);
     });
@@ -235,7 +230,7 @@ test('customer portal isolation, evidence, repeated claims and review quantities
     await t.test('rejection permits a new issue with stable contract; approvals reserve selected quantity',async()=>{
       const row=(await pool.query('SELECT id,revision FROM support_protection_claims WHERE public_no=$1',[claim.public_no])).rows[0];
       await updateProtectionClaim(String(row.id),{revision:row.revision,status:'rejected',note:'PRIVATE REASON',customer_message:'The evidence is incomplete.'},actor);
-      const next=await request('/api/protection/claims',first,{...submission,submission_id:crypto.randomUUID(),evidence_ids:[]});const replacement=((await next.json()) as any).claim;assert.notEqual(replacement.public_no,claim.public_no);assert.equal(replacement.protection_no,claim.protection_no);
+      const next=await request('/api/protection/claims',first,{...submission,submission_id:crypto.randomUUID(),evidence_ids:[],location:undefined});assert.equal(next.status,201);const replacement=((await next.json()) as any).claim;assert.notEqual(replacement.public_no,claim.public_no);assert.equal(replacement.protection_no,claim.protection_no);assert.equal(replacement.location,null);
       const current=(await pool.query('SELECT id,revision FROM support_protection_claims WHERE public_no=$1',[replacement.public_no])).rows[0];
       await assert.rejects(updateProtectionClaim(String(current.id),{revision:current.revision,status:'approved',approved_amount_cents:3334},actor),/申请|余额/);
       const approved=await updateProtectionClaim(String(current.id),{revision:current.revision,status:'approved',approved_amount_cents:3000,note:'PRIVATE APPROVAL'},actor);

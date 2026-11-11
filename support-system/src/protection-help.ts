@@ -5,9 +5,9 @@ const articles = {
     lead: 'Shipping Protection helps with shipping and delivery loss, damage, theft or major delays. With sufficient evidence and an approved request, you may receive a full or partial refund for affected items.',
     body: `<h2>Start from your order</h2>
       <ol><li>Open the order link in your email and choose <strong>Request a refund</strong>.</li><li>Say whether you received the package, then choose the closest issue.</li><li>Select the affected items and quantities. The form shows the request dates for each item.</li><li>Describe what happened, add any useful documents, and review your answers before submitting.</li></ol>
-      <p>Use the secure order link from your email to get started. If you have not received the package, the form asks you to share your current location. It requests location only when you choose to share it.</p>
+      <p>Use the secure order link from your email to get started. You may share your current location to help review a delivery issue, but you can submit without it. The form requests location only when you choose to share it.</p>
       <div class="help-note"><strong>After you submit</strong><p>The store reviews your request. Submitting it does not send a refund or decide the outcome.</p></div>
-      <h2>Which issue should I choose?</h2><p>Choose damage when an item arrived damaged. Choose missing items when the package arrived without everything ordered. If the package has not arrived, choose the option that matches its current status. You can explain uncertain details in the description.</p>
+      <h2>Which issue should I choose?</h2><p>Choose damage when an item arrived damaged. Choose missing items when the package arrived without everything ordered. Choose delay if the package arrived significantly late or is still significantly delayed. If the package has not arrived, choose the option that matches its current status. You can explain uncertain details in the description.</p>
       <p>Read <a href="/protection/help?article=lost-or-not-received">how to tell a missing shipment from a delivery you cannot find</a> or <a href="/protection/help?article=request-status">how to check your request status</a>.</p>`,
   },
   'request-status': {
@@ -21,7 +21,7 @@ const articles = {
   'lost-or-not-received': {
     title: 'Is my package lost or missing after delivery?',
     lead: 'The tracking record and your order page help you choose an issue. A store completion status does not prove that a carrier delivered the package.',
-    body: `<h2>Still in transit or no delivery recorded</h2><p>If the package has not arrived and there is no confirmed delivery, select <strong>My package has not arrived</strong>. If it is significantly late, the delay option may be more appropriate. The form shows when each request window opens.</p>
+    body: `<h2>Still in transit or no delivery recorded</h2><p>If the package has not arrived and there is no confirmed delivery, select <strong>My package has not arrived</strong>. If it is significantly late, the delay option may be more appropriate. You can also choose delay if the package has arrived significantly late. The form shows when each request window opens.</p>
       <p>For this service, delay requests open 30 days after the affected item ships. Loss requests open 60 days after shipment. Both close 90 days after the order date. The dates shown for your item in the order page are the ones to use.</p>
       <h2>Order marked complete, but no package</h2><p>If your order is marked complete and you have not received the package, choose <strong>My order is marked complete, but I have not received my package</strong>. First check nearby delivery spots, a mailroom or locker, household members, and neighbors. Ask the carrier to check the delivery details if possible.</p>
       <div class="help-note"><strong>What “missing after delivery” means here</strong><p>This option lets the store investigate a package you cannot find. It does not mean that theft has been established. A package can also be misplaced or delivered to the wrong place.</p></div>
@@ -30,7 +30,7 @@ const articles = {
   'missing-package-documents': {
     title: 'What information helps with a missing package?',
     lead: 'Start with what you know. The order page already shows the store your order and shipment details.',
-    body: `<h2>In your request</h2><ul><li>Describe when you expected the package and the latest tracking update you can see.</li><li>Include the carrier name and tracking number if available.</li><li>Share your current location in the form. This is required when you say you have not received the package.</li></ul>
+    body: `<h2>In your request</h2><ul><li>Describe when you expected the package and the latest tracking update you can see.</li><li>Include the carrier name and tracking number if available.</li><li>If useful, share your current location in the form. You can submit without it.</li></ul>
       <h2>Helpful documents</h2><p>If you have them, add a screenshot of the latest tracking update, a carrier inquiry or case number, or written confirmation from the carrier. These help the store review the timeline. The form does not require a carrier letter before you can submit.</p>
       <p>If the carrier cannot provide a letter, explain when you contacted them and what they said. The store may ask for more information through your request.</p>
       <p>Read <a href="/protection/help?article=carrier-confirmation">how to request written carrier confirmation</a>.</p>`,
@@ -55,7 +55,7 @@ const articles = {
     title: 'What helps when a delivery cannot be found?',
     lead: 'If your order is marked complete but you do not have the package, explain what you checked and share any records that may help locate it.',
     body: `<h2>Before submitting</h2><p>Look around the delivery address, mailroom, parcel locker, and any alternate delivery spot. Ask household members or building staff if they accepted the package. If the carrier marked it delivered, ask the carrier to check where it was left.</p>
-      <h2>In the request</h2><ul><li>Describe when you noticed the package was missing and the places you checked.</li><li>Share your current location in the form. The form requires it for a package you have not received.</li><li>Add a tracking screenshot, carrier case number, delivery photo, or written response if you have one.</li><li>If available, a building note, security footage, or police incident number can provide more context.</li></ul>
+      <h2>In the request</h2><ul><li>Describe when you noticed the package was missing and the places you checked.</li><li>Share your current location if it may help; it is optional.</li><li>Add a tracking screenshot, carrier case number, delivery photo, or written response if you have one.</li><li>If available, a building note, security footage, or police incident number can provide more context.</li></ul>
       <div class="help-note"><strong>You can submit before getting every document</strong><p>The form does not require a police report or carrier letter up front. The store may ask for specific information after reviewing your request.</p></div>
       <p>If a police incident report is appropriate or the store asks for one, read <a href="/protection/help?article=police-report">how to file an incident report</a>.</p>`,
   },

@@ -136,7 +136,7 @@ test('shipment default can be restored and previewed with synthetic protection v
   assert.equal(preview.status, 200);
   assert.match(preview.body.preview.subject, /DEMO-1042/);
   assert.match(preview.body.preview.html, /https:\/\/us-seel\.com\/protection/);
-  assert.match(preview.body.preview.html, /SP-DEMO-1042/);
+  assert.match(preview.body.preview.html, /SP-[0-9A-F]{20}/);
   assert.doesNotMatch(preview.body.preview.html, /pa_[A-Za-z0-9_-]{43}|\{\{/);
   assert.equal((await h.defaultTemplate('protection_shipment_notice', false)).status, 401);
 });

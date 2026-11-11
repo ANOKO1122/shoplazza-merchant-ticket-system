@@ -10,8 +10,7 @@ export function TrackingDialog({ numbers, onClose }: { numbers: string[]; onClos
     dialog.current?.showModal();
     return () => { if (dialog.current?.open) dialog.current.close(); };
   }, []);
-  const language = typeof navigator === 'undefined' ? 'en' : navigator.language;
-  const widgetUrl = trackingWidgetUrl(selected, language, openedAt.current);
+  const widgetUrl = trackingWidgetUrl(selected, openedAt.current);
   return <dialog ref={dialog} className="cp-dialog cp-tracking-dialog" aria-labelledby="cp-tracking-title" onClose={onClose}>
     <div className="cp-dialog-heading"><h2 id="cp-tracking-title">Tracking details</h2><button type="button" className="cp-icon-button" aria-label="Close tracking details" onClick={() => dialog.current?.close()}><Icon name="close" size={20} /></button></div>
     <div className="cp-tracking-body">

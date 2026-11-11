@@ -2,7 +2,7 @@ import { LocationResult } from './LocationResult';
 import { useRef, useState } from 'react';
 import type { CustomerClaim, CustomerEvidence, CustomerOrderResponse } from '../../src/protection-customer-types';
 import { request } from './api';
-import { date, issueLabels, money } from './domain';
+import { date, issueLabel, money } from './domain';
 import { Badge, Dialog, ErrorNotice, EvidenceList, ProductImage } from './shared';
 import { Uploads } from './Uploads';
 import { CameraEvidence } from './CameraEvidence';
@@ -34,7 +34,7 @@ export function ClaimDetail({ claim, data, onClose, onUpdated }: { claim: Custom
   return <Dialog title={`Request ${claim.public_no}`} onClose={onClose} busy={busy} footer={<button className="cp-button" onClick={onClose} disabled={busy}>Back to order</button>}>
     <div className="cp-claim-heading"><Badge status={claim.status} /><span className="cp-muted">Submitted {date(claim.created_at)}</span></div>
     <div className="cp-service-context"><span>Shipping Protection</span><ServiceDetails basis={servicePolicyBasis(data.coverage?.policy_version)} /></div>
-    <dl className="cp-review-grid"><div><dt>Protection reference</dt><dd>{claim.protection_no}</dd></div><div><dt>Requested amount</dt><dd>{money(claim.requested_amount_cents, claim.currency)}</dd></div><div><dt>Issue</dt><dd>{claim.issue_code ? issueLabels[claim.issue_code] : claim.reason}</dd></div>{claim.approved_amount_cents != null && <div><dt>Approved amount</dt><dd>{money(claim.approved_amount_cents, claim.currency)}</dd></div>}</dl>
+    <dl className="cp-review-grid"><div><dt>Protection reference</dt><dd>{claim.protection_no}</dd></div><div><dt>Requested amount</dt><dd>{money(claim.requested_amount_cents, claim.currency)}</dd></div><div><dt>Issue</dt><dd>{claim.issue_code ? issueLabel(claim.issue_code, claim.received_package) : claim.reason}</dd></div>{claim.approved_amount_cents != null && <div><dt>Approved amount</dt><dd>{money(claim.approved_amount_cents, claim.currency)}</dd></div>}</dl>
     <SelectedRequestWindows data={data} selections={claim.selections} issue={claim.issue_code || claim.reason} existing />
     {claim.customer_message && <section className="cp-public-message"><h3>Message from the store</h3><p>{claim.customer_message}</p></section>}
     {claim.status === 'approved' && <p className="cp-notice">Your request has been approved. Refunds are handled separately by the store; approval alone does not confirm that funds have been sent.</p>}
