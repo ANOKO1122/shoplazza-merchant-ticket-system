@@ -11,6 +11,7 @@ import { protectionMailReadiness, sendProtectionNotificationEmail } from './prot
 import { decorateEmailWithUnsubscribe, isEmailUnsubscribed, normalizePreferenceEmail, withEmailPreferenceGuard } from './email-preferences';
 import { isProtectionLifecycleNotificationCurrent } from './protection-lifecycle-notification';
 import { ProtectionError } from './protection-domain';
+import { extractStoreCustomDomain } from './email-service';
 
 type Db = Pick<PoolClient, 'query'>;
 export interface ProtectionClaimUpdateEvent { claimId: string; revision: number; previousStatus: string; status: string; }
@@ -18,13 +19,17 @@ export interface ProtectionNotificationDelivery { ready: boolean; send: (mail: S
 const TARGET_STATUSES = ['needs_info', 'approved', 'rejected', 'closed'];
 // The original default templates were copied into editable database rows. Upgrade
 // only those exact defaults; leave every staff-edited template and preset intact.
-const LEGACY_DEFAULT_HASHES: Record<string, string> = {
-  [PROTECTION_SHIPMENT_EMAIL_TYPE]: '791c67a1d8f5d48ea03570c3e306212abf710c92449b997008143abc409b878a',
-  [PROTECTION_COMPLETION_EMAIL_TYPE]: '930c480bb98439bb6505e0ab754de331d79dc57823adf12342fdd181a449643e',
-  [PROTECTION_CLAIM_UPDATE_EMAIL_TYPE]: 'a5926a93aec93f1016d5b59531e85f3e46e14985b8cb8db4bafc6f08135de33b',
+const LEGACY_DEFAULT_HASHES: Record<string, string[]> = {
+  [PROTECTION_SHIPMENT_EMAIL_TYPE]: ['791c67a1d8f5d48ea03570c3e306212abf710c92449b997008143abc409b878a','1ea91f24ec224bdc6e510df7ffb466ee2ef028dc1e7611d27f9af5511d33ba3f'],
+  [PROTECTION_COMPLETION_EMAIL_TYPE]: ['930c480bb98439bb6505e0ab754de331d79dc57823adf12342fdd181a449643e','7ebc97033f50684877a47241cac6d2cfb5cfd9ab8deec01271adbe3759e81427'],
+  [PROTECTION_CLAIM_UPDATE_EMAIL_TYPE]: ['a5926a93aec93f1016d5b59531e85f3e46e14985b8cb8db4bafc6f08135de33b','e630ef7bb3255b1c586f6af056a76e27f16369c8e38acfa51cc84ccf3e0024a7'],
 };
 function isLegacyDefault(type: string, subject: string, body: string): boolean {
-  return crypto.createHash('sha256').update(`${subject}\0${body}`).digest('hex') === LEGACY_DEFAULT_HASHES[type];
+  return LEGACY_DEFAULT_HASHES[type]?.includes(crypto.createHash('sha256').update(`${subject}\0${body}`).digest('hex')) || false;
+}
+function customerFacingDomain(rawOrder: unknown): string {
+  const value = extractStoreCustomDomain(rawOrder).trim().toLowerCase();
+  return value.length <= 253 && /^[a-z0-9][a-z0-9.-]*[a-z0-9]$/.test(value) && value.includes('.') && !value.includes('..') ? value : '';
 }
 
 export async function initProtectionNotificationSchema(): Promise<void> {
@@ -122,7 +127,9 @@ async function prepareMail(client: PoolClient, job: any, leaseToken: string): Pr
       const tokenHash = digest(token);
       const link = `${protectionPublicBaseUrl()}/protection#access=${token}`;
       const type = current.event_type === 'shipment' ? PROTECTION_SHIPMENT_EMAIL_TYPE : current.event_type === 'completion' ? PROTECTION_COMPLETION_EMAIL_TYPE : PROTECTION_CLAIM_UPDATE_EMAIL_TYPE;
-      const rendered = await renderEmailFromTemplate(type, { ...current.context_json, store_name: 'Shipping Protection', customer_name: current.context_json.customer_name?.trim() || 'Customer', protection_link: link });
+      const snapshot = (await client.query('SELECT raw_order_json FROM support_order_snapshots WHERE id=$1 AND store_subdomain=$2', [order.source_snapshot_id,order.store_subdomain])).rows[0];
+      const storeDomain = customerFacingDomain(snapshot?.raw_order_json);
+      const rendered = await renderEmailFromTemplate(type, { ...current.context_json, store_domain: storeDomain, store_name: storeDomain || 'Shipping Protection', customer_name: current.context_json.customer_name?.trim() || 'Customer', protection_link: link });
       subject = rendered.subject; html = rendered.html;
       if (!subject.trim() || !html.includes(link)) throw new Error('Protection notification template must contain its secure link');
       const tokenRow = (await client.query(`INSERT INTO support_protection_access_tokens(token_hash,protection_order_id,customer_email,expires_at) VALUES($1,$2,$3,now()+make_interval(days=>$4::int)) RETURNING expires_at`, [tokenHash, job.protection_order_id, job.recipient_email,PROTECTION_ACCESS_LINK_DAYS])).rows[0];

@@ -38,6 +38,18 @@ test('line total_price is gross: subtract Shoplazza serialized discount allocati
   assert.equal(unknown.items[0].amount_cents,null);
 });
 
+test('repeated order discount totals do not replace each item allocation', () => {
+  const result=normalizeProtectionSnapshot({store_subdomain:'fixture',order_id:'per-line-discounts',order_currency:'USD',payment_status:'paid',order_amount:'84.80',
+    raw_order_json:{total_discount:'4.46'},items_json:[
+      {id:'a',product_id:'g1',quantity:1,total_price:'49.89',discount_applications:JSON.stringify([{total_discount_amount:'4.46',discount_amount:'2.50'}])},
+      {id:'b',product_id:'g2',quantity:1,total_price:'37.69',discount_applications:JSON.stringify([{total_discount_amount:'4.46',discount_amount:'1.88'}])},
+      {id:'c',product_id:'g3',quantity:1,total_price:'1.68',discount_applications:JSON.stringify([{total_discount_amount:'4.46',discount_amount:'0.08'}])},
+      {id:'service',product_id:'p',quantity:1,total_price:'2.54'},
+    ]},['p'])!;
+  assert.deepEqual(result.items.filter(item=>!item.is_protection).map(item=>item.amount_cents),[4739,3581,160]);
+  assert.equal(result.protected_value_cents,8480);
+});
+
 test('service fulfillment distinguishes shipped from finished and reads current package line status', () => {
   const base={order_currency:'USD',payment_status:'paid',raw_order_json:{total_discount:'0'},items_json:[{id:'p-line',product_id:'p',quantity:1,price:'2',fulfillment_status:'unfulfilled'}]};
   const snapshot=(status:string)=>({...base,raw_order_json:{...base.raw_order_json,fulfillments:[{id:'package',status,line_items:[{id:'p-line',ship_quantity:1}]}]}});

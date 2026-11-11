@@ -38,7 +38,9 @@ function discountAmount(value: unknown): {amount:number|null;invalid:boolean} {
   let parsed=value;
   if(typeof parsed==='string'){try{parsed=JSON.parse(parsed);}catch{return {amount:null,invalid:true};}}
   if(!Array.isArray(parsed))return {amount:null,invalid:true};
-  const amounts=parsed.map(item=>cents(record(item).total_discount_amount));
+  // Shoplazza may repeat the order-wide total on every line; discount_amount
+  // is the allocation for this line when both fields are present.
+  const amounts=parsed.map(item=>{const row=record(item);return cents(row.discount_amount??row.total_discount_amount);});
   const amount=sumKnown(amounts);
   return {amount,invalid:amount===null};
 }

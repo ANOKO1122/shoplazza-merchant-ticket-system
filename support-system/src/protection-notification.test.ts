@@ -22,12 +22,14 @@ test('claim notification outbox preserves transaction, identity, dedupe and retr
   try {
     await pool.query(`DROP SCHEMA public CASCADE; CREATE SCHEMA public;
       CREATE TABLE support_agents(id BIGINT PRIMARY KEY); CREATE TABLE support_protection_stores(store_subdomain TEXT PRIMARY KEY);
-      CREATE TABLE support_order_snapshots(id BIGSERIAL PRIMARY KEY,store_subdomain TEXT,order_id TEXT);
+      CREATE TABLE support_order_snapshots(id BIGSERIAL PRIMARY KEY,store_subdomain TEXT,order_id TEXT,raw_order_json JSONB);
       CREATE TABLE support_email_templates(email_type TEXT PRIMARY KEY,subject_template TEXT,body_template TEXT,active_preset_name TEXT,updated_at TIMESTAMPTZ DEFAULT now());
       CREATE TABLE support_email_template_presets(id BIGSERIAL PRIMARY KEY,email_type TEXT,preset_name TEXT,subject_template TEXT,body_template TEXT,UNIQUE(email_type,preset_name));`);
     await pool.query(PROTECTION_SCHEMA_SQL); await pool.query(PROTECTION_CUSTOMER_SCHEMA_SQL); await pool.query(EMAIL_PREFERENCES_SCHEMA_SQL);
     const order = (await pool.query(`INSERT INTO support_protection_orders(store_subdomain,store_name,order_id,order_number,customer_email,customer_name,currency,payment_status,order_status,fulfillment_status,refund_status)
-      VALUES('fixture','<Fixture Store>','one','1042','customer@example.invalid','<Alex>','USD','paid','finished','fulfilled','') RETURNING id`)).rows[0].id;
+      VALUES('fixture','<Fixture Store>','internal-copy:one','1042','customer@example.invalid','<Alex>','USD','paid','finished','fulfilled','') RETURNING id`)).rows[0].id;
+    const snapshot = (await pool.query(`INSERT INTO support_order_snapshots(store_subdomain,order_id,raw_order_json) VALUES('fixture','one',$1) RETURNING id`,[{refer_info:JSON.stringify({domain:'www.fixture.shop'})}])).rows[0].id;
+    await pool.query('UPDATE support_protection_orders SET source_snapshot_id=$2 WHERE id=$1',[order,snapshot]);
     const createClaim = async (status = 'submitted',orderId=order) => String((await pool.query(`INSERT INTO support_protection_claims(protection_order_id,reason,description,status,requested_amount_cents,currency,item_ids)
       VALUES($1,'damaged','PRIVATE INTERNAL INFORMATION',$2,1000,'USD','["item"]') RETURNING id`, [orderId, status])).rows[0].id);
     const addOrder=async(email:string,store='fixture')=>(await pool.query(`INSERT INTO support_protection_orders(store_subdomain,store_name,order_id,order_number,customer_email,customer_name,currency,payment_status,order_status,fulfillment_status,refund_status)
@@ -68,6 +70,7 @@ test('claim notification outbox preserves transaction, identity, dedupe and retr
       assert.equal(results.reduce((sum, r) => sum + r.sent, 0), 1); assert.equal(sent.length, 1);
       assert.equal(sent[0].messageId, failedMail!.messageId); assert.equal(sent[0].html, failedMail!.html);assert.equal(sent[0].text,failedMail!.text);
       assert.match(sent[0].html,/unsubscribe/i); assert.match(sent[0].text,/unsubscribe/i);
+      assert.match(sent[0].html,/www\.fixture\.shop/); assert.doesNotMatch(sent[0].html,/Fixture Store/);
       assert.equal((await getEmailUnsubscribePreference(footerToken(sent[0].html)))?.category,'protection');
       assert.doesNotMatch(sent[0].html, /Fixture Store|PRIVATE INTERNAL INFORMATION|approved|rejected|insurance|underwrit|\/ticket\?/i);
       const raw = sent[0].html.match(/https:\/\/us-seel\.com\/protection#access=(pa_[A-Za-z0-9_-]+)/)![1];
@@ -92,7 +95,7 @@ test('claim notification outbox preserves transaction, identity, dedupe and retr
       await initProtectionNotificationSchema();
       const other = await createClaim(); await change(other, 'submitted', 'rejected', 2);
       await processProtectionNotifications({ delivery }); assert.equal(sent.length, 3); assert.match(sent[2].subject, /^Store update CL-/); assert.match(sent[2].html, /View update CL-/);
-      assert.match(sent[2].html, /Shipping Protection/); assert.doesNotMatch(sent[2].html, /Fixture Store/);
+      assert.match(sent[2].html, /www\.fixture\.shop/); assert.doesNotMatch(sent[2].html, /Fixture Store/);
     });
     await t.test('approved and closed transitions each notify once while same-status edits remain silent', async () => {
       const other = await createClaim();

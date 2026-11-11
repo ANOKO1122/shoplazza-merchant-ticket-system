@@ -8,6 +8,7 @@ test('protection mail defaults omit merchant names in subjects and bodies', () =
   for (const template of [protectionTemplates.PROTECTION_SHIPMENT_TEMPLATE, protectionTemplates.PROTECTION_COMPLETION_TEMPLATE, protectionTemplates.PROTECTION_CLAIM_UPDATE_TEMPLATE]) {
     const rendered = renderTemplateString(template.subject + template.body, { ...PROTECTION_EMAIL_PREVIEW_VARS, store_name: 'Actual Merchant' });
     assert.doesNotMatch(rendered, /Actual Merchant|\{\{store_name\}\}/);
+    assert.match(rendered, /example\.invalid/, 'The customer-facing domain identifies the shop in protection email');
   }
 });
 
