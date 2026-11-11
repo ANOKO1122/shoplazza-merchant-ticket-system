@@ -4,7 +4,19 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { CustomerClaim, CustomerOrderResponse } from '../../src/protection-customer-types';
 import { ClaimDetail } from './ClaimDetail';
-import { issueOptions, validSelections, selectionAmount, safeImage, evidenceUrl, money, takeAccessToken } from './domain';
+import { issueOptions, validSelections, selectionAmount, groupShipmentItems, safeImage, evidenceUrl, money, takeAccessToken } from './domain';
+test('shipment cards show assigned quantities once and keep unassigned items accessible', () => {
+  const items = [{ id: 'split', quantity: 3 }, { id: 'unmapped', quantity: 1 }];
+  const groups = groupShipmentItems(items, [
+    { item_quantities: [{ item_id: 'split', quantity: 1 }] },
+    { item_quantities: [{ item_id: 'split', quantity: 1 }] },
+    { item_quantities: [] },
+  ]);
+  assert.deepEqual(groups.shipped.map(group => group.map(({ item, quantity }) => [item.id, quantity])), [[['split', 1]], [['split', 1]], []]);
+  assert.deepEqual(groups.unassigned.map(({ item, quantity }) => [item.id, quantity]), [['split', 1], ['unmapped', 1]]);
+  assert.deepEqual(groupShipmentItems([{ id: 'single', quantity: 1 }], []).unassigned.map(({ item }) => item.id), ['single']);
+  assert.deepEqual(groupShipmentItems([{ id: 'split', quantity: 3 }], [{ item_quantities: [{ item_id: 'split', quantity: 1 }, { item_id: 'split', quantity: 9 }] }]).shipped[0].map(({ item, quantity }) => [item.id, quantity]), [['split', 3]]);
+});
 test('received and missing package questions cannot retain an incompatible issue', () => {
   assert.deepEqual(issueOptions(true).map(option => option.value), ['damaged', 'missing_items']);
   assert.deepEqual(issueOptions(false).map(option => option.value), ['delivered_not_received', 'not_arrived', 'delayed']);

@@ -5,6 +5,29 @@ export function issueOptions(received: boolean) {
   return keys.map(value => ({ value, label: issueLabels[value] }));
 }
 type SelectionItem = { id: string; quantity: number; amount_cents: number | null; available_quantity: number; available_amount_cents: number | null; has_active_claim: boolean };
+export function groupShipmentItems<T extends { id: string; quantity: number }>(items: T[], shipments: Array<{ item_quantities: CustomerSelection[] }>) {
+  const remaining = new Map(items.map(item => [item.id, item.quantity]));
+  const byId = new Map(items.map(item => [item.id, item]));
+  const shipped = shipments.map(shipment => {
+    const entries: Array<{ item: T; quantity: number }> = [];
+    for (const selection of shipment.item_quantities) {
+      const item = byId.get(selection.item_id);
+      const available = remaining.get(selection.item_id) || 0;
+      const quantity = Math.min(selection.quantity, available);
+      if (!item || !Number.isSafeInteger(quantity) || quantity <= 0) continue;
+      const existing = entries.find(entry => entry.item.id === item.id);
+      if (existing) existing.quantity += quantity;
+      else entries.push({ item, quantity });
+      remaining.set(item.id, available - quantity);
+    }
+    return entries;
+  });
+  const unassigned = items.flatMap(item => {
+    const quantity = remaining.get(item.id) || 0;
+    return quantity > 0 ? [{ item, quantity }] : [];
+  });
+  return { shipped, unassigned };
+}
 export function validSelections(selections: CustomerSelection[], items: SelectionItem[]): boolean {
   if (!selections.length || new Set(selections.map(item => item.item_id)).size !== selections.length) return false;
   return selections.every(selection => {
