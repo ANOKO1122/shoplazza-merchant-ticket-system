@@ -14,6 +14,7 @@ export const ADMIN_PAGES: ReadonlyArray<readonly [string, string]> = [
   ['/thinkpro-admin', 'admin.html'],
   ['/thinkpro-admin/stores', 'admin-stores.html'],
   ['/thinkpro-admin/protection', 'admin-protection.html'],
+  ['/thinkpro-admin/mailbox', 'admin-mailbox.html'],
   ['/thinkpro-admin/emails', 'admin-emails.html'],
   ['/thinkpro-admin/logs', 'admin-logs.html'],
   ['/thinkpro-admin/ticket-preview', 'admin-ticket-preview.html'],

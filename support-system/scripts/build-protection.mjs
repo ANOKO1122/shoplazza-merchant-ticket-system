@@ -23,3 +23,14 @@ await build({
   define: { 'process.env.NODE_ENV': '"production"' },
   legalComments: 'none',
 });
+await build({
+  absWorkingDir: root,
+  entryPoints: ['frontend/mailbox/main.tsx'],
+  bundle: true,
+  minify: true,
+  target: ['es2020'],
+  format: 'iife',
+  outfile: 'public/assets/mailbox.js',
+  define: { 'process.env.NODE_ENV': '"production"' },
+  legalComments: 'none',
+});

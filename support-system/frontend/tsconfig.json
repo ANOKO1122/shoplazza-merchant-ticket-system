@@ -5,5 +5,5 @@
     "strict": true, "esModuleInterop": true, "skipLibCheck": true,
     "noEmit": true, "forceConsistentCasingInFileNames": true
   },
-  "include": ["protection/**/*.ts", "protection/**/*.tsx", "customer-protection/**/*.ts", "customer-protection/**/*.tsx"]
+  "include": ["protection/**/*.ts", "protection/**/*.tsx", "customer-protection/**/*.ts", "customer-protection/**/*.tsx", "mailbox/**/*.ts", "mailbox/**/*.tsx"]
 }

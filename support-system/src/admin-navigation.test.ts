@@ -12,6 +12,17 @@ assert.ok(declared, 'the shell must declare its shared navigation');
 const masterLinks: string[][] = vm.runInNewContext(declared[1]);
 const masterPaths = Array.from(masterLinks, item => item[0]);
 
+test('shared mailbox has an authenticated admin route and a sidebar entry', () => {
+  assert.equal(ADMIN_PAGE_FILES.get('/thinkpro-admin/mailbox'), 'admin-mailbox.html');
+  assert.ok(masterPaths.includes('/thinkpro-admin/mailbox'));
+});
+
+test('React mailbox page opens with a full navigation so its bundle mounts', () => {
+  const view = fixture([], '/thinkpro-admin');
+  view.context.adminGo('/thinkpro-admin/mailbox');
+  assert.equal(view.context.location.href, '/thinkpro-admin/mailbox');
+});
+
 // The browser fixture below only models sidebar DOM operations; all navigation
 // reconciliation and active-state behavior execute the real admin-shell.js.
 class Node {

@@ -53,6 +53,7 @@ test('inbox import, assignment, notes, claim links and reply queue remain consis
     const forwardedDetail = await getConversation(forwarded.conversationId);
     assert.equal(forwardedDetail?.claim_id, null);
     assert.equal(forwardedDetail?.link_candidate_notification_id != null, true);
+    assert.equal(forwardedDetail?.candidate_notification?.claim_id, Number(claimId));
     assert.notEqual(forwarded.conversationId, first.conversationId);
 
     const unrelated = await importIncomingMessage({ mailbox: 'customersupport@reply.us-seel.com', uidValidity: '7', uid: 5,

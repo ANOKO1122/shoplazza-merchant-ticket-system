@@ -154,13 +154,24 @@ export async function getConversation(id: number): Promise<any | null> {
     if (row) notification = { id: Number(row.id), event_type: row.event_type, recipient_email: row.recipient_email,
       subject: row.subject_snapshot, sent_at: row.sent_at, body_text: text(String(row.body_snapshot || '').replace(/<[^>]*>/g, ' ').replace(/(?:pa|ta|bt|eu)_[A-Za-z0-9_-]{20,}/g, '[redacted]'), 100_000) };
   }
+  let candidateNotification: any = null;
+  if (conversation.link_candidate_notification_id) {
+    const row = (await query(`SELECT n.id,n.claim_id,n.protection_order_id,n.recipient_email,n.subject_snapshot,
+      cl.public_no AS claim_no,po.order_number FROM support_protection_notification_outbox n
+      LEFT JOIN support_protection_claims cl ON cl.id=n.claim_id
+      LEFT JOIN support_protection_orders po ON po.id=n.protection_order_id
+      WHERE n.id=$1 AND n.status='sent'`, [conversation.link_candidate_notification_id])).rows[0];
+    if (row) candidateNotification = { id: Number(row.id), claim_id: row.claim_id == null ? null : Number(row.claim_id),
+      protection_order_id: Number(row.protection_order_id), recipient_email: row.recipient_email,
+      subject: row.subject_snapshot, claim_no: row.claim_no, order_number: row.order_number };
+  }
   const candidates = (await query(`SELECT cl.id,cl.public_no,po.order_number FROM support_protection_claims cl
     JOIN support_protection_orders po ON po.id=cl.protection_order_id WHERE lower(po.customer_email)=$1 ORDER BY cl.created_at DESC LIMIT 10`, [conversation.customer_email])).rows;
   return { ...conversation, id: Number(conversation.id), version: Number(conversation.version),
     claim_id: conversation.claim_id == null ? null : Number(conversation.claim_id),
     protection_order_id: conversation.protection_order_id == null ? null : Number(conversation.protection_order_id),
     unread_count: Number(conversation.unread_count), assignee_id: conversation.assignee_id == null ? null : Number(conversation.assignee_id),
-    messages, notes, notification, candidates };
+    messages, notes, notification, candidate_notification: candidateNotification, candidates };
 }
 
 async function mutateConversation(id: number, version: number, sql: string, args: unknown[]): Promise<void> {

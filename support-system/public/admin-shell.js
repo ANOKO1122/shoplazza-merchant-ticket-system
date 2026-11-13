@@ -4,6 +4,7 @@
     ['/thinkpro-admin', '📋', '工单处理'],
     ['/thinkpro-admin/stores', '🏪', '店铺管理'],
     ['/thinkpro-admin/protection', '◇', '运输保障'],
+    ['/thinkpro-admin/mailbox', '✉', '客服收件箱'],
     ['/thinkpro-admin/emails', '📧', '订单邮件管理'],
     ['/thinkpro-admin/email-templates', '📨', '邮件模板'],
     ['/thinkpro-admin/email-preferences', '✉', '邮件退订'],
@@ -170,7 +171,8 @@
     var url;
     try { url = new URL(href, location.origin); } catch (e) { location.href = href; return; }
     if (url.origin !== location.origin || !isAdminAppPath(url.pathname)
-      || url.pathname === '/thinkpro-admin/protection' || location.pathname === '/thinkpro-admin/protection') {
+      || url.pathname === '/thinkpro-admin/protection' || location.pathname === '/thinkpro-admin/protection'
+      || url.pathname === '/thinkpro-admin/mailbox' || location.pathname === '/thinkpro-admin/mailbox') {
       location.href = href;
       return;
     }

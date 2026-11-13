@@ -145,6 +145,7 @@ const PRIVATE_PAGE_ALIASES: Record<string, string> = {
   '/admin.html': ADMIN_HOME,
   '/admin-stores.html': '/thinkpro-admin/stores',
   '/admin-protection.html': '/thinkpro-admin/protection',
+  '/admin-mailbox.html': '/thinkpro-admin/mailbox',
   '/admin-emails.html': '/thinkpro-admin/emails',
   '/admin-email-preferences.html': '/thinkpro-admin/email-preferences',
   '/admin-logs.html': '/thinkpro-admin/logs',

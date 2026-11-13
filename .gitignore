@@ -34,6 +34,8 @@ support-system/protection-data/
 support-system/public/protection/
 support-system/public/assets/customer-protection.js
 support-system/public/assets/customer-protection.css
+support-system/public/assets/mailbox.js
+support-system/public/assets/mailbox.css
 
 # Claude Code / Cursor
 .claude/

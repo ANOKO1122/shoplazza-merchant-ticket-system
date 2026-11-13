@@ -8,7 +8,7 @@
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "build:frontend": "tsc -p frontend/tsconfig.json && node scripts/build-protection.mjs",
-    "test:frontend": "tsx --tsconfig frontend/tsconfig.json --test frontend/protection/*.test.tsx frontend/customer-protection/*.test.tsx"
+    "test:frontend": "tsx --tsconfig frontend/tsconfig.json --test frontend/protection/*.test.tsx frontend/customer-protection/*.test.tsx frontend/mailbox/*.test.tsx"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
