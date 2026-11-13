@@ -6,7 +6,7 @@
 
 **Architecture:** A single IMAP polling worker imports INBOX into PostgreSQL; the admin reads and updates local conversations through authenticated APIs. SMTP sends only staff replies from a durable outbox. Customer content is rendered as escaped plain text, and allowed attachments are stored privately.
 
-**Tech Stack:** Node 20, TypeScript, Express, PostgreSQL, ImapFlow, postal-mime, Nodemailer, plain admin HTML/CSS/JS.
+**Tech Stack:** Node 20, TypeScript, Express, PostgreSQL, ImapFlow, postal-mime, Nodemailer, React and esbuild.
 
 **Spec:** `docs/superpowers/specs/2026-11-13-support-mailbox-design.md`
 
@@ -27,8 +27,9 @@
 - `support-system/src/mailbox-imap.ts`: bounded IMAP polling, UID cursor, parsing, error status.
 - `support-system/src/mailbox-smtp.ts`: SMTP send worker and delivery state.
 - `support-system/src/mailbox-routes.ts`: authenticated APIs and private attachment downloads.
-- `support-system/public/admin-mailbox.html`: shared inbox UI.
-- `support-system/src/index.ts`, `pg.ts`, `admin-pages.ts`, `public/admin-shell.js`, `.env.example`, `package.json`: mounting, schema initialization, navigation, dependencies and configuration.
+- `support-system/frontend/mailbox/main.tsx`, `api.ts`, `styles.css`: typed React inbox UI, API client and styling.
+- `support-system/public/admin-mailbox.html`: authenticated mount shell only.
+- `support-system/src/index.ts`, `pg.ts`, `admin-pages.ts`, `public/admin-shell.js`, `frontend/tsconfig.json`, `scripts/build-protection.mjs`, `.env.example`, `package.json`: mounting, schema initialization, navigation, frontend build, dependencies and configuration.
 
 ## Review Focus
 
@@ -90,13 +91,13 @@
 
 ### Task 5: Shared inbox page
 
-**Files:** Create `public/admin-mailbox.html`; modify `admin-pages.ts`, `public/admin-shell.js`, `index.ts`; add a focused frontend smoke test if existing test harness supports it.
+**Files:** Create `frontend/mailbox/main.tsx`, `api.ts`, `styles.css`, `public/admin-mailbox.html`; modify `admin-pages.ts`, `public/admin-shell.js`, `frontend/tsconfig.json`, `scripts/build-protection.mjs`, `index.ts`; add focused frontend tests.
 
 **Interfaces:** `/thinkpro-admin/mailbox` uses Task 4 APIs.
 
 - [ ] Add a failing navigation/page access test and UI behavior test for filters, opening conversation, reading, note/reply separation, assignment, linking and visible reply target.
 - [ ] Run tests; confirm failures.
-- [ ] Implement desktop list/conversation/context layout and narrow-screen list/detail layout, plus loading, empty, connectivity, conflict and send states.
+- [ ] Implement a React/TypeScript desktop list/conversation/context layout and narrow-screen list/detail layout, plus loading, empty, connectivity, conflict and send states. Keep the HTML page as a mount shell.
 - [ ] Run tests, build and manual browser checks; confirm pass.
 - [ ] Commit.
 
