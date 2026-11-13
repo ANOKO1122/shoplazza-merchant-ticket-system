@@ -36,6 +36,8 @@ import { cleanupProtectionOrphanEvidence } from './protection-customer-media';
 import { initProtectionNotificationSchema, processProtectionNotifications } from './protection-notification';
 import { initMailboxSchema } from './mailbox-schema';
 import { mailboxConfigured, syncMailboxOnce } from './mailbox-imap';
+import { createMailboxRouter } from './mailbox-routes';
+import { processMailboxReplies } from './mailbox-smtp';
 import { processProtectionFulfillments } from './protection-fulfillment';
 import { createVisibilityPublicRouter } from './product-visibility';
 
@@ -129,6 +131,7 @@ app.use('/api/protection', createProtectionCustomerRouter());
 app.use('/api/storefront/visibility', createVisibilityPublicRouter());
 
 // Admin API (客服端)
+app.use('/api/admin/mailbox', createMailboxRouter());
 app.use('/api/admin', createAdminRouter());
 app.use('/api/admin/protection', createProtectionCustomerAdminRouter());
 app.use('/api/admin/protection', createProtectionStoreRouter());
@@ -355,6 +358,7 @@ async function startup() {
   let fulfillmentReconcileTimer: ReturnType<typeof setInterval> | null = null;
   let protectionTimer: ReturnType<typeof setInterval> | null = null;
   let mailboxTimer: ReturnType<typeof setInterval> | null = null;
+  let mailboxReplyTimer: ReturnType<typeof setInterval> | null = null;
 
   // 优雅退出：关闭定时器、释放数据库连接池
   const shutdown = async () => {
@@ -368,6 +372,7 @@ async function startup() {
     if (fulfillmentReconcileTimer) clearInterval(fulfillmentReconcileTimer);
     if (protectionTimer) clearInterval(protectionTimer);
     if (mailboxTimer) clearInterval(mailboxTimer);
+    if (mailboxReplyTimer) clearInterval(mailboxReplyTimer);
     try {
       await closeDatabasePools();
       console.log('[support-bridge] 数据库连接池已关闭');
@@ -399,6 +404,16 @@ async function startup() {
       pollMailbox();
       mailboxTimer = setInterval(pollMailbox, 60_000);
       mailboxTimer.unref();
+      let sendingMailboxReplies = false;
+      const sendMailboxReplies = async () => {
+        if (sendingMailboxReplies) return;
+        sendingMailboxReplies = true;
+        try { await processMailboxReplies(); }
+        catch { console.error('[mailbox] reply worker failed; check inbox send status'); }
+        finally { sendingMailboxReplies = false; }
+      };
+      mailboxReplyTimer = setInterval(sendMailboxReplies, 10_000);
+      mailboxReplyTimer.unref();
     }
     let nextProtectionEvidenceCleanup = 0;
     const processProtection = () => {
