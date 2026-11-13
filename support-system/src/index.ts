@@ -35,6 +35,7 @@ import { createProtectionCustomerRouter, createProtectionCustomerAdminRouter } f
 import { cleanupProtectionOrphanEvidence } from './protection-customer-media';
 import { initProtectionNotificationSchema, processProtectionNotifications } from './protection-notification';
 import { initMailboxSchema } from './mailbox-schema';
+import { mailboxConfigured, syncMailboxOnce } from './mailbox-imap';
 import { processProtectionFulfillments } from './protection-fulfillment';
 import { createVisibilityPublicRouter } from './product-visibility';
 
@@ -353,6 +354,7 @@ async function startup() {
   let shippingAddressTimer: ReturnType<typeof setInterval> | null = null;
   let fulfillmentReconcileTimer: ReturnType<typeof setInterval> | null = null;
   let protectionTimer: ReturnType<typeof setInterval> | null = null;
+  let mailboxTimer: ReturnType<typeof setInterval> | null = null;
 
   // 优雅退出：关闭定时器、释放数据库连接池
   const shutdown = async () => {
@@ -365,6 +367,7 @@ async function startup() {
     if (shippingAddressTimer) clearInterval(shippingAddressTimer);
     if (fulfillmentReconcileTimer) clearInterval(fulfillmentReconcileTimer);
     if (protectionTimer) clearInterval(protectionTimer);
+    if (mailboxTimer) clearInterval(mailboxTimer);
     try {
       await closeDatabasePools();
       console.log('[support-bridge] 数据库连接池已关闭');
@@ -384,6 +387,19 @@ async function startup() {
   }
 
   if (!backgroundJobsDisabled) {
+    if (mailboxConfigured()) {
+      let mailboxRunning = false;
+      const pollMailbox = async () => {
+        if (mailboxRunning) return;
+        mailboxRunning = true;
+        try { await syncMailboxOnce(); }
+        catch { console.error('[mailbox] IMAP sync failed; check inbox connection status'); }
+        finally { mailboxRunning = false; }
+      };
+      pollMailbox();
+      mailboxTimer = setInterval(pollMailbox, 60_000);
+      mailboxTimer.unref();
+    }
     let nextProtectionEvidenceCleanup = 0;
     const processProtection = () => {
       syncProtectionOrders(200).catch(() => console.error('[protection] order indexing failed; will retry'));

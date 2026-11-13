@@ -9,6 +9,7 @@ support-system/postgres-ssl/
 
 # 用户上传文件（图片附件等，含敏感信息）
 support-system/uploads/
+support-system/private/
 # 邮件商品缩略图缓存（运行时下载生成）
 support-system/thumbnails/
 
