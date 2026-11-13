@@ -10,9 +10,9 @@ RUN if [ -f src/index.ts ]; then npm run build; fi && npm prune --omit=dev
 EXPOSE 4001
 CMD ["node", "dist/index.js"]
 
-# Explicit local deployment target; the app package is not part of the system source.
+# Explicit deployment target; the app package comes from its separate Git checkout.
 FROM system AS with-shoplazza-app
-COPY shipping-protection/ /opt/shipping-protection/
+COPY --from=protection_source / /opt/shipping-protection/
 RUN cd /opt/shipping-protection && npm ci && ln -s /opt/shipping-protection /shipping-protection
 
 # BuildKit skips the unused app stage for the default, standalone system image.

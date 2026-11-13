@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import type { ClaimReason, ProtectionClaim, ProtectionList, ProtectionOrder, ProtectionStore } from '../../src/protection-types';
 import { API, ApiError, centsFromInput, dateTime, money, query, request, useResource } from './api';
-import { Badge, Empty, ErrorNotice, Field, FilterBar, Info, initialFilters, ItemList, Loading, OrderContext, Pagination, reasonLabels, Section, useDetailFocus } from './shared';
+import { Badge, DetailDialog, Empty, ErrorNotice, Field, FilterBar, Info, initialFilters, ItemList, Loading, OrderContext, Pagination, reasonLabels, Section } from './shared';
 import { CustomerAccessLink } from './CustomerSubmission';
 export function Orders({ stores, onClaim }: { stores: ProtectionStore[]; onClaim: (id: string) => void }) {
   const [draft, setDraft] = useState(initialFilters);
@@ -10,25 +10,24 @@ export function Orders({ stores, onClaim }: { stores: ProtectionStore[]; onClaim
   const [selected, setSelected] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
   const params = query({ q: filters.q, store: filters.store, from: filters.from, to: filters.to });
-  const resource = useResource<ProtectionList<ProtectionOrder>>(`/orders?${params}&page=${page}&page_size=20`, refresh);
+  const resource = useResource<ProtectionList<ProtectionOrder>>(`/orders?${params}&page=${page}&page_size=20`, refresh, true);
   return <><FilterBar value={draft} onChange={setDraft} mode="orders" stores={stores} onApply={() => { setFilters(draft); setPage(1); setSelected(null); }} />
-    <div className={`p-workspace ${selected ? 'p-has-detail' : ''}`}><section className="p-list-pane"><div className="p-section-title"><h2>保障订单</h2><a className="p-button" href={`${API}/orders/export?${params}`}>导出 CSV</a></div>
-      <ErrorNotice error={resource.error} onRetry={resource.reload} />{resource.loading ? <Loading /> : resource.data?.items.length ? <div className="p-table-wrap"><table className="p-table"><thead><tr><th>保障 / 订单</th><th>订单来源 / 客户</th><th>保障费</th><th>保障商品金额</th><th>申诉</th><th>付款时间</th></tr></thead><tbody>{resource.data.items.map(order => <tr key={order.id} className={selected === order.id ? 'p-selected' : ''}><td><button className="p-link p-strong" onClick={() => setSelected(order.id)}>{order.public_no}</button><small>{order.order_number}</small></td><td>{order.store_subdomain}<small>{order.customer_email || order.customer_name || '未提供客户信息'}</small></td><td>{money(order.protection_fee_cents, order.currency)}</td><td>{money(order.protected_value_cents, order.currency)}</td><td>{order.claim_count}</td><td>{dateTime(order.paid_at)}</td></tr>)}</tbody></table></div> : !resource.error && <Empty title="暂无保障订单">订单同步后，可在这里查看保障记录并代客户登记申诉。</Empty>}
+    <div className="p-workspace"><section className="p-list-pane"><div className="p-section-title"><h2>保障订单</h2><a className="p-button" href={`${API}/orders/export?${params}`}>导出 CSV</a></div>
+      <ErrorNotice error={resource.error} onRetry={resource.reload} />{resource.loading && !resource.data ? <Loading /> : resource.data?.items.length ? <div className="p-table-wrap"><table className="p-table"><thead><tr><th>保障 / 订单</th><th>订单来源 / 客户</th><th>保障费</th><th>保障商品金额</th><th>申诉</th><th>付款时间</th></tr></thead><tbody>{resource.data.items.map(order => <tr key={order.id} className={selected === order.id ? 'p-selected' : ''}><td><button className="p-link p-strong" onClick={() => setSelected(order.id)}>{order.public_no}</button><small>{order.order_number}</small></td><td>{order.store_subdomain}<small>{order.customer_email || order.customer_name || '未提供客户信息'}</small></td><td>{money(order.protection_fee_cents, order.currency)}</td><td>{money(order.protected_value_cents, order.currency)}</td><td>{order.claim_count}</td><td>{dateTime(order.paid_at)}</td></tr>)}</tbody></table></div> : !resource.error && <Empty title="暂无保障订单">订单同步后，可在这里查看保障记录并代客户登记申诉。</Empty>}
       <Pagination total={resource.data?.total || 0} page={page} loading={resource.loading} onChange={setPage} />
-    </section>{selected && <OrderDetail key={selected} id={selected} onClose={() => setSelected(null)} onClaim={onClaim} onChanged={() => setRefresh(value => value + 1)} />}</div>
+    </section></div>{selected && <OrderDetail key={selected} id={selected} onClose={() => setSelected(null)} onClaim={onClaim} onChanged={() => setRefresh(value => value + 1)} />}
   </>;
 }
-function OrderDetail({ id, onClose, onClaim, onChanged }: { id: string; onClose: () => void; onClaim: (id: string) => void; onChanged: () => void }) {
-  const detailRef = useDetailFocus();
+export function OrderDetail({ id, onClose, onClaim, onChanged }: { id: string; onClose: () => void; onClaim: (id: string) => void; onChanged: () => void }) {
   const resource = useResource<{ order: ProtectionOrder; claims: ProtectionClaim[] }>(`/orders/${encodeURIComponent(id)}`);
   const [creating, setCreating] = useState(false);
   const data = resource.data;
-  return <aside className="p-detail" ref={detailRef} tabIndex={-1} aria-label="保障订单详情"><div className="p-detail-heading"><div><h2>{data?.order.public_no || '保障订单详情'}</h2><p className="p-muted">固定保障编号 · 可包含多次申诉</p></div><button className="p-button" onClick={onClose}>关闭详情</button></div><ErrorNotice error={resource.error} onRetry={resource.reload} />{resource.loading ? <Loading /> : data && <>
+  return <DetailDialog label="保障订单详情" onClose={onClose}><div className="p-detail-heading"><div><h2>{data?.order.public_no || '保障订单详情'}</h2><p className="p-muted">固定保障编号 · 可包含多次申诉</p></div><button className="p-button" onClick={onClose}>关闭详情</button></div><ErrorNotice error={resource.error} onRetry={resource.reload} />{resource.loading ? <Loading /> : data && <>
     <div className="p-detail-body"><CustomerAccessLink orderId={data.order.id} /><OrderContext order={data.order} /><Section title="订单商品"><ItemList items={data.order.items} currency={data.order.currency} /></Section>
     <Section title="历次申诉" action={!creating && <button className="p-button p-primary" onClick={() => setCreating(true)}>登记新申诉</button>}>
       <p className="p-muted p-space-after">每次申诉独立编号；拒绝后，在申请时限和剩余额度允许时可重新提交，保障编号保持不变。</p>{data.claims.length ? <ul className="p-related">{data.claims.map(claim => <li key={claim.id}><div><button className="p-link p-strong" onClick={() => onClaim(claim.id)}>{claim.public_no}</button><small>{reasonLabels[claim.reason]} · {dateTime(claim.created_at)}</small></div><Badge status={claim.status} /></li>)}</ul> : <p className="p-muted">这笔保障尚无申诉记录。</p>}
     </Section>{creating && <CreateClaim order={data.order} claims={data.claims} onCancel={() => setCreating(false)} onCreated={claim => { onChanged(); onClaim(claim.id); }} />}</div>
-  </>}</aside>;
+  </>}</DetailDialog>;
 }
 function CreateClaim({ order, claims, onCancel, onCreated }: { order: ProtectionOrder; claims: ProtectionClaim[]; onCancel: () => void; onCreated: (claim: ProtectionClaim) => void }) {
   const [selected, setSelected] = useState<string[]>([]);

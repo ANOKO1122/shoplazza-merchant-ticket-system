@@ -58,11 +58,26 @@ export function OrderContext({ order }: { order: ProtectionOrder }) {
   </>;
 }
 
-export function useDetailFocus() {
-  const ref = useRef<HTMLElement>(null);
+export function DetailDialog({ label, onClose, children }: { label: string; onClose: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    ref.current?.focus({ preventScroll: true });
-    if (window.matchMedia('(max-width: 1250px)').matches) ref.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    const dialog = ref.current;
+    if (!dialog) return;
+    const scrollRegion = dialog.closest<HTMLElement>('.p-content');
+    const previousOverflow = scrollRegion?.style.overflow || '';
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialog.showModal();
+    (dialog.querySelector<HTMLElement>('.p-detail-heading button') || dialog).focus({ preventScroll: true });
+    if (scrollRegion) scrollRegion.style.overflow = 'hidden';
+    return () => {
+      if (scrollRegion) scrollRegion.style.overflow = previousOverflow;
+      if (dialog.open) dialog.close();
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+    };
   }, []);
-  return ref;
+  return <dialog ref={ref} className="p-detail-dialog" tabIndex={-1} aria-modal="true" aria-label={label}
+    onCancel={event => { event.preventDefault(); onClose(); }}
+    onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="p-detail">{children}</div>
+  </dialog>;
 }

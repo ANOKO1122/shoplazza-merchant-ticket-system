@@ -4,6 +4,8 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { centsFromInput, money, query, safeUrl, latestInstallJob } from './api';
 import { Field, ItemList, OrderContext } from './shared';
+import { Claims } from './Claims';
+import { OrderDetail } from './Orders';
 import type { ProtectionOrder } from '../../src/protection-types';
 test('a newer remote installation supersedes a completed local job', () => {
   const old = { id: '9', store_subdomain: 'fixture', action: 'check' as const, status: 'succeeded' as const, message: 'done', created_at: '2026-11-03T00:00:00Z', finished_at: '2026-11-03T00:00:01Z' };
@@ -58,4 +60,17 @@ test('field labels explicitly reference only visible label text when textarea co
     assert.ok(html.includes(`aria-labelledby="${id}"`), `${text} must explicitly name its control`);
   }
   assert.ok(html.includes('已输入的审核备注'));
+});
+
+test('opening a claim keeps the list layout and exposes a named modal dialog', () => {
+  const html = renderToStaticMarkup(<Claims stores={[]} agents={[]} selected="claim-1" onSelect={() => {}} />);
+  assert.ok(html.includes('class="p-workspace"'), 'the list must keep its single-column layout');
+  assert.ok(!html.includes('p-has-detail'), 'opening a detail must not shrink the list');
+  assert.match(html, /<dialog[^>]+aria-modal="true"[^>]+aria-label="赔付申诉详情"/);
+});
+
+test('order detail uses the same named modal instead of occupying a list column', () => {
+  const html = renderToStaticMarkup(<OrderDetail id="order-1" onClose={() => {}} onClaim={() => {}} onChanged={() => {}} />);
+  assert.match(html, /<dialog[^>]+aria-modal="true"[^>]+aria-label="保障订单详情"/);
+  assert.ok(!html.includes('p-has-detail'));
 });

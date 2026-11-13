@@ -51,8 +51,9 @@ support-system/nginx/acme-challenge/*
 # Local reports and temporary operational artifacts
 support-system/tmp/
 
-# Local application sources are versioned only on their local branches.
-/shipping-protection/
+# Shipping Protection is a separate Git repository; a local checkout or symlink
+# may be placed here for development tools that use the legacy default path.
+/shipping-protection
 /product-visibility/
 /docs/superpowers/plans/2026-11-02-amao04-protection.md
 /docs/superpowers/plans/2026-11-02-cart-linkage.md

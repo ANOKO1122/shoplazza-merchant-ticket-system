@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ClaimDetail as ClaimDetailData, ClaimStatus, ProtectionClaim, ProtectionList, ProtectionOrder, ProtectionStore } from '../../src/protection-types';
 import { API, ApiError, centsFromInput, dateTime, money, query, request, useResource } from './api';
-import { Badge, Empty, ErrorNotice, Field, FilterBar, Info, initialFilters, ItemList, Loading, OrderContext, Pagination, reasonLabels, Section, statusLabels, useDetailFocus } from './shared';
+import { Badge, DetailDialog, Empty, ErrorNotice, Field, FilterBar, Info, initialFilters, ItemList, Loading, OrderContext, Pagination, reasonLabels, Section, statusLabels } from './shared';
 import { CustomerSubmission } from './CustomerSubmission';
 export interface Agent { id: number; name: string }
 export function Claims({ stores, agents, selected, onSelect }: { stores: ProtectionStore[]; agents: Agent[]; selected: string | null; onSelect: (id: string | null) => void }) {
@@ -10,27 +10,26 @@ export function Claims({ stores, agents, selected, onSelect }: { stores: Protect
   const [page, setPage] = useState(1);
   const [refresh, setRefresh] = useState(0);
   const params = query({ ...filters });
-  const resource = useResource<ProtectionList<ProtectionClaim>>(`/claims?${params}&page=${page}&page_size=20`, refresh);
+  const resource = useResource<ProtectionList<ProtectionClaim>>(`/claims?${params}&page=${page}&page_size=20`, refresh, true);
   return <><FilterBar value={draft} onChange={setDraft} mode="claims" stores={stores} onApply={() => { setFilters(draft); setPage(1); onSelect(null); }} />
     <div className="p-notice">本页仅处理申诉审核，不执行打款。审核通过后，可记录外部处理结果。</div>
-    <div className={`p-workspace ${selected ? 'p-has-detail' : ''}`}><section className="p-list-pane"><div className="p-section-title"><h2>赔付申诉</h2><a className="p-button" href={`${API}/claims/export?${params}`}>导出 CSV</a></div><ErrorNotice error={resource.error} onRetry={resource.reload} />
-      {resource.loading ? <Loading /> : resource.data?.items.length ? <div className="p-table-wrap"><table className="p-table"><thead><tr><th>申诉 / 保障</th><th>客户 / 订单</th><th>原因</th><th>申请金额</th><th>状态</th><th>负责人 / 创建时间</th></tr></thead><tbody>{resource.data.items.map(claim => <tr key={claim.id} className={selected === claim.id ? 'p-selected' : ''}><td><button className="p-link p-strong" onClick={() => onSelect(claim.id)}>{claim.public_no}</button><small>{claim.protection_public_no}</small></td><td>{claim.customer_email || claim.customer_name || '未提供客户信息'}<small>{claim.order_number}</small></td><td>{reasonLabels[claim.reason]}</td><td>{money(claim.requested_amount_cents, claim.currency)}</td><td><Badge status={claim.status} /></td><td>{claim.assignee_name || '未分配'}<small>{dateTime(claim.created_at)}</small></td></tr>)}</tbody></table></div> : !resource.error && <Empty title="暂无赔付申诉">可在「保障订单」中打开订单，代客户登记申诉。</Empty>}
+    <div className="p-workspace"><section className="p-list-pane"><div className="p-section-title"><h2>赔付申诉</h2><a className="p-button" href={`${API}/claims/export?${params}`}>导出 CSV</a></div><ErrorNotice error={resource.error} onRetry={resource.reload} />
+      {resource.loading && !resource.data ? <Loading /> : resource.data?.items.length ? <div className="p-table-wrap"><table className="p-table"><thead><tr><th>申诉 / 保障</th><th>客户 / 订单</th><th>原因</th><th>申请金额</th><th>状态</th><th>负责人 / 创建时间</th></tr></thead><tbody>{resource.data.items.map(claim => <tr key={claim.id} className={selected === claim.id ? 'p-selected' : ''}><td><button className="p-link p-strong" onClick={() => onSelect(claim.id)}>{claim.public_no}</button><small>{claim.protection_public_no}</small></td><td>{claim.customer_email || claim.customer_name || '未提供客户信息'}<small>{claim.order_number}</small></td><td>{reasonLabels[claim.reason]}</td><td>{money(claim.requested_amount_cents, claim.currency)}</td><td><Badge status={claim.status} /></td><td>{claim.assignee_name || '未分配'}<small>{dateTime(claim.created_at)}</small></td></tr>)}</tbody></table></div> : !resource.error && <Empty title="暂无赔付申诉">可在「保障订单」中打开订单，代客户登记申诉。</Empty>}
       <Pagination page={page} total={resource.data?.total || 0} loading={resource.loading} onChange={setPage} />
-    </section>{selected && <ClaimDetail key={selected} id={selected} agents={agents} onClose={() => onSelect(null)} onChanged={() => setRefresh(value => value + 1)} />}</div>
+    </section></div>{selected && <ClaimDetail key={selected} id={selected} agents={agents} onClose={() => onSelect(null)} onChanged={() => setRefresh(value => value + 1)} />}
   </>;
 }
 function ClaimDetail({ id, agents, onClose, onChanged }: { id: string; agents: Agent[]; onClose: () => void; onChanged: () => void }) {
-  const detailRef = useDetailFocus();
   const resource = useResource<ClaimDetailData>(`/claims/${encodeURIComponent(id)}`, 0, true);
   const data = resource.data;
-  return <aside className="p-detail" ref={detailRef} tabIndex={-1} aria-label="赔付申诉详情"><div className="p-detail-heading"><div><h2>{data?.claim.public_no || '申诉详情'}</h2><p className="p-muted">保障编号 {data?.claim.protection_public_no || '加载中'}</p></div><button className="p-button" onClick={onClose}>关闭详情</button></div>
+  return <DetailDialog label="赔付申诉详情" onClose={onClose}><div className="p-detail-heading"><div><h2>{data?.claim.public_no || '申诉详情'}</h2><p className="p-muted">保障编号 {data?.claim.protection_public_no || '加载中'}</p></div><button className="p-button" onClick={onClose}>关闭详情</button></div>
     <ErrorNotice error={resource.error} onRetry={resource.reload} />{!data && resource.loading ? <Loading /> : data && <div className="p-detail-body">
       <Section title="申诉信息" action={<Badge status={data.claim.status} />}><dl className="p-info-grid"><Info label="申诉原因">{reasonLabels[data.claim.reason]}</Info><Info label="申请金额">{money(data.claim.requested_amount_cents, data.claim.currency)}</Info><Info label="审核通过金额">{data.claim.approved_amount_cents == null ? '尚未审核通过' : money(data.claim.approved_amount_cents, data.claim.currency)}</Info><Info label="负责人">{data.claim.assignee_name || '未分配'}</Info><Info label="创建时间">{dateTime(data.claim.created_at)}</Info><Info label="最近更新">{dateTime(data.claim.updated_at)}</Info></dl><div className="p-description"><span>问题说明</span><p>{data.claim.description || '未填写说明'}</p></div>{data.claim.resolution_note && <div className="p-description"><span>处理说明</span><p>{data.claim.resolution_note}</p></div>}{data.claim.external_reference && <div className="p-description"><span>外部处理凭据</span><p>{data.claim.external_reference}</p></div>}</Section>
       {data.customer_submission && <CustomerSubmission submission={data.customer_submission} order={data.order} />}
       <ReviewForm claim={data.claim} order={data.order} agents={agents} refreshing={resource.loading} onReload={resource.reload} onSaved={() => { resource.reload(); onChanged(); }} />
       <OrderContext order={data.order} /><Section title="本次申诉商品"><ItemList items={data.order.items.filter(item => data.claim.item_ids.includes(item.id))} currency={data.order.currency} selected={data.claim.item_ids} /></Section>
       <Section title="操作记录">{data.events.length ? <ol className="p-history">{data.events.map(event => <li key={event.id}><div><strong>{event.actor_name || '系统'}</strong><time>{dateTime(event.created_at)}</time></div><p>{event.detail?.from_status && event.detail?.to_status && event.detail.from_status !== event.detail.to_status ? `${statusLabels[event.detail.from_status]} → ${statusLabels[event.detail.to_status]}` : eventLabel(event.action)}</p>{event.detail?.approved_amount_cents != null && <p className="p-history-note">审核通过金额：{money(event.detail.approved_amount_cents, data.claim.currency)}</p>}{event.detail?.external_reference && <p className="p-history-note">外部处理凭据：{event.detail.external_reference}</p>}{event.note && <p className="p-history-note">{event.note}</p>}</li>)}</ol> : <p className="p-muted">暂无操作记录。</p>}</Section>
-    </div>}</aside>;
+    </div>}</DetailDialog>;
 }
 function eventLabel(action: string) {
   const labels: Record<string, string> = { created: '创建申诉', claim_created: '创建申诉', submitted: '提交申诉', reviewing: '开始审核', needs_info: '要求补充资料', approved: '审核通过', rejected: '拒绝申诉', closed: '记录外部处理结果', updated: '更新申诉', note: '添加备注', assigned: '调整负责人', assignment: '调整负责人', status_changed: '变更审核状态', update: '更新申诉' };

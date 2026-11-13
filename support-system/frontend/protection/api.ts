@@ -29,14 +29,14 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
   return payload as T;
 }
 export function useResource<T>(path: string | null, refresh = 0, keepPrevious = false) {
-  const [state, setState] = useState<{ data: T | null; error: ApiError | null; loading: boolean }>({ data: null, error: null, loading: true });
+  const [state, setState] = useState<{ path: string | null; data: T | null; error: ApiError | null; loading: boolean }>({ path: null, data: null, error: null, loading: true });
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
-    setState(previous => ({ data: keepPrevious ? previous.data : null, error: null, loading: !!path }));
+    setState(previous => ({ path, data: keepPrevious && previous.path === path ? previous.data : null, error: null, loading: !!path }));
     if (path) request<T>(path, { signal: controller.signal }).then(data => {
-      if (!controller.signal.aborted) setState({ data, error: null, loading: false });
-    }).catch(error => { if (!controller.signal.aborted) setState(previous => ({ data: keepPrevious ? previous.data : null, error, loading: false })); });
+      if (!controller.signal.aborted) setState({ path, data, error: null, loading: false });
+    }).catch(error => { if (!controller.signal.aborted) setState(previous => ({ path, data: keepPrevious && previous.path === path ? previous.data : null, error, loading: false })); });
     return () => controller.abort();
   }, [path, refresh, retry, keepPrevious]);
   const reload = useCallback(() => setRetry(value => value + 1), []);

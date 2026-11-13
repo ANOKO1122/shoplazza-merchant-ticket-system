@@ -2,23 +2,20 @@
 
 The staff system, protection administration, customer portal, email preferences,
 and their backend belong to the system release. The Shoplazza storefront/cart,
-checkout extension, installer implementation, theme backups and per-store package
-manifests remain in local Git under `shipping-protection/`.
+checkout extension, installer implementation and per-store manifests live in a
+separate local Git repository at `/root/work/shipping-protection`. Theme backups,
+build outputs and store credentials stay outside Git.
 
 ## Git boundary
 
-- Publish the system snapshot on `main` to `origin/main`.
-- Keep `codex/amao04-shipping-protection` local. It contains the full source and
-  application history. Do not push this branch, all branches, or all tags.
-- The final product-visibility preview remains on the local
-  `codex/amao04-product-visibility` branch. Only its retained public configuration
-  endpoint and schema are restored to the system; its retired admin page stays
-  removed.
-- Do not merge either local application branch into a published branch: removing
-  application files from the latest tree does not remove them from its ancestors.
-  Transfer reviewed system paths as a snapshot based on the published branch.
-- Exclude application-only design plans/specs as well as runtime reports,
-  credentials, certificates, evidence, dependencies and generated bundles.
+- Publish reviewed system changes to the configured system remote. The current
+  author's Git identity is `ANOKO1122 <1203364600@qq.com>`; the `anoko` remote
+  points to the ANOKO1122 repository.
+- Commit storefront and installer changes only in the separate
+  `/root/work/shipping-protection` repository. Keep its future GitHub repository
+  private because store manifests contain platform identifiers.
+- Do not commit runtime reports, credentials, certificates, theme backups,
+  dependencies or generated bundles to either repository.
 
 ## Builds
 
@@ -29,13 +26,18 @@ docker build -f support-system/Dockerfile -t support-bridge:system .
 ```
 
 Production also needs the private local Shoplazza package for store component
-checks and installation. From the complete local worktree, build explicitly:
+checks and installation. Build with its separate checkout as a named context:
 
 ```sh
-docker build --target with-shoplazza-app -f support-system/Dockerfile -t support-bridge:release .
+docker build --target with-shoplazza-app \
+  --build-context protection_source=/root/work/shipping-protection \
+  -f support-system/Dockerfile -t support-bridge:release .
 ```
 
-This target includes the local package and its CLI dependencies at
+For Compose deployment, set the ignored `support-system/docker-compose.override.yml`
+service build target to `with-shoplazza-app` and add
+`build.additional_contexts.protection_source: /root/work/shipping-protection`.
+The target includes the separate package and its CLI dependencies at
 `/opt/shipping-protection`, retaining the installer environment and writable
 per-store data directory. Building this local image does not publish its source.
 Do not replace the production image with the system-only target when store
