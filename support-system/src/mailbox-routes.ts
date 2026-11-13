@@ -85,8 +85,9 @@ export function createMailboxRouter(): express.Router {
       const agent = (req as any).agent;
       const status = scope === 'resolved' ? 'resolved' : 'open';
       const assigneeId = scope === 'mine' ? agent.agentId : scope === 'unassigned' ? null : undefined;
+      const read = scope === 'read' ? true : scope === 'unread' ? false : undefined;
       res.json({ ok: true, ...await listConversations({ q: String(req.query.q || ''), status, assigneeId,
-        unread: req.query.unread === 'true', limit: Number(req.query.limit) || 30, offset: Number(req.query.offset) || 0 }) });
+        read, limit: Number(req.query.limit) || 30, offset: Number(req.query.offset) || 0 }) });
     } catch (error) { routeError(res, error); }
   });
 
@@ -103,13 +104,15 @@ export function createMailboxRouter(): express.Router {
     try {
       const version = Number(req.body?.version);
       if (!Number.isSafeInteger(version) || version < 1) throw new Error('invalid_version');
-      const change: { assigneeId?: number | null; status?: 'open' | 'resolved'; markRead?: boolean } = {};
+      const change: { assigneeId?: number | null; status?: 'open' | 'resolved'; markRead?: boolean; markUnread?: boolean } = {};
       if ('assignee_id' in (req.body || {})) change.assigneeId = req.body.assignee_id == null ? null : numericId(String(req.body.assignee_id));
       if ('status' in (req.body || {})) {
         if (!['open', 'resolved'].includes(req.body.status)) throw new Error('invalid_status');
         change.status = req.body.status;
       }
       if (req.body?.mark_read === true) change.markRead = true;
+      if (req.body?.mark_unread === true) change.markUnread = true;
+      if (change.markRead && change.markUnread) throw new Error('invalid_read_change');
       res.json({ ok: true, conversation: await updateConversation(numericId(req.params.id), version, change, (req as any).agent.agentId) });
     } catch (error) { routeError(res, error); }
   });

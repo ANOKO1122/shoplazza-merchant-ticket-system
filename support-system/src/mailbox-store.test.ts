@@ -5,7 +5,7 @@ import { PROTECTION_SCHEMA_SQL } from './protection-schema';
 import { PROTECTION_NOTIFICATION_SCHEMA_SQL } from './protection-notification-schema';
 import { initMailboxSchema } from './mailbox-schema';
 import { closeDatabasePools } from './pg';
-import { addNote, getConversation, importIncomingMessage, linkClaim, linkProtectionOrder, listConversations, queueReply, updateConversation } from './mailbox-store';
+import { addNote, backfillMailboxOrderLinks, getConversation, importIncomingMessage, linkClaim, linkProtectionOrder, listConversations, queueReply, updateConversation } from './mailbox-store';
 
 const databaseUrl = process.env.SUPPORT_MAILBOX_TEST_DATABASE_URL;
 
@@ -56,21 +56,44 @@ test('inbox import, assignment, notes, claim links and reply queue remain consis
     assert.equal(forwardedDetail?.candidate_notification?.claim_id, Number(claimId));
     assert.notEqual(forwarded.conversationId, first.conversationId);
 
+    const newerOrderId = (await pool.query(`INSERT INTO support_protection_orders
+      (store_subdomain,store_name,order_id,order_number,customer_email,customer_name,currency,payment_status,order_status,fulfillment_status,refund_status,paid_at)
+      VALUES('shop-a','Shop A','order-new','1002','buyer@example.invalid','Buyer','USD','paid','open','fulfilled','',now()) RETURNING id`)).rows[0].id;
+
     const unrelated = await importIncomingMessage({ mailbox: 'customersupport@reply.us-seel.com', uidValidity: '7', uid: 5,
       messageId: '<new@example.invalid>', inReplyTo: null, references: [], sender: 'buyer@example.invalid',
       recipient: 'customersupport@reply.us-seel.com', subject: 'Different question', body: 'Please help', sentAt: new Date('2026-11-13T10:02:00Z'), attachments: [] });
     assert.notEqual(unrelated.conversationId, first.conversationId);
+    assert.equal((await getConversation(unrelated.conversationId)).protection_order_id, Number(newerOrderId));
+    assert.equal((await getConversation(unrelated.conversationId)).order_candidates[0].id, Number(newerOrderId));
     assert.equal((await listConversations({ q: 'Different question' })).items.length, 1);
+    assert.equal(typeof (await listConversations({ q: 'Different question' })).items[0].id, 'number');
+    assert.equal((await listConversations({ read: false })).items.some((item: any) => item.id === unrelated.conversationId), true);
+    assert.equal((await listConversations({ read: true })).items.some((item: any) => item.id === unrelated.conversationId), false);
 
     detail = await updateConversation(first.conversationId, detail!.version, { assigneeId: 11, markRead: true }, 11);
     assert.equal(detail.assignee_id, 11);
     assert.equal(detail.unread_count, 0);
+    assert.equal((await listConversations({ read: true })).items.some((item: any) => item.id === first.conversationId), true);
+    detail = await updateConversation(first.conversationId, detail.version, { markUnread: true }, 11);
+    assert.equal(detail.unread_count, 1);
+    assert.equal((await listConversations({ read: false })).items.some((item: any) => item.id === first.conversationId), true);
+    detail = await updateConversation(first.conversationId, detail.version, { markRead: true }, 11);
     await assert.rejects(() => updateConversation(first.conversationId, detail!.version - 1, { status: 'resolved' }, 12), /stale_version/);
     detail = await addNote(first.conversationId, detail.version, 'Internal only', 11);
     assert.equal(detail.notes[0].body_text, 'Internal only');
     detail = await linkClaim(forwarded.conversationId, forwardedDetail!.version, Number(claimId), 11);
     assert.equal(detail.claim_id, Number(claimId));
     assert.deepEqual((await pool.query('SELECT previous_claim_id,new_claim_id FROM support_mailbox_link_events WHERE conversation_id=$1', [forwarded.conversationId])).rows.map(row => [row.previous_claim_id, row.new_claim_id]), [[null, claimId]]);
+
+    const unlinked = await linkProtectionOrder(unrelated.conversationId,
+      (await getConversation(unrelated.conversationId)).version, null, 11);
+    assert.equal(unlinked.protection_order_id, null);
+    const legacyId = Number((await pool.query(`INSERT INTO support_mailbox_conversations(subject,customer_email)
+      VALUES('Older conversation','buyer@example.invalid') RETURNING id`)).rows[0].id);
+    await backfillMailboxOrderLinks();
+    assert.equal((await getConversation(unrelated.conversationId)).protection_order_id, null, 'manual unlink survives schema backfill');
+    assert.equal((await getConversation(legacyId)).protection_order_id, Number(newerOrderId), 'older unlinked conversation is matched once');
 
     await pool.query("UPDATE support_mailbox_conversations SET last_message_at='2026-11-12T10:00:00Z' WHERE id=$1", [first.conversationId]);
     const queued = await queueReply(first.conversationId, (await getConversation(first.conversationId))!.version,

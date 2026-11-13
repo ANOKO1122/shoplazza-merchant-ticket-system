@@ -15,7 +15,7 @@ test('reply worker sends once with the original mail thread and records SMTP unc
   try {
     await pool.query(`DROP SCHEMA public CASCADE; CREATE SCHEMA public;
       CREATE TABLE support_agents(id BIGINT PRIMARY KEY,name TEXT NOT NULL,enabled BOOLEAN NOT NULL DEFAULT true);
-      CREATE TABLE support_protection_orders(id BIGINT PRIMARY KEY,public_no TEXT,order_number TEXT,customer_email TEXT);
+      CREATE TABLE support_protection_orders(id BIGINT PRIMARY KEY,public_no TEXT,order_number TEXT,customer_email TEXT,paid_at TIMESTAMPTZ,created_at TIMESTAMPTZ NOT NULL DEFAULT now());
       CREATE TABLE support_protection_claims(id BIGINT PRIMARY KEY,public_no TEXT,protection_order_id BIGINT,created_at TIMESTAMPTZ);
       CREATE TABLE support_protection_notification_outbox(id BIGINT PRIMARY KEY,status TEXT,event_type TEXT,recipient_email TEXT,subject_snapshot TEXT,body_snapshot TEXT,sent_at TIMESTAMPTZ);`);
     await initMailboxSchema();

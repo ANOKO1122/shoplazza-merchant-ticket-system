@@ -31,7 +31,7 @@ test('mailbox API requires agent session and origin, and serves attachments only
     await pool.query(`DROP SCHEMA public CASCADE; CREATE SCHEMA public;
       CREATE TABLE support_agents(id BIGINT PRIMARY KEY,name TEXT NOT NULL,role TEXT NOT NULL,enabled BOOLEAN NOT NULL DEFAULT true);
       CREATE TABLE support_agent_sessions(session_token_hash TEXT PRIMARY KEY,agent_id BIGINT NOT NULL,expires_at TIMESTAMPTZ NOT NULL);
-      CREATE TABLE support_protection_orders(id BIGINT PRIMARY KEY,public_no TEXT,order_number TEXT,customer_email TEXT);
+      CREATE TABLE support_protection_orders(id BIGINT PRIMARY KEY,public_no TEXT,order_number TEXT,customer_email TEXT,paid_at TIMESTAMPTZ,created_at TIMESTAMPTZ NOT NULL DEFAULT now());
       CREATE TABLE support_protection_claims(id BIGINT PRIMARY KEY,public_no TEXT,protection_order_id BIGINT,created_at TIMESTAMPTZ);
       CREATE TABLE support_protection_notification_outbox(id BIGINT PRIMARY KEY,status TEXT,event_type TEXT,recipient_email TEXT,subject_snapshot TEXT,body_snapshot TEXT,sent_at TIMESTAMPTZ);`);
     await initMailboxSchema();
@@ -60,6 +60,10 @@ test('mailbox API requires agent session and origin, and serves attachments only
     const detail = await (await fetch(`${base}/api/admin/mailbox/conversations/${conversationId}`, { headers: { Cookie: cookie } })).json() as any;
     assert.equal(detail.conversation.messages[0].idempotency_key, undefined);
     assert.equal(detail.conversation.messages[0].lease_token, undefined);
+    const readList = await (await fetch(`${base}/api/admin/mailbox/conversations?scope=read`, { headers: { Cookie: cookie } })).json() as any;
+    const unreadList = await (await fetch(`${base}/api/admin/mailbox/conversations?scope=unread`, { headers: { Cookie: cookie } })).json() as any;
+    assert.equal(readList.items[0].id, conversationId);
+    assert.equal(unreadList.total, 0);
     const disabledReply = await fetch(`${base}/api/admin/mailbox/conversations/${conversationId}/replies`, { method: 'POST',
       headers: { Cookie: cookie, Origin: base, 'Content-Type': 'application/json' },
       body: JSON.stringify({ version: 2, to: 'buyer@example.invalid', body: 'We can help', idempotency_key: 'route-reply-disabled' }) });

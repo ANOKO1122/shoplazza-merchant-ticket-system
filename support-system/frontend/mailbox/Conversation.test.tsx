@@ -23,6 +23,10 @@ test('conversation shows original notice, escapes incoming content, and separate
   assert.ok(html.includes('发送回复'));
   assert.ok(html.includes('buyer@example.invalid'));
   assert.ok(html.includes('CL-random'));
+  assert.ok(html.includes('关联订单'));
+  assert.ok(html.includes('标记已读'));
+  assert.ok(html.includes('更改申请关联'));
+  assert.ok(html.includes('输入给顾客的回复，或直接粘贴图片'));
 });
 
 test('forwarded notification is a manual candidate and its original recipient is visible', () => {

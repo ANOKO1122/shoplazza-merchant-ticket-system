@@ -35,6 +35,7 @@ import { createProtectionCustomerRouter, createProtectionCustomerAdminRouter } f
 import { cleanupProtectionOrphanEvidence } from './protection-customer-media';
 import { initProtectionNotificationSchema, processProtectionNotifications } from './protection-notification';
 import { initMailboxSchema } from './mailbox-schema';
+import { backfillMailboxOrderLinks } from './mailbox-store';
 import { mailboxConfigured, syncMailboxOnce } from './mailbox-imap';
 import { createMailboxRouter } from './mailbox-routes';
 import { processMailboxReplies } from './mailbox-smtp';
@@ -336,6 +337,7 @@ async function startup() {
     await ensureTables();
     await initProtectionNotificationSchema();
     await initMailboxSchema();
+    await backfillMailboxOrderLinks();
     await seedProtectionStores();
   } catch (e: any) {
     console.error('[support-bridge] 数据库初始化失败:', e.message);

@@ -7,6 +7,7 @@ export interface MailboxMessage {
 }
 export interface MailboxNote { id: number; body_text: string; agent_name: string; created_at: string }
 export interface ClaimCandidate { id: number; public_no: string; order_number: string }
+export interface OrderCandidate { id: number; public_no: string; order_number: string }
 export interface NotificationCandidate { id: number; claim_id: number | null; protection_order_id: number;
   recipient_email: string; subject: string; claim_no: string | null; order_number: string | null }
 export interface MailboxConversation {
@@ -16,9 +17,9 @@ export interface MailboxConversation {
   last_message_at: string; messages: MailboxMessage[]; notes: MailboxNote[];
   has_older_messages: boolean;
   notification: { id: number; subject: string; body_text: string; sent_at: string; recipient_email: string } | null;
-  candidate_notification: NotificationCandidate | null; candidates: ClaimCandidate[];
+  candidate_notification: NotificationCandidate | null; candidates: ClaimCandidate[]; order_candidates: OrderCandidate[];
 }
-export type ConversationSummary = Pick<MailboxConversation, 'id' | 'subject' | 'customer_email' | 'status' | 'unread_count' | 'assignee_name' | 'claim_no' | 'last_message_at'>;
+export type ConversationSummary = Pick<MailboxConversation, 'id' | 'subject' | 'customer_email' | 'status' | 'unread_count' | 'assignee_name' | 'claim_no' | 'protection_no' | 'last_message_at'>;
 
 export class MailboxApiError extends Error {
   constructor(public status: number, public code: string) { super(code); }

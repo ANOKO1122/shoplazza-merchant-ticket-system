@@ -25,7 +25,7 @@ export interface IncomingMailInput {
   attachments: MailboxAttachmentInput[];
 }
 
-export type ConversationChange = { assigneeId?: number | null; status?: 'open' | 'resolved'; markRead?: boolean };
+export type ConversationChange = { assigneeId?: number | null; status?: 'open' | 'resolved'; markRead?: boolean; markUnread?: boolean };
 
 function numberId(value: unknown): number {
   const id = Number(value);
@@ -83,11 +83,14 @@ export async function importIncomingMessage(input: IncomingMailInput): Promise<{
       if (existing) conversationId = Number(existing.id);
     }
     if (!conversationId) {
+      const latestOrder = !verifiedNotification && !candidateNotification
+        ? (await client.query(`SELECT id FROM support_protection_orders WHERE lower(customer_email)=$1
+            ORDER BY paid_at DESC NULLS LAST,created_at DESC,id DESC LIMIT 1`, [sender])).rows[0] : null;
       const created = (await client.query(`INSERT INTO support_mailbox_conversations
-        (subject,customer_email,unread_count,last_message_at,claim_id,protection_order_id,notification_id,link_candidate_notification_id)
-        VALUES($1,$2,1,$3,$4,$5,$6,$7) RETURNING id`,
+        (subject,customer_email,unread_count,last_message_at,claim_id,protection_order_id,notification_id,link_candidate_notification_id,auto_link_attempted)
+        VALUES($1,$2,1,$3,$4,$5,$6,$7,true) RETURNING id`,
         [text(input.subject, 500), sender, input.sentAt, verifiedNotification?.claim_id || null,
-          verifiedNotification?.protection_order_id || null, verifiedNotification?.id || null, candidateNotification?.id || null])).rows[0];
+          verifiedNotification?.protection_order_id || latestOrder?.id || null, verifiedNotification?.id || null, candidateNotification?.id || null])).rows[0];
       conversationId = Number(created.id);
     } else {
       await client.query(`UPDATE support_mailbox_conversations SET status='open',unread_count=unread_count+1,
@@ -113,14 +116,24 @@ export async function importIncomingMessage(input: IncomingMailInput): Promise<{
   }
 }
 
-export async function listConversations(filters: { q?: string; status?: 'open' | 'resolved'; assigneeId?: number | null; unread?: boolean; limit?: number; offset?: number } = {}) {
+export async function backfillMailboxOrderLinks(): Promise<void> {
+  await query(`UPDATE support_mailbox_conversations c SET
+    protection_order_id=COALESCE(c.protection_order_id,CASE WHEN c.claim_id IS NULL AND c.link_candidate_notification_id IS NULL THEN
+      (SELECT po.id FROM support_protection_orders po WHERE lower(po.customer_email)=c.customer_email
+       ORDER BY po.paid_at DESC NULLS LAST,po.created_at DESC,po.id DESC LIMIT 1) END),
+    auto_link_attempted=true,version=version+1,updated_at=now()
+    WHERE c.auto_link_attempted=false`);
+}
+
+export async function listConversations(filters: { q?: string; status?: 'open' | 'resolved'; assigneeId?: number | null; unread?: boolean; read?: boolean; limit?: number; offset?: number } = {}) {
   const where = ['1=1'];
   const args: unknown[] = [];
   const add = (sql: string, value: unknown) => { args.push(value); where.push(sql.replace('?', `$${args.length}`)); };
   if (filters.status) add('c.status=?', filters.status);
   if (filters.assigneeId === null) where.push('c.assignee_id IS NULL');
   else if (filters.assigneeId != null) add('c.assignee_id=?', numberId(filters.assigneeId));
-  if (filters.unread) where.push('c.unread_count>0');
+  if (filters.read === true) where.push('c.unread_count=0');
+  else if (filters.read === false || filters.unread) where.push('c.unread_count>0');
   if (filters.q?.trim()) {
     args.push(`%${filters.q.trim().slice(0, 100).replace(/[\\%_]/g, '\\$&')}%`);
     where.push(`(c.customer_email ILIKE $${args.length} ESCAPE '\\' OR c.subject ILIKE $${args.length} ESCAPE '\\'
@@ -137,7 +150,7 @@ export async function listConversations(filters: { q?: string; status?: 'open' |
     LEFT JOIN support_protection_orders po ON po.id=c.protection_order_id
     WHERE ${where.join(' AND ')} ORDER BY c.last_message_at DESC,c.id DESC LIMIT $${args.length + 1} OFFSET $${args.length + 2}`,
     [...args, limit, offset])).rows;
-  return { total, items };
+  return { total, items: items.map(item => ({ ...item, id: Number(item.id) })) };
 }
 
 export async function getConversation(id: number, beforeMessageId?: number): Promise<any | null> {
@@ -180,11 +193,15 @@ export async function getConversation(id: number, beforeMessageId?: number): Pro
   }
   const candidates = (await query(`SELECT cl.id,cl.public_no,po.order_number FROM support_protection_claims cl
     JOIN support_protection_orders po ON po.id=cl.protection_order_id WHERE lower(po.customer_email)=$1 ORDER BY cl.created_at DESC LIMIT 10`, [conversation.customer_email])).rows;
+  const orderCandidates = (await query(`SELECT po.id,po.public_no,po.order_number FROM support_protection_orders po
+    WHERE lower(po.customer_email)=$1 ORDER BY po.paid_at DESC NULLS LAST,po.created_at DESC,po.id DESC LIMIT 10`, [conversation.customer_email])).rows;
   return { ...conversation, id: Number(conversation.id), version: Number(conversation.version),
     claim_id: conversation.claim_id == null ? null : Number(conversation.claim_id),
     protection_order_id: conversation.protection_order_id == null ? null : Number(conversation.protection_order_id),
     unread_count: Number(conversation.unread_count), assignee_id: conversation.assignee_id == null ? null : Number(conversation.assignee_id),
-    messages, has_older_messages: hasOlderMessages, notes, notification, candidate_notification: candidateNotification, candidates };
+    messages, has_older_messages: hasOlderMessages, notes, notification, candidate_notification: candidateNotification,
+    candidates: candidates.map(item => ({ ...item, id: Number(item.id) })),
+    order_candidates: orderCandidates.map(item => ({ ...item, id: Number(item.id) })) };
 }
 
 async function mutateConversation(id: number, version: number, sql: string, args: unknown[]): Promise<void> {
@@ -202,6 +219,7 @@ export async function updateConversation(id: number, version: number, change: Co
   }
   if (change.status) { args.push(change.status); sets.push(`status=$${args.length + 2}`); }
   if (change.markRead) sets.push('unread_count=0');
+  if (change.markUnread) sets.push('unread_count=GREATEST(unread_count,1)');
   if (!sets.length) throw new Error('empty_change');
   await mutateConversation(id, version, sets.join(','), args);
   return getConversation(id);
@@ -243,7 +261,7 @@ export async function linkClaim(id: number, version: number, claimId: number | n
       if (Number(candidate?.claim_id) === claimId) confirmedNoticeId = before.link_candidate_notification_id;
     }
     const changed = (await client.query(`UPDATE support_mailbox_conversations SET claim_id=$3,protection_order_id=$4,
-      notification_id=$5,link_candidate_notification_id=NULL,version=version+1,updated_at=now()
+      notification_id=$5,link_candidate_notification_id=NULL,auto_link_attempted=true,version=version+1,updated_at=now()
       WHERE id=$1 AND version=$2 RETURNING id`, [numberId(id), version, claimId, orderId, confirmedNoticeId])).rows[0];
     if (!changed) throw new Error('stale_version');
     await client.query(`INSERT INTO support_mailbox_link_events(conversation_id,agent_id,previous_claim_id,new_claim_id,
@@ -273,7 +291,7 @@ export async function linkProtectionOrder(id: number, version: number, orderId: 
       if (candidate?.claim_id == null && Number(candidate?.protection_order_id) === orderId) confirmedNoticeId = before.link_candidate_notification_id;
     }
     const changed = (await client.query(`UPDATE support_mailbox_conversations SET claim_id=NULL,protection_order_id=$3,
-      notification_id=$4,link_candidate_notification_id=NULL,version=version+1,updated_at=now()
+      notification_id=$4,link_candidate_notification_id=NULL,auto_link_attempted=true,version=version+1,updated_at=now()
       WHERE id=$1 AND version=$2 RETURNING id`, [numberId(id), version, orderId, confirmedNoticeId])).rows[0];
     if (!changed) throw new Error('stale_version');
     await client.query(`INSERT INTO support_mailbox_link_events(conversation_id,agent_id,previous_claim_id,new_claim_id,

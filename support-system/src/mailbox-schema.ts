@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS support_mailbox_conversations (
   protection_order_id BIGINT REFERENCES support_protection_orders(id),
   notification_id BIGINT REFERENCES support_protection_notification_outbox(id),
   link_candidate_notification_id BIGINT REFERENCES support_protection_notification_outbox(id),
+  auto_link_attempted BOOLEAN NOT NULL DEFAULT false,
   last_message_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   version INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS support_mailbox_conversations (
 );
 CREATE INDEX IF NOT EXISTS idx_support_mailbox_conversations_latest ON support_mailbox_conversations(last_message_at DESC,id DESC);
 CREATE INDEX IF NOT EXISTS idx_support_mailbox_conversations_owner ON support_mailbox_conversations(assignee_id,status,last_message_at DESC);
+ALTER TABLE support_mailbox_conversations ADD COLUMN IF NOT EXISTS auto_link_attempted BOOLEAN NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS support_mailbox_messages (
   id BIGSERIAL PRIMARY KEY,

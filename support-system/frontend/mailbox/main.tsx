@@ -5,7 +5,7 @@ import { mailboxApi, jsonRequest, MailboxApiError } from './api';
 import type { ClaimCandidate, ConversationSummary, MailboxAgent, MailboxConversation, MailboxMessage } from './api';
 import './styles.css';
 
-type Scope = 'open' | 'mine' | 'unassigned' | 'resolved';
+type Scope = 'open' | 'unread' | 'read' | 'resolved' | 'mine' | 'unassigned';
 type MailboxStatus = { configured: boolean; last_success_at: string | null; last_error: string | null };
 
 function errorText(error: unknown): string {
@@ -29,7 +29,6 @@ function App() {
   const [scope, setScope] = useState<Scope>('open');
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState('');
-  const [unread, setUnread] = useState(false);
   const [page, setPage] = useState(0);
   const [items, setItems] = useState<ConversationSummary[]>([]);
   const [total, setTotal] = useState(0);
@@ -48,6 +47,7 @@ function App() {
   const [showMobileDetail, setShowMobileDetail] = useState(!!selectedId);
   const detailRequest = useRef(0);
   const selectedIdRef = useRef(selectedId);
+  const mutatingRef = useRef(false);
   const historyRef = useRef<{ id: number; messages: MailboxMessage[]; hasOlder: boolean } | null>(null);
 
   function mergeHistory(next: MailboxConversation): MailboxConversation {
@@ -66,16 +66,16 @@ function App() {
 
   const loadList = useCallback(async () => {
     try {
-      const params = new URLSearchParams({ scope, unread: String(unread), limit: '50', offset: String(page * 50) });
+      const params = new URLSearchParams({ scope, limit: '50', offset: String(page * 50) });
       if (search) params.set('q', search);
       const result = await mailboxApi<{ items: ConversationSummary[]; total: number }>(`/conversations?${params}`);
       setItems(result.items); setTotal(result.total);
     } catch (caught) { setError(errorText(caught)); }
     finally { setLoadingList(false); }
-  }, [scope, unread, search, page]);
+  }, [scope, search, page]);
 
   const loadDetail = useCallback(async (id: number) => {
-    if (selectedIdRef.current !== id) return;
+    if (selectedIdRef.current !== id || mutatingRef.current) return;
     const request = ++detailRequest.current;
     setLoadingDetail(true);
     try {
@@ -89,7 +89,8 @@ function App() {
           void loadList();
         } catch { /* Another agent may have read it already; the next refresh reconciles. */ }
       }
-      if (request === detailRequest.current && selectedIdRef.current === id) setDetail(mergeHistory(next));
+      if (request === detailRequest.current && selectedIdRef.current === id && !mutatingRef.current)
+        setDetail(current => current?.id === id && current.version > next.version ? current : mergeHistory(next));
     } catch (caught) { if (request === detailRequest.current) { setError(errorText(caught)); setDetail(null); } }
     finally { if (request === detailRequest.current) setLoadingDetail(false); }
   }, [loadList]);
@@ -116,6 +117,7 @@ function App() {
   }, [loadDetail]);
 
   function select(id: number) {
+    id = Number(id);
     if (id !== selectedIdRef.current) { setDetail(null); detailRequest.current++; historyRef.current = null; }
     selectedIdRef.current = id;
     setSelectedId(id); setShowMobileDetail(true); setError('');
@@ -130,17 +132,19 @@ function App() {
   async function action(fn: () => Promise<MailboxConversation>): Promise<boolean> {
     if (!detail || busy) return false;
     const targetId = detail.id;
+    mutatingRef.current = true; detailRequest.current++;
     setBusy(true); setError('');
     try { const next = await fn(); if (selectedIdRef.current === targetId) setDetail(mergeHistory(next)); await loadList(); return true; }
-    catch (caught) { if (selectedIdRef.current === targetId) {
+    catch (caught) { mutatingRef.current = false; if (selectedIdRef.current === targetId) {
       setError(errorText(caught));
       if (caught instanceof MailboxApiError && caught.status === 409) await loadDetail(targetId);
     } return false; }
-    finally { setBusy(false); }
+    finally { mutatingRef.current = false; setBusy(false); }
   }
-  async function update(change: { assignee_id?: number | null; status?: 'open' | 'resolved'; mark_read?: boolean }) {
+  async function update(change: { assignee_id?: number | null; status?: 'open' | 'resolved'; mark_read?: boolean; mark_unread?: boolean }) {
     if (!detail) return;
-    await action(async () => (await mailboxApi<{ conversation: MailboxConversation }>(`/conversations/${detail.id}`, jsonRequest('PATCH', { version: detail.version, ...change }))).conversation);
+    const changed = await action(async () => (await mailboxApi<{ conversation: MailboxConversation }>(`/conversations/${detail.id}`, jsonRequest('PATCH', { version: detail.version, ...change }))).conversation);
+    if (changed && change.mark_unread) backToList();
   }
   async function addNote(body: string) {
     if (!detail || !(await action(async () => (await mailboxApi<{ conversation: MailboxConversation }>(`/conversations/${detail.id}/notes`, jsonRequest('POST', { version: detail.version, body }))).conversation))) throw new Error('note_not_saved');
@@ -161,20 +165,22 @@ function App() {
     if (!detail || busy) throw new Error('busy');
     const targetId = detail.id;
     const targetVersion = detail.version;
+    mutatingRef.current = true; detailRequest.current++;
     setBusy(true); setError('');
     try {
       const form = new FormData();
       form.set('version', String(targetVersion)); form.set('to', to); form.set('body', body); form.set('idempotency_key', idempotencyKey);
       files.forEach(file => form.append('attachments', file));
       await mailboxApi(`/conversations/${targetId}/replies`, { method: 'POST', body: form });
+      mutatingRef.current = false;
       if (selectedIdRef.current === targetId) await loadDetail(targetId);
       await loadList();
-    } catch (caught) { if (selectedIdRef.current === targetId) {
+    } catch (caught) { mutatingRef.current = false; if (selectedIdRef.current === targetId) {
       setError(errorText(caught));
       if (caught instanceof MailboxApiError && caught.status === 409) await loadDetail(targetId);
     }
       throw caught; }
-    finally { setBusy(false); }
+    finally { mutatingRef.current = false; setBusy(false); }
   }
   async function loadOlder() {
     if (!detail || loadingOlder || !detail.has_older_messages) return;
@@ -203,15 +209,15 @@ function App() {
     {mailbox && !mailbox.configured && <div className="mb-alert" role="status">收件箱尚未连接。请管理员完成邮箱连接后刷新页面。</div>}
     {mailbox?.last_error && <div className="mb-alert" role="alert">邮件同步遇到问题。已保存的会话仍可查看，请检查邮箱连接。</div>}
     <main className={`mb-workspace ${showMobileDetail ? 'mb-mobile-detail' : ''}`}>
-      <section className="mb-list-panel" aria-label="会话列表"><div className="mb-list-header"><h2>会话 <span>{total}</span></h2>
-        <label className="mb-search"><span className="mb-visually-hidden">搜索邮件</span><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索姓名、邮箱、主题或申请号" /></label>
-        <div className="mb-scope-tabs" role="tablist" aria-label="会话筛选">{([['open', '待处理'], ['mine', '我的'], ['unassigned', '未分配'], ['resolved', '已解决']] as const).map(([value, label]) =>
-          <button type="button" role="tab" aria-selected={scope === value} key={value} className={scope === value ? 'active' : ''} onClick={() => { setScope(value); setPage(0); }}>{label}</button>)}</div>
-        <label className="mb-unread"><input type="checkbox" checked={unread} onChange={event => { setUnread(event.target.checked); setPage(0); }} />只看未读</label></div>
+      <section className="mb-list-panel" aria-label="会话列表"><div className="mb-list-header"><div className="mb-list-heading"><h2>会话 <span>{total}</span></h2>
+        <label className="mb-search"><span className="mb-visually-hidden">搜索邮件</span><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索邮件" /></label></div>
+        <label className="mb-filter"><span className="mb-visually-hidden">会话分类</span><select value={scope} onChange={event => { setScope(event.target.value as Scope); setPage(0); }}>
+          <option value="open">待处理</option><option value="unread">未读</option><option value="read">已读</option><option value="resolved">已处理</option>
+          <option value="mine">分配给我</option><option value="unassigned">未分配</option></select></label></div>
         <div className="mb-list-scroll">{loadingList ? <p className="mb-empty">正在载入会话…</p> : items.length ? items.map(item => <button type="button" key={item.id} className={`mb-list-item ${selectedId === item.id ? 'active' : ''}`} onClick={() => select(item.id)}>
           <span className="mb-list-subject">{item.unread_count > 0 && <i className="mb-unread-dot" aria-label="未读" />}{item.subject || '无主题邮件'}</span>
           <span className="mb-list-date">{shortDate(item.last_message_at)}</span><span className="mb-list-address">{item.customer_email}</span>
-          <span className="mb-list-foot">{item.claim_no || item.assignee_name || '未分配'}{item.unread_count > 0 && <em>{item.unread_count}</em>}</span>
+          <span className="mb-list-foot">{item.claim_no || item.protection_no || item.assignee_name || '未分配'}{item.unread_count > 0 && <em>{item.unread_count}</em>}</span>
         </button>) : <p className="mb-empty">这里暂无会话。</p>}</div>
         {total > 50 && <div className="mb-list-pagination"><button type="button" className="mb-button" disabled={page === 0} onClick={() => setPage(value => value - 1)}>上一页</button>
           <span>{page + 1} / {Math.ceil(total / 50)}</span><button type="button" className="mb-button" disabled={(page + 1) * 50 >= total} onClick={() => setPage(value => value + 1)}>下一页</button></div>}</section>
