@@ -15,6 +15,7 @@ function errorText(error: unknown): string {
     if (error.code === 'recipient_mismatch') return '收件地址与最新来信不一致，请刷新会话。';
     if (error.code === 'file_too_large' || error.code === 'message_too_large') return '附件超过大小限制，请选择更小的文件。';
     if (error.code === 'unsupported_type') return '只支持 JPG、PNG、WebP 和 PDF 附件。';
+    if (error.code === 'mailbox_unavailable') return '邮箱尚未连接，暂时无法发送回复。';
   }
   return '操作失败，请刷新后重试。';
 }
@@ -29,6 +30,7 @@ function App() {
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState('');
   const [unread, setUnread] = useState(false);
+  const [page, setPage] = useState(0);
   const [items, setItems] = useState<ConversationSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [selectedId, setSelectedId] = useState<number | null>(() => {
@@ -46,19 +48,19 @@ function App() {
   const detailRequest = useRef(0);
 
   useEffect(() => {
-    const id = setTimeout(() => setSearch(query.trim()), 300);
+    const id = setTimeout(() => { setSearch(query.trim()); setPage(0); }, 300);
     return () => clearTimeout(id);
   }, [query]);
 
   const loadList = useCallback(async () => {
     try {
-      const params = new URLSearchParams({ scope, unread: String(unread), limit: '50' });
+      const params = new URLSearchParams({ scope, unread: String(unread), limit: '50', offset: String(page * 50) });
       if (search) params.set('q', search);
       const result = await mailboxApi<{ items: ConversationSummary[]; total: number }>(`/conversations?${params}`);
       setItems(result.items); setTotal(result.total);
     } catch (caught) { setError(errorText(caught)); }
     finally { setLoadingList(false); }
-  }, [scope, unread, search]);
+  }, [scope, unread, search, page]);
 
   const loadDetail = useCallback(async (id: number) => {
     const request = ++detailRequest.current;
@@ -145,17 +147,19 @@ function App() {
       <section className="mb-list-panel" aria-label="会话列表"><div className="mb-list-header"><h2>会话 <span>{total}</span></h2>
         <label className="mb-search"><span className="mb-visually-hidden">搜索邮件</span><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索姓名、邮箱、主题或申请号" /></label>
         <div className="mb-scope-tabs" role="tablist" aria-label="会话筛选">{([['open', '待处理'], ['mine', '我的'], ['unassigned', '未分配'], ['resolved', '已解决']] as const).map(([value, label]) =>
-          <button type="button" role="tab" aria-selected={scope === value} key={value} className={scope === value ? 'active' : ''} onClick={() => setScope(value)}>{label}</button>)}</div>
-        <label className="mb-unread"><input type="checkbox" checked={unread} onChange={event => setUnread(event.target.checked)} />只看未读</label></div>
+          <button type="button" role="tab" aria-selected={scope === value} key={value} className={scope === value ? 'active' : ''} onClick={() => { setScope(value); setPage(0); }}>{label}</button>)}</div>
+        <label className="mb-unread"><input type="checkbox" checked={unread} onChange={event => { setUnread(event.target.checked); setPage(0); }} />只看未读</label></div>
         <div className="mb-list-scroll">{loadingList ? <p className="mb-empty">正在载入会话…</p> : items.length ? items.map(item => <button type="button" key={item.id} className={`mb-list-item ${selectedId === item.id ? 'active' : ''}`} onClick={() => select(item.id)}>
           <span className="mb-list-subject">{item.unread_count > 0 && <i className="mb-unread-dot" aria-label="未读" />}{item.subject || '无主题邮件'}</span>
           <span className="mb-list-date">{shortDate(item.last_message_at)}</span><span className="mb-list-address">{item.customer_email}</span>
           <span className="mb-list-foot">{item.claim_no || item.assignee_name || '未分配'}{item.unread_count > 0 && <em>{item.unread_count}</em>}</span>
-        </button>) : <p className="mb-empty">这里暂无会话。</p>}</div></section>
+        </button>) : <p className="mb-empty">这里暂无会话。</p>}</div>
+        {total > 50 && <div className="mb-list-pagination"><button type="button" className="mb-button" disabled={page === 0} onClick={() => setPage(value => value - 1)}>上一页</button>
+          <span>{page + 1} / {Math.ceil(total / 50)}</span><button type="button" className="mb-button" disabled={(page + 1) * 50 >= total} onClick={() => setPage(value => value + 1)}>下一页</button></div>}</section>
       <section className="mb-detail-panel" aria-label="会话详情"><button type="button" className="mb-mobile-back mb-button" onClick={backToList}>返回会话列表</button>
         {error && !detail && <div className="mb-alert" role="alert">{error}</div>}
         {loadingDetail && !detail ? <div className="mb-detail-empty">正在载入邮件…</div> : detail
-          ? <ConversationPane key={detail.id} conversation={detail} agents={agents} busy={busy} error={error} onRefresh={refresh} onUpdate={update} onNote={addNote} onReply={reply} onLink={linkClaim} />
+          ? <ConversationPane key={detail.id} conversation={detail} agents={agents} busy={busy} mailboxReady={!!mailbox?.configured} error={error} onRefresh={refresh} onUpdate={update} onNote={addNote} onReply={reply} onLink={linkClaim} />
           : <div className="mb-detail-empty">从左侧选择一封邮件，查看会话并回复。</div>}</section>
     </main>
   </div>;

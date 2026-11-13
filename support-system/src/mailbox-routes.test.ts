@@ -57,11 +57,29 @@ test('mailbox API requires agent session and origin, and serves attachments only
       headers: { Cookie: cookie, Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ version: 1, body: 'private' }) });
     assert.equal(accepted.status, 200);
     assert.equal((await pool.query('SELECT count(*)::int n FROM support_mailbox_notes')).rows[0].n, 1);
+    const detail = await (await fetch(`${base}/api/admin/mailbox/conversations/${conversationId}`, { headers: { Cookie: cookie } })).json() as any;
+    assert.equal(detail.conversation.messages[0].idempotency_key, undefined);
+    assert.equal(detail.conversation.messages[0].lease_token, undefined);
+    const disabledReply = await fetch(`${base}/api/admin/mailbox/conversations/${conversationId}/replies`, { method: 'POST',
+      headers: { Cookie: cookie, Origin: base, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version: 2, to: 'buyer@example.invalid', body: 'We can help', idempotency_key: 'route-reply-disabled' }) });
+    assert.equal(disabledReply.status, 503);
+    assert.equal((await pool.query("SELECT count(*)::int n FROM support_mailbox_messages WHERE direction='outgoing'")).rows[0].n, 0);
+    process.env.SUPPORT_MAILBOX_ENABLED = 'true';
+    process.env.SUPPORT_MAILBOX_USER = 'customersupport@reply.us-seel.com';
+    process.env.SUPPORT_MAILBOX_CLIENT_PASSWORD = 'test-only-password';
     const reply = await fetch(`${base}/api/admin/mailbox/conversations/${conversationId}/replies`, { method: 'POST',
       headers: { Cookie: cookie, Origin: base, 'Content-Type': 'application/json' },
       body: JSON.stringify({ version: 2, to: 'buyer@example.invalid', body: 'We can help', idempotency_key: 'route-reply-1' }) });
     assert.equal(reply.status, 200);
     assert.equal((await pool.query("SELECT count(*)::int n FROM support_mailbox_messages WHERE direction='outgoing' AND status='queued'")).rows[0].n, 1);
+    const oversized = new FormData();
+    oversized.set('version', '3'); oversized.set('to', 'buyer@example.invalid'); oversized.set('body', 'Attached'); oversized.set('idempotency_key', 'route-reply-big');
+    oversized.append('attachments', new Blob([Buffer.alloc(11 * 1024 * 1024)], { type: 'application/pdf' }), 'big.pdf');
+    const tooLarge = await fetch(`${base}/api/admin/mailbox/conversations/${conversationId}/replies`, { method: 'POST',
+      headers: { Cookie: cookie, Origin: base }, body: oversized });
+    assert.equal(tooLarge.status, 400);
+    assert.equal((await tooLarge.json() as any).error, 'file_too_large');
 
     const bytes = Buffer.from('%PDF-1.7\nprivate');
     const saved = await saveMailboxAttachment({ filename: 'report.pdf', contentType: 'application/pdf', bytes, count: 1, totalBytes: bytes.length });
@@ -77,6 +95,9 @@ test('mailbox API requires agent session and origin, and serves attachments only
     await closeDatabasePools();
     await pool.end();
     delete process.env.SUPPORT_MAILBOX_PRIVATE_DIR;
+    delete process.env.SUPPORT_MAILBOX_ENABLED;
+    delete process.env.SUPPORT_MAILBOX_USER;
+    delete process.env.SUPPORT_MAILBOX_CLIENT_PASSWORD;
     await rm(privateDir, { recursive: true, force: true });
   }
 });

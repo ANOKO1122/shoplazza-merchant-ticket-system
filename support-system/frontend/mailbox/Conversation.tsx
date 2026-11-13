@@ -14,6 +14,7 @@ type ConversationProps = {
   conversation: MailboxConversation;
   agents: MailboxAgent[];
   busy: boolean;
+  mailboxReady: boolean;
   error: string;
   onRefresh: () => void;
   onUpdate: (change: { assignee_id?: number | null; status?: 'open' | 'resolved'; mark_read?: boolean }) => Promise<void>;
@@ -22,7 +23,7 @@ type ConversationProps = {
   onLink: (claimId: number | null) => Promise<void>;
 };
 
-export function ConversationPane({ conversation, agents, busy, error, onRefresh, onUpdate, onNote, onReply, onLink }: ConversationProps) {
+export function ConversationPane({ conversation, agents, busy, mailboxReady, error, onRefresh, onUpdate, onNote, onReply, onLink }: ConversationProps) {
   const [mode, setMode] = useState<'reply' | 'note'>('reply');
   const [draft, setDraft] = useState('');
   const [files, setFiles] = useState<File[]>([]);
@@ -43,7 +44,7 @@ export function ConversationPane({ conversation, agents, busy, error, onRefresh,
       if (mode === 'note') {
         await onNote(draft.trim());
       } else {
-        if (!canReply) return;
+        if (!canReply || !mailboxReady) return;
         pendingKey.current ||= crypto.randomUUID();
         await onReply(recipient, draft.trim(), files, pendingKey.current);
         pendingKey.current = null;
@@ -73,13 +74,14 @@ export function ConversationPane({ conversation, agents, busy, error, onRefresh,
         <button type="button" role="tab" aria-selected={mode === 'note'} className={mode === 'note' ? 'active' : ''} onClick={() => setMode('note')}>内部备注</button></div>
         {mode === 'reply' ? <div className="mb-recipient"><span>收件人</span><strong>{recipient || '暂无可回复地址'}</strong><small>发件人：customersupport@reply.us-seel.com</small></div>
           : <p className="mb-private-hint">内部备注只对客服可见，不会发送到顾客邮箱。</p>}
+        {mode === 'reply' && !mailboxReady && <p className="mb-private-hint">邮箱尚未连接，暂时无法发送回复。</p>}
         <label className="mb-visually-hidden" htmlFor="mailbox-draft">{mode === 'reply' ? '邮件回复内容' : '内部备注内容'}</label>
         <textarea id="mailbox-draft" rows={5} value={draft} onChange={event => { pendingKey.current = null; setDraft(event.target.value); }} placeholder={mode === 'reply' ? '输入给顾客的回复…' : '记录处理情况…'} maxLength={100000} />
         {mode === 'reply' && <label className="mb-file-control">添加附件（图片或 PDF，最多 6 个）
           <input type="file" multiple accept=".jpg,.jpeg,.png,.webp,.pdf" onChange={event => { pendingKey.current = null; setFiles(Array.from(event.target.files || [])); }} /></label>}
         {files.length > 0 && mode === 'reply' && <p className="mb-selected-files">{files.map(file => file.name).join('、')}</p>}
         <div className="mb-composer-footer"><span role="status" className="mb-error">{error}</span>
-          <button type="submit" className="mb-button mb-button-primary" disabled={busy || !draft.trim() || (mode === 'reply' && !canReply)}>{busy ? '处理中…' : mode === 'reply' ? '发送回复' : '保存内部备注'}</button></div>
+          <button type="submit" className="mb-button mb-button-primary" disabled={busy || !draft.trim() || (mode === 'reply' && (!canReply || !mailboxReady))}>{busy ? '处理中…' : mode === 'reply' ? '发送回复' : '保存内部备注'}</button></div>
       </form>
     </section>
     <aside className="mb-context" aria-label="会话资料"><h3>处理资料</h3><dl><dt>状态</dt><dd>{conversation.status === 'open' ? '待处理' : '已解决'}</dd><dt>顾客邮箱</dt><dd>{conversation.customer_email}</dd></dl>

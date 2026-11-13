@@ -2,11 +2,24 @@ import express from 'express';
 import multer from 'multer';
 import { getRequestAgent } from './auth';
 import { query } from './pg';
-import { mailboxSyncStatus } from './mailbox-imap';
+import { mailboxConfigured, mailboxSyncStatus } from './mailbox-imap';
 import { addNote, getConversation, linkClaim, listConversations, queueReply, updateConversation } from './mailbox-store';
 import { deleteMailboxAttachment, readMailboxAttachment, saveMailboxAttachment } from './mailbox-attachments';
 
 const uploads = multer({ storage: multer.memoryStorage(), limits: { files: 6, fileSize: 10 * 1024 * 1024, fields: 10 } });
+
+function uploadReply(req: express.Request, res: express.Response, next: express.NextFunction): void {
+  uploads.array('attachments', 6)(req, res, error => {
+    if (!error) { next(); return; }
+    if (error instanceof multer.MulterError) {
+      const code = error.code === 'LIMIT_FILE_SIZE' ? 'file_too_large'
+        : error.code === 'LIMIT_FILE_COUNT' || error.code === 'LIMIT_UNEXPECTED_FILE' ? 'too_many_files' : 'invalid_upload';
+      res.status(400).json({ ok: false, error: code });
+      return;
+    }
+    routeError(res, error);
+  });
+}
 
 function sameOrigin(req: express.Request): boolean {
   const origin = req.get('Origin');
@@ -99,9 +112,10 @@ export function createMailboxRouter(): express.Router {
     catch (error) { routeError(res, error); }
   });
 
-  router.post('/conversations/:id/replies', uploads.array('attachments', 6), async (req, res) => {
+  router.post('/conversations/:id/replies', uploadReply, async (req, res) => {
     const storedKeys: string[] = [];
     try {
+      if (!mailboxConfigured()) { res.status(503).json({ ok: false, error: 'mailbox_unavailable' }); return; }
       const idempotencyKey = String(req.body?.idempotency_key || '');
       if (!/^[A-Za-z0-9_-]{8,128}$/.test(idempotencyKey)) throw new Error('invalid_idempotency_key');
       const previous = (await query('SELECT id,status FROM support_mailbox_messages WHERE idempotency_key=$1', [idempotencyKey])).rows[0];

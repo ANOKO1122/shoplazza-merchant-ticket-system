@@ -81,6 +81,27 @@ npm start
 - 邮件同时包含 HTML 和纯文本版本。纯文本从本次发送的 HTML 生成，保留段落、换行和按钮的完整链接，并解码 HTML 实体；HTML 模板样式保持不变。
 - 客服回复通知优先使用对应订单的顾客姓名，缺失时使用工单姓名；姓名为空时显示 `Dear Customer,`。已有邮件正文快照保持不变，不因此重发历史邮件。
 
+## 共享客服收件箱
+
+后台的 **客服收件箱** 页面使用 `customersupport@reply.us-seel.com` 接收顾客来信，并从同一邮箱发送客服手动回复。客服可搜索会话、查看未读、分配负责人、写内部备注和关联保障申请。内部备注只保存在后台，不作为邮件发出。历史已发保障通知会在匹配到原收件地址的邮件线程中展示；转发等地址不一致的情况只提示人工核对。
+
+在**运行应用的服务器**编辑 `support-system/.env`（Docker Compose 的 `env_file` 也读取这个文件）。填入该邮箱在阿里邮箱网页端生成的**三方客户端安全密码**：
+
+```dotenv
+SUPPORT_MAILBOX_USER=customersupport@reply.us-seel.com
+SUPPORT_MAILBOX_CLIENT_PASSWORD=在此填写三方客户端安全密码
+SUPPORT_MAILBOX_ENABLED=true
+```
+
+请勿把密码发到聊天、写进 `.env.example` 或提交 Git。邮箱账户还需启用 IMAP 和 SMTP 三方客户端访问。修改后重建并重启应用容器：
+
+```bash
+cd support-system
+docker compose -f docker-compose.support.yml up -d --build support-bridge
+```
+
+首次连接只导入 INBOX 最近 30 天的邮件；之后约每分钟同步新邮件。收件箱顶部显示连接或同步状态。通过后台发送的回复会显示发送状态；若显示“发送结果待核实”，请先在阿里邮箱中核对，避免重复发送。直接从阿里邮箱网页端发出的邮件不会自动出现在这里。入站图片和 PDF 存在忽略 Git 的 `support-system/private/mailbox` 中，Compose 将其挂载为私有持久目录；备份数据库时也应备份该目录。应用不会在启用或迁移时自动发送顾客回复。
+
 ## 物流同步
 
 - 同一个发货记录 ID 更新当前运单，并在该包裹内累计保留旧、新号码；不同 ID 追加包裹。适用于 ERP 在同一记录上依次写入国内、国外两段运单的情况，后台与顾客页展示全部已记录号码并标出当前号码。

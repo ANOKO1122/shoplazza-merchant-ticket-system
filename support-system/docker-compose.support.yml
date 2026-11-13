@@ -54,6 +54,8 @@ services:
       # 商品缩略图持久化：客服发起投诉邮件时下载并压缩的商品图缓存
       - ./thumbnails:/app/public/thumbnails
       - ./protection-data:/app/protection-data
+      # 客服邮箱附件私有存储，容器重建后仍可下载；不通过静态文件目录公开。
+      - ./private:/app/private
     networks:
       - support_net
 

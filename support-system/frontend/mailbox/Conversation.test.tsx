@@ -14,7 +14,7 @@ const conversation: any = {
 };
 
 test('conversation shows original notice, escapes incoming content, and separates private notes from reply', () => {
-  const html = renderToStaticMarkup(<ConversationPane conversation={conversation} agents={[]} busy={false} error="" onRefresh={() => {}} onUpdate={async () => {}} onNote={async () => {}} onReply={async () => {}} onLink={async () => {}} />);
+  const html = renderToStaticMarkup(<ConversationPane conversation={conversation} agents={[]} busy={false} mailboxReady={true} error="" onRefresh={() => {}} onUpdate={async () => {}} onNote={async () => {}} onReply={async () => {}} onLink={async () => {}} />);
   assert.ok(html.includes('Please send photos'));
   assert.ok(html.includes('&lt;script&gt;alert(1)&lt;/script&gt;'));
   assert.ok(!html.includes('<script>alert'));
@@ -27,8 +27,15 @@ test('conversation shows original notice, escapes incoming content, and separate
 test('forwarded notification is a manual candidate and its original recipient is visible', () => {
   const html = renderToStaticMarkup(<ConversationPane conversation={{ ...conversation, claim_id: null, claim_no: null,
     candidate_notification: { claim_id: 22, claim_no: 'CL-random', recipient_email: 'buyer@example.invalid', subject: 'Claim update' },
-    messages: [{ ...conversation.messages[0], sender_email: 'friend@example.invalid' }] }} agents={[]} busy={false} error="" onRefresh={() => {}} onUpdate={async () => {}} onNote={async () => {}} onReply={async () => {}} onLink={async () => {}} />);
+    messages: [{ ...conversation.messages[0], sender_email: 'friend@example.invalid' }] }} agents={[]} busy={false} mailboxReady={true} error="" onRefresh={() => {}} onUpdate={async () => {}} onNote={async () => {}} onReply={async () => {}} onLink={async () => {}} />);
   assert.ok(html.includes('待人工核对'));
   assert.ok(html.includes('friend@example.invalid'));
   assert.ok(html.includes('buyer@example.invalid'));
+});
+
+test('disconnected mailbox keeps the recipient visible and disables sending', () => {
+  const html = renderToStaticMarkup(<ConversationPane conversation={conversation} agents={[]} busy={false} mailboxReady={false} error="" onRefresh={() => {}} onUpdate={async () => {}} onNote={async () => {}} onReply={async () => {}} onLink={async () => {}} />);
+  assert.ok(html.includes('buyer@example.invalid'));
+  assert.ok(html.includes('邮箱尚未连接，暂时无法发送回复。'));
+  assert.match(html, /<button[^>]+type="submit"[^>]+disabled=""/);
 });

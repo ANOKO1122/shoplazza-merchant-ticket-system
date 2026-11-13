@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseIncomingRaw, selectImportUids } from './mailbox-imap';
+import { parseIncomingRaw, selectImportUids, sourceComplete } from './mailbox-imap';
 
 const raw = Buffer.from(`From: Buyer <Buyer@Example.invalid>\r
 To: Customer Support <customersupport@reply.us-seel.com>\r
@@ -50,4 +50,10 @@ Content-Disposition: attachment; filename="report.pdf"\r
 test('UID selection resumes after cursor and restarts safely on UIDVALIDITY change', () => {
   assert.deepEqual(selectImportUids({ uidValidity: '7', lastUid: 20 }, '7', [19, 20, 21, 22]), [21, 22]);
   assert.deepEqual(selectImportUids({ uidValidity: '7', lastUid: 20 }, '8', [4, 5]), [4, 5]);
+});
+
+test('a capped or shorter-than-advertised raw fetch is not parsed as a complete email', () => {
+  assert.equal(sourceComplete(undefined, 36 * 1024 * 1024), false);
+  assert.equal(sourceComplete(100, 99), false);
+  assert.equal(sourceComplete(100, 100), true);
 });

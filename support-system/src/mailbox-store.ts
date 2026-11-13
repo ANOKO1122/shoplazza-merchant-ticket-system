@@ -140,7 +140,8 @@ export async function getConversation(id: number): Promise<any | null> {
     LEFT JOIN support_protection_claims cl ON cl.id=c.claim_id
     LEFT JOIN support_protection_orders po ON po.id=c.protection_order_id WHERE c.id=$1`, [id])).rows[0];
   if (!conversation) return null;
-  const messages = (await query(`SELECT m.*,a.name AS agent_name FROM support_mailbox_messages m
+  const messages = (await query(`SELECT m.id,m.direction,m.sender_email,m.recipient_email,m.subject,m.body_text,
+    m.sent_at,m.status,a.name AS agent_name FROM support_mailbox_messages m
     LEFT JOIN support_agents a ON a.id=m.agent_id WHERE m.conversation_id=$1 ORDER BY m.sent_at,m.id LIMIT 500`, [id])).rows;
   const notes = (await query(`SELECT n.*,a.name AS agent_name FROM support_mailbox_notes n
     JOIN support_agents a ON a.id=n.agent_id WHERE n.conversation_id=$1 ORDER BY n.created_at,n.id LIMIT 500`, [id])).rows;

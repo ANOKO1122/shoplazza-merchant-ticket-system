@@ -24,6 +24,10 @@ export function selectImportUids(state: { uidValidity: string | null; lastUid: n
     .sort((a, b) => a - b).slice(0, 50);
 }
 
+export function sourceComplete(reportedSize: number | undefined, fetchedSize: number): boolean {
+  return fetchedSize < MAX_RAW_BYTES && (!reportedSize || fetchedSize >= reportedSize);
+}
+
 function bytesOf(content: ArrayBuffer | Uint8Array | string, encoding?: string): Buffer {
   if (typeof content === 'string') return Buffer.from(content, encoding === 'base64' ? 'base64' : 'utf8');
   return Buffer.from(content instanceof Uint8Array ? content : new Uint8Array(content));
@@ -132,7 +136,8 @@ export async function syncMailboxOnce(): Promise<{ imported: number; configured:
         if (info.size && info.size > MAX_RAW_BYTES) prepared = stubMail(info, uidValidity, uid);
         else {
           const full = await imap.fetchOne(String(uid), { source: { start: 0, maxLength: MAX_RAW_BYTES }, envelope: true }, { uid: true });
-          try { prepared = full && full.source ? await parseIncomingRaw(full.source, uidValidity, uid) : stubMail(info, uidValidity, uid); }
+          try { prepared = full && full.source && sourceComplete(info.size, full.source.length)
+            ? await parseIncomingRaw(full.source, uidValidity, uid) : stubMail(info, uidValidity, uid); }
           catch { prepared = stubMail(info, uidValidity, uid); }
         }
         await storePreparedMail(prepared);

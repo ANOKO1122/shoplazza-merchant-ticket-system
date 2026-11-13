@@ -31,6 +31,7 @@
 .mb-unread { display:flex; align-items:center; gap:6px; margin-top:10px; color:#47627d; font-size:12px; }
 .mb-unread input { accent-color:#1767b3; }
 .mb-list-scroll { min-height:0; flex:1; overflow-y:auto; }
+.mb-list-pagination { border-top:1px solid var(--mb-line); padding:9px 12px; display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:11px; color:var(--mb-muted); }
 .mb-list-item { width:100%; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 8px; text-align:left; padding:14px 15px; border:0; border-bottom:1px solid #edf1f6; background:#fff; color:var(--mb-ink); }
 .mb-list-item:hover { background:#f4f8fc; }
 .mb-list-item.active { background:#e9f3fc; box-shadow:inset 3px 0 #1767b3; }
