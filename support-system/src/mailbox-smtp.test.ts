@@ -27,6 +27,7 @@ test('reply worker sends once with the original mail thread and records SMTP unc
       'customersupport@reply.us-seel.com','Claim update','Question','received')`, [conversationId]);
     const queued = await queueReply(conversationId, 1, 'buyer@example.invalid', 'We can help', [], 11, 'reply-1');
     const sent: any[] = [];
+    await new Promise(resolve => setTimeout(resolve, 10));
     const first = await processMailboxReplies(async mail => { sent.push(mail); });
     assert.equal(first.sent, 1);
     assert.equal(sent.length, 1);
@@ -35,6 +36,9 @@ test('reply worker sends once with the original mail thread and records SMTP unc
     assert.equal(sent[0].inReplyTo, '<customer@example.invalid>');
     assert.equal(sent[0].messageId, queued.message_id);
     assert.equal((await pool.query('SELECT status FROM support_mailbox_messages WHERE id=$1', [queued.id])).rows[0].status, 'sent');
+    const activity = (await pool.query(`SELECT c.last_message_at,m.sent_at FROM support_mailbox_conversations c
+      JOIN support_mailbox_messages m ON m.conversation_id=c.id WHERE m.id=$1`, [queued.id])).rows[0];
+    assert.ok(activity.last_message_at >= activity.sent_at, 'sent reply must set the conversation activity to its actual send time');
     await processMailboxReplies(async mail => { sent.push(mail); });
     assert.equal(sent.length, 1);
 

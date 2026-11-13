@@ -63,8 +63,12 @@ export async function processMailboxReplies(send: (mail: MailboxMail) => Promise
           contentType: attachment.mime_type, content: await readMailboxAttachment(attachment.storage_key) }))),
       };
       await send(mail);
-      await query(`UPDATE support_mailbox_messages SET status='sent',sent_at=now(),error_code=NULL,
-        lease_token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1 AND lease_token=$2`, [row.id, row.lease_token]);
+      await query(`WITH sent AS (
+        UPDATE support_mailbox_messages SET status='sent',sent_at=now(),error_code=NULL,
+          lease_token=NULL,lease_until=NULL,updated_at=now() WHERE id=$1 AND lease_token=$2
+          RETURNING conversation_id,sent_at
+      ) UPDATE support_mailbox_conversations c SET last_message_at=GREATEST(c.last_message_at,sent.sent_at),updated_at=now()
+        FROM sent WHERE c.id=sent.conversation_id`, [row.id, row.lease_token]);
       sent++;
     } catch {
       await query(`UPDATE support_mailbox_messages SET status='unknown',error_code='delivery_unconfirmed',
