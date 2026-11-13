@@ -5,7 +5,7 @@ import { PROTECTION_SCHEMA_SQL } from './protection-schema';
 import { PROTECTION_NOTIFICATION_SCHEMA_SQL } from './protection-notification-schema';
 import { initMailboxSchema } from './mailbox-schema';
 import { closeDatabasePools } from './pg';
-import { addNote, getConversation, importIncomingMessage, linkClaim, listConversations, queueReply, updateConversation } from './mailbox-store';
+import { addNote, getConversation, importIncomingMessage, linkClaim, linkProtectionOrder, listConversations, queueReply, updateConversation } from './mailbox-store';
 
 const databaseUrl = process.env.SUPPORT_MAILBOX_TEST_DATABASE_URL;
 
@@ -72,11 +72,65 @@ test('inbox import, assignment, notes, claim links and reply queue remain consis
     assert.equal(detail.claim_id, Number(claimId));
     assert.deepEqual((await pool.query('SELECT previous_claim_id,new_claim_id FROM support_mailbox_link_events WHERE conversation_id=$1', [forwarded.conversationId])).rows.map(row => [row.previous_claim_id, row.new_claim_id]), [[null, claimId]]);
 
+    await pool.query("UPDATE support_mailbox_conversations SET last_message_at='2026-11-12T10:00:00Z' WHERE id=$1", [first.conversationId]);
     const queued = await queueReply(first.conversationId, (await getConversation(first.conversationId))!.version,
       'buyer@example.invalid', 'We received your photos', [], 11, 'send-1');
     assert.equal(queued.status, 'queued');
     assert.equal((await queueReply(first.conversationId, 999, 'buyer@example.invalid', 'duplicate', [], 11, 'send-1')).id, queued.id);
     assert.equal((await pool.query("SELECT count(*)::int n FROM support_mailbox_messages WHERE direction='outgoing'")).rows[0].n, 1);
+    assert.ok(new Date((await getConversation(first.conversationId)).last_message_at).getTime() > new Date('2026-11-12T10:00:00Z').getTime());
+
+    const anotherDirect = await importIncomingMessage({ mailbox: 'customersupport@reply.us-seel.com', uidValidity: '7', uid: 6,
+      messageId: '<another-direct@example.invalid>', inReplyTo: '<notice@example.invalid>', references: ['<notice@example.invalid>'],
+      sender: 'buyer@example.invalid', recipient: 'customersupport@reply.us-seel.com', subject: 'Re: Claim update', body: 'Another attachment', sentAt: new Date('2026-11-13T10:04:00Z'), attachments: [] });
+    assert.equal(anotherDirect.conversationId, first.conversationId);
+    const anotherForward = await importIncomingMessage({ mailbox: 'customersupport@reply.us-seel.com', uidValidity: '7', uid: 7,
+      messageId: '<another-forward@example.invalid>', inReplyTo: '<notice@example.invalid>', references: ['<notice@example.invalid>'],
+      sender: 'friend@example.invalid', recipient: 'customersupport@reply.us-seel.com', subject: 'Fwd: Claim update', body: 'More', sentAt: new Date('2026-11-13T10:05:00Z'), attachments: [] });
+    assert.equal(anotherForward.conversationId, forwarded.conversationId);
+
+    const malformed = await importIncomingMessage({ mailbox: 'customersupport@reply.us-seel.com', uidValidity: '7', uid: 8,
+      messageId: '<nul@example.invalid>', inReplyTo: null, references: [], sender: 'buyer@example.invalid',
+      recipient: 'customersupport@reply.us-seel.com', subject: 'NUL\0subject', body: 'before\0after', sentAt: new Date(), attachments: [] });
+    assert.equal((await getConversation(malformed.conversationId)).messages[0].body_text, 'beforeafter');
+    const later = await importIncomingMessage({ mailbox: 'customersupport@reply.us-seel.com', uidValidity: '7', uid: 9,
+      messageId: '<later@example.invalid>', inReplyTo: null, references: [], sender: 'buyer@example.invalid',
+      recipient: 'customersupport@reply.us-seel.com', subject: 'Later', body: 'Still imported', sentAt: new Date(), attachments: [] });
+    assert.equal((await getConversation(later.conversationId)).messages[0].body_text, 'Still imported');
+
+    await pool.query(`INSERT INTO support_mailbox_messages
+      (conversation_id,direction,mailbox,message_id,sender_email,recipient_email,subject,body_text,sent_at,status)
+      SELECT $1,'incoming','customersupport@reply.us-seel.com','<bulk-'||n||'@example.invalid>',
+        'buyer@example.invalid','customersupport@reply.us-seel.com','Bulk','Message '||n,
+        now()+n*interval '1 second','received' FROM generate_series(1,105) n`, [first.conversationId]);
+    const newestPage = await getConversation(first.conversationId);
+    assert.equal(newestPage.messages.length, 100);
+    assert.equal(newestPage.messages.at(-1).body_text, 'Message 105');
+    assert.equal(newestPage.has_older_messages, true);
+    const olderPage = await getConversation(first.conversationId, Number(newestPage.messages[0].id));
+    assert.equal(olderPage.messages.some((message: any) => message.body_text === 'Message 1'), true);
+    assert.equal(olderPage.has_older_messages, false);
+
+    await pool.query(`INSERT INTO support_protection_notification_outbox
+      (event_key,event_type,protection_order_id,recipient_email,context_json,status,message_id,subject_snapshot,body_snapshot,sent_at)
+      VALUES('shipment-1','shipment',$1,'buyer@example.invalid','{}','sent','<shipment@example.invalid>',
+        'Shipment update','Your order shipped',now())`, [orderId]);
+    const orderReply = await importIncomingMessage({ mailbox: 'customersupport@reply.us-seel.com', uidValidity: '7', uid: 10,
+      messageId: '<order-reply@example.invalid>', inReplyTo: '<shipment@example.invalid>', references: ['<shipment@example.invalid>'],
+      sender: 'buyer@example.invalid', recipient: 'customersupport@reply.us-seel.com', subject: 'Re: Shipment update', body: 'Where is it?', sentAt: new Date(), attachments: [] });
+    assert.equal((await getConversation(orderReply.conversationId)).protection_order_id, Number(orderId));
+    const forwardedOrder = await importIncomingMessage({ mailbox: 'customersupport@reply.us-seel.com', uidValidity: '7', uid: 11,
+      messageId: '<forward-order@example.invalid>', inReplyTo: '<shipment@example.invalid>', references: ['<shipment@example.invalid>'],
+      sender: 'friend@example.invalid', recipient: 'customersupport@reply.us-seel.com', subject: 'Fwd: Shipment update', body: 'Help', sentAt: new Date(), attachments: [] });
+    const candidateOrder = await getConversation(forwardedOrder.conversationId);
+    assert.equal(candidateOrder.protection_order_id, null);
+    assert.equal(candidateOrder.candidate_notification.protection_order_id, Number(orderId));
+    const linkedOrder = await linkProtectionOrder(forwardedOrder.conversationId, candidateOrder.version, Number(orderId), 11);
+    assert.equal(linkedOrder.protection_order_id, Number(orderId));
+    assert.equal(linkedOrder.notification.body_text, 'Your order shipped');
+    assert.deepEqual((await pool.query(`SELECT previous_protection_order_id,new_protection_order_id
+      FROM support_mailbox_link_events WHERE conversation_id=$1`, [forwardedOrder.conversationId])).rows.map(row =>
+      [row.previous_protection_order_id, row.new_protection_order_id]), [[null, orderId]]);
   } finally {
     await closeDatabasePools();
     await pool.end();

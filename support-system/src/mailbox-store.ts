@@ -34,7 +34,7 @@ function numberId(value: unknown): number {
 }
 
 function text(value: unknown, max: number): string {
-  return typeof value === 'string' ? value.slice(0, max) : '';
+  return typeof value === 'string' ? value.replace(/\u0000/g, '').slice(0, max) : '';
 }
 
 export async function importIncomingMessage(input: IncomingMailInput): Promise<{ conversationId: number; messageId: number; duplicate: boolean }> {
@@ -75,6 +75,13 @@ export async function importIncomingMessage(input: IncomingMailInput): Promise<{
         if (match === 'candidate') candidateNotification = notice;
       }
     }
+    if (!conversationId && (verifiedNotification || candidateNotification)) {
+      const notice = verifiedNotification || candidateNotification;
+      const column = verifiedNotification ? 'notification_id=$1' : '(link_candidate_notification_id=$1 OR notification_id=$1)';
+      const existing = (await client.query(`SELECT id FROM support_mailbox_conversations
+        WHERE ${column} AND customer_email=$2 ORDER BY id DESC LIMIT 1`, [notice.id, sender])).rows[0];
+      if (existing) conversationId = Number(existing.id);
+    }
     if (!conversationId) {
       const created = (await client.query(`INSERT INTO support_mailbox_conversations
         (subject,customer_email,unread_count,last_message_at,claim_id,protection_order_id,notification_id,link_candidate_notification_id)
@@ -93,7 +100,7 @@ export async function importIncomingMessage(input: IncomingMailInput): Promise<{
         input.inReplyTo?.toLowerCase() || null, JSON.stringify(refs), sender, recipient, text(input.subject, 500), text(input.body, 100_000), input.sentAt])).rows[0];
     for (const attachment of input.attachments.slice(0, 20)) {
       await client.query(`INSERT INTO support_mailbox_attachments(message_id,filename,mime_type,size_bytes,storage_key,omitted_reason)
-        VALUES($1,$2,$3,$4,$5,$6)`, [inserted.id, text(attachment.filename, 255), attachment.mimeType || null,
+        VALUES($1,$2,$3,$4,$5,$6)`, [inserted.id, text(attachment.filename, 255), attachment.mimeType ? text(attachment.mimeType, 255) : null,
         attachment.sizeBytes, attachment.storageKey || null, attachment.omittedReason || null]);
     }
     await client.query('COMMIT');
@@ -133,16 +140,21 @@ export async function listConversations(filters: { q?: string; status?: 'open' |
   return { total, items };
 }
 
-export async function getConversation(id: number): Promise<any | null> {
+export async function getConversation(id: number, beforeMessageId?: number): Promise<any | null> {
   numberId(id);
   const conversation = (await query(`SELECT c.*,a.name AS assignee_name,cl.public_no AS claim_no,po.public_no AS protection_no
     FROM support_mailbox_conversations c LEFT JOIN support_agents a ON a.id=c.assignee_id
     LEFT JOIN support_protection_claims cl ON cl.id=c.claim_id
     LEFT JOIN support_protection_orders po ON po.id=c.protection_order_id WHERE c.id=$1`, [id])).rows[0];
   if (!conversation) return null;
-  const messages = (await query(`SELECT m.id,m.direction,m.sender_email,m.recipient_email,m.subject,m.body_text,
+  const messageRows = (await query(`SELECT m.id,m.direction,m.sender_email,m.recipient_email,m.subject,m.body_text,
     m.sent_at,m.status,a.name AS agent_name FROM support_mailbox_messages m
-    LEFT JOIN support_agents a ON a.id=m.agent_id WHERE m.conversation_id=$1 ORDER BY m.sent_at,m.id LIMIT 500`, [id])).rows;
+    LEFT JOIN support_agents a ON a.id=m.agent_id WHERE m.conversation_id=$1
+      AND ($2::bigint IS NULL OR m.id<$2) ORDER BY m.id DESC LIMIT 101`,
+    [id, beforeMessageId == null ? null : numberId(beforeMessageId)])).rows;
+  const hasOlderMessages = messageRows.length > 100;
+  const messages = messageRows.slice(0, 100).sort((a, b) =>
+    new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime() || Number(a.id) - Number(b.id));
   const notes = (await query(`SELECT n.*,a.name AS agent_name FROM support_mailbox_notes n
     JOIN support_agents a ON a.id=n.agent_id WHERE n.conversation_id=$1 ORDER BY n.created_at,n.id LIMIT 500`, [id])).rows;
   const attachments = messages.length ? (await query(`SELECT id,message_id,filename,mime_type,size_bytes,omitted_reason,storage_key IS NOT NULL AS available
@@ -172,7 +184,7 @@ export async function getConversation(id: number): Promise<any | null> {
     claim_id: conversation.claim_id == null ? null : Number(conversation.claim_id),
     protection_order_id: conversation.protection_order_id == null ? null : Number(conversation.protection_order_id),
     unread_count: Number(conversation.unread_count), assignee_id: conversation.assignee_id == null ? null : Number(conversation.assignee_id),
-    messages, notes, notification, candidate_notification: candidateNotification, candidates };
+    messages, has_older_messages: hasOlderMessages, notes, notification, candidate_notification: candidateNotification, candidates };
 }
 
 async function mutateConversation(id: number, version: number, sql: string, args: unknown[]): Promise<void> {
@@ -215,7 +227,8 @@ export async function linkClaim(id: number, version: number, claimId: number | n
   const client = await getClient();
   try {
     await client.query('BEGIN');
-    const before = (await client.query('SELECT claim_id FROM support_mailbox_conversations WHERE id=$1 FOR UPDATE', [numberId(id)])).rows[0];
+    const before = (await client.query(`SELECT claim_id,protection_order_id,notification_id,link_candidate_notification_id
+      FROM support_mailbox_conversations WHERE id=$1 FOR UPDATE`, [numberId(id)])).rows[0];
     if (!before) throw new Error('conversation_not_found');
     let orderId: number | null = null;
     if (claimId != null) {
@@ -223,12 +236,49 @@ export async function linkClaim(id: number, version: number, claimId: number | n
       if (!claim) throw new Error('claim_not_found');
       orderId = Number(claim.protection_order_id);
     }
+    let confirmedNoticeId = before.claim_id == claimId ? before.notification_id : null;
+    if (before.link_candidate_notification_id && claimId != null) {
+      const candidate = (await client.query('SELECT claim_id FROM support_protection_notification_outbox WHERE id=$1',
+        [before.link_candidate_notification_id])).rows[0];
+      if (Number(candidate?.claim_id) === claimId) confirmedNoticeId = before.link_candidate_notification_id;
+    }
     const changed = (await client.query(`UPDATE support_mailbox_conversations SET claim_id=$3,protection_order_id=$4,
-      notification_id=NULL,link_candidate_notification_id=NULL,version=version+1,updated_at=now()
-      WHERE id=$1 AND version=$2 RETURNING id`, [numberId(id), version, claimId, orderId])).rows[0];
+      notification_id=$5,link_candidate_notification_id=NULL,version=version+1,updated_at=now()
+      WHERE id=$1 AND version=$2 RETURNING id`, [numberId(id), version, claimId, orderId, confirmedNoticeId])).rows[0];
     if (!changed) throw new Error('stale_version');
-    await client.query(`INSERT INTO support_mailbox_link_events(conversation_id,agent_id,previous_claim_id,new_claim_id)
-      VALUES($1,$2,$3,$4)`, [id, numberId(agentId), before.claim_id, claimId]);
+    await client.query(`INSERT INTO support_mailbox_link_events(conversation_id,agent_id,previous_claim_id,new_claim_id,
+      previous_protection_order_id,new_protection_order_id) VALUES($1,$2,$3,$4,$5,$6)`,
+      [id, numberId(agentId), before.claim_id, claimId, before.protection_order_id, orderId]);
+    await client.query('COMMIT');
+  } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }
+  finally { client.release(); }
+  return getConversation(id);
+}
+
+export async function linkProtectionOrder(id: number, version: number, orderId: number | null, agentId: number): Promise<any> {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const before = (await client.query(`SELECT claim_id,protection_order_id,notification_id,link_candidate_notification_id
+      FROM support_mailbox_conversations WHERE id=$1 FOR UPDATE`, [numberId(id)])).rows[0];
+    if (!before) throw new Error('conversation_not_found');
+    if (orderId != null) {
+      const order = (await client.query('SELECT id FROM support_protection_orders WHERE id=$1', [numberId(orderId)])).rows[0];
+      if (!order) throw new Error('order_not_found');
+    }
+    let confirmedNoticeId = before.claim_id == null && before.protection_order_id == orderId ? before.notification_id : null;
+    if (before.link_candidate_notification_id && orderId != null) {
+      const candidate = (await client.query(`SELECT claim_id,protection_order_id FROM support_protection_notification_outbox WHERE id=$1`,
+        [before.link_candidate_notification_id])).rows[0];
+      if (candidate?.claim_id == null && Number(candidate?.protection_order_id) === orderId) confirmedNoticeId = before.link_candidate_notification_id;
+    }
+    const changed = (await client.query(`UPDATE support_mailbox_conversations SET claim_id=NULL,protection_order_id=$3,
+      notification_id=$4,link_candidate_notification_id=NULL,version=version+1,updated_at=now()
+      WHERE id=$1 AND version=$2 RETURNING id`, [numberId(id), version, orderId, confirmedNoticeId])).rows[0];
+    if (!changed) throw new Error('stale_version');
+    await client.query(`INSERT INTO support_mailbox_link_events(conversation_id,agent_id,previous_claim_id,new_claim_id,
+      previous_protection_order_id,new_protection_order_id) VALUES($1,$2,$3,NULL,$4,$5)`,
+      [id, numberId(agentId), before.claim_id, before.protection_order_id, orderId]);
     await client.query('COMMIT');
   } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }
   finally { client.release(); }
@@ -263,7 +313,7 @@ export async function queueReply(id: number, version: number, recipientValue: st
       (message_id,filename,mime_type,size_bytes,storage_key,omitted_reason) VALUES($1,$2,$3,$4,$5,$6)`,
       [result.id, attachment.filename, attachment.mimeType || null, attachment.sizeBytes, attachment.storageKey || null, attachment.omittedReason || null]);
     await client.query(`UPDATE support_mailbox_conversations SET assignee_id=COALESCE(assignee_id,$2),
-      version=version+1,updated_at=now() WHERE id=$1`, [id, agentId]);
+      last_message_at=GREATEST(last_message_at,$3),version=version+1,updated_at=now() WHERE id=$1`, [id, agentId, result.sent_at]);
     await client.query('COMMIT');
     return result;
   } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }

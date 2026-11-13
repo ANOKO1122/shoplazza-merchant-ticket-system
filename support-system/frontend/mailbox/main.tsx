@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ConversationPane } from './Conversation';
 import { mailboxApi, jsonRequest, MailboxApiError } from './api';
-import type { ConversationSummary, MailboxAgent, MailboxConversation } from './api';
+import type { ClaimCandidate, ConversationSummary, MailboxAgent, MailboxConversation, MailboxMessage } from './api';
 import './styles.css';
 
 type Scope = 'open' | 'mine' | 'unassigned' | 'resolved';
@@ -42,10 +42,22 @@ function App() {
   const [mailbox, setMailbox] = useState<MailboxStatus | null>(null);
   const [loadingList, setLoadingList] = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [showMobileDetail, setShowMobileDetail] = useState(!!selectedId);
   const detailRequest = useRef(0);
+  const selectedIdRef = useRef(selectedId);
+  const historyRef = useRef<{ id: number; messages: MailboxMessage[]; hasOlder: boolean } | null>(null);
+
+  function mergeHistory(next: MailboxConversation): MailboxConversation {
+    const previous = historyRef.current?.id === next.id ? historyRef.current : null;
+    const messages = previous ? [...new Map([...previous.messages, ...next.messages].map(message => [message.id, message])).values()]
+      .sort((a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime() || a.id - b.id) : next.messages;
+    const hasOlder = previous?.hasOlder ?? next.has_older_messages;
+    historyRef.current = { id: next.id, messages, hasOlder };
+    return { ...next, messages, has_older_messages: hasOlder };
+  }
 
   useEffect(() => {
     const id = setTimeout(() => { setSearch(query.trim()); setPage(0); }, 300);
@@ -63,19 +75,21 @@ function App() {
   }, [scope, unread, search, page]);
 
   const loadDetail = useCallback(async (id: number) => {
+    if (selectedIdRef.current !== id) return;
     const request = ++detailRequest.current;
     setLoadingDetail(true);
     try {
       const result = await mailboxApi<{ conversation: MailboxConversation }>(`/conversations/${id}`);
       let next = result.conversation;
-      if (next.unread_count > 0) {
+      if (next.unread_count > 0 && request === detailRequest.current
+        && selectedIdRef.current === id && document.visibilityState === 'visible') {
         try {
           const read = await mailboxApi<{ conversation: MailboxConversation }>(`/conversations/${id}`, jsonRequest('PATCH', { version: next.version, mark_read: true }));
           next = read.conversation;
           void loadList();
         } catch { /* Another agent may have read it already; the next refresh reconciles. */ }
       }
-      if (request === detailRequest.current) setDetail(next);
+      if (request === detailRequest.current && selectedIdRef.current === id) setDetail(mergeHistory(next));
     } catch (caught) { if (request === detailRequest.current) { setError(errorText(caught)); setDetail(null); } }
     finally { if (request === detailRequest.current) setLoadingDetail(false); }
   }, [loadList]);
@@ -95,21 +109,33 @@ function App() {
     const timer = setInterval(() => { loadList(); if (selectedId) loadDetail(selectedId); }, 30_000);
     return () => clearInterval(timer);
   }, [loadList, loadDetail, selectedId]);
+  useEffect(() => {
+    const visible = () => { if (document.visibilityState === 'visible' && selectedIdRef.current) loadDetail(selectedIdRef.current); };
+    document.addEventListener('visibilitychange', visible);
+    return () => document.removeEventListener('visibilitychange', visible);
+  }, [loadDetail]);
 
   function select(id: number) {
-    if (id !== selectedId) { setDetail(null); detailRequest.current++; }
+    if (id !== selectedIdRef.current) { setDetail(null); detailRequest.current++; historyRef.current = null; }
+    selectedIdRef.current = id;
     setSelectedId(id); setShowMobileDetail(true); setError('');
     const url = new URL(location.href); url.searchParams.set('conversation', String(id)); history.replaceState(null, '', url);
   }
   function backToList() {
+    selectedIdRef.current = null; detailRequest.current++; historyRef.current = null;
+    setSelectedId(null); setDetail(null); setLoadingDetail(false);
     setShowMobileDetail(false);
     const url = new URL(location.href); url.searchParams.delete('conversation'); history.replaceState(null, '', url);
   }
   async function action(fn: () => Promise<MailboxConversation>): Promise<boolean> {
     if (!detail || busy) return false;
+    const targetId = detail.id;
     setBusy(true); setError('');
-    try { setDetail(await fn()); await loadList(); return true; }
-    catch (caught) { setError(errorText(caught)); if (caught instanceof MailboxApiError && caught.status === 409) await loadDetail(detail.id); return false; }
+    try { const next = await fn(); if (selectedIdRef.current === targetId) setDetail(mergeHistory(next)); await loadList(); return true; }
+    catch (caught) { if (selectedIdRef.current === targetId) {
+      setError(errorText(caught));
+      if (caught instanceof MailboxApiError && caught.status === 409) await loadDetail(targetId);
+    } return false; }
     finally { setBusy(false); }
   }
   async function update(change: { assignee_id?: number | null; status?: 'open' | 'resolved'; mark_read?: boolean }) {
@@ -123,17 +149,50 @@ function App() {
     if (!detail) return;
     await action(async () => (await mailboxApi<{ conversation: MailboxConversation }>(`/conversations/${detail.id}/link`, jsonRequest('POST', { version: detail.version, claim_id: claimId }))).conversation);
   }
+  async function linkOrder(orderId: number | null) {
+    if (!detail) return;
+    await action(async () => (await mailboxApi<{ conversation: MailboxConversation }>(`/conversations/${detail.id}/link-order`, jsonRequest('POST', { version: detail.version, order_id: orderId }))).conversation);
+  }
+  async function searchClaims(term: string): Promise<ClaimCandidate[]> {
+    const result = await mailboxApi<{ items: ClaimCandidate[] }>(`/claims?q=${encodeURIComponent(term)}`);
+    return result.items;
+  }
   async function reply(to: string, body: string, files: File[], idempotencyKey: string) {
     if (!detail || busy) throw new Error('busy');
+    const targetId = detail.id;
+    const targetVersion = detail.version;
     setBusy(true); setError('');
     try {
       const form = new FormData();
-      form.set('version', String(detail.version)); form.set('to', to); form.set('body', body); form.set('idempotency_key', idempotencyKey);
+      form.set('version', String(targetVersion)); form.set('to', to); form.set('body', body); form.set('idempotency_key', idempotencyKey);
       files.forEach(file => form.append('attachments', file));
-      await mailboxApi(`/conversations/${detail.id}/replies`, { method: 'POST', body: form });
-      await loadDetail(detail.id); await loadList();
-    } catch (caught) { setError(errorText(caught)); throw caught; }
+      await mailboxApi(`/conversations/${targetId}/replies`, { method: 'POST', body: form });
+      if (selectedIdRef.current === targetId) await loadDetail(targetId);
+      await loadList();
+    } catch (caught) { if (selectedIdRef.current === targetId) {
+      setError(errorText(caught));
+      if (caught instanceof MailboxApiError && caught.status === 409) await loadDetail(targetId);
+    }
+      throw caught; }
     finally { setBusy(false); }
+  }
+  async function loadOlder() {
+    if (!detail || loadingOlder || !detail.has_older_messages) return;
+    const targetId = detail.id;
+    const before = Math.min(...detail.messages.map(message => message.id));
+    setLoadingOlder(true);
+    try {
+      const result = await mailboxApi<{ conversation: MailboxConversation }>(`/conversations/${targetId}?before_message_id=${before}`);
+      if (selectedIdRef.current === targetId) {
+        const older = result.conversation;
+        const retained = historyRef.current?.id === targetId ? historyRef.current.messages : detail.messages;
+        const messages = [...new Map([...retained, ...older.messages].map(message => [message.id, message])).values()]
+          .sort((a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime() || a.id - b.id);
+        historyRef.current = { id: targetId, messages, hasOlder: older.has_older_messages };
+        setDetail(current => current?.id === targetId ? { ...current, messages, has_older_messages: older.has_older_messages } : current);
+      }
+    } catch (caught) { setError(errorText(caught)); }
+    finally { setLoadingOlder(false); }
   }
   function refresh() { loadList(); if (selectedId) loadDetail(selectedId); }
 
@@ -159,7 +218,7 @@ function App() {
       <section className="mb-detail-panel" aria-label="会话详情"><button type="button" className="mb-mobile-back mb-button" onClick={backToList}>返回会话列表</button>
         {error && !detail && <div className="mb-alert" role="alert">{error}</div>}
         {loadingDetail && !detail ? <div className="mb-detail-empty">正在载入邮件…</div> : detail
-          ? <ConversationPane key={detail.id} conversation={detail} agents={agents} busy={busy} mailboxReady={!!mailbox?.configured} error={error} onRefresh={refresh} onUpdate={update} onNote={addNote} onReply={reply} onLink={linkClaim} />
+          ? <ConversationPane key={detail.id} conversation={detail} agents={agents} busy={busy} mailboxReady={!!mailbox?.configured} loadingOlder={loadingOlder} error={error} onRefresh={refresh} onLoadOlder={loadOlder} onUpdate={update} onNote={addNote} onReply={reply} onLink={linkClaim} onLinkOrder={linkOrder} onSearchClaims={searchClaims} />
           : <div className="mb-detail-empty">从左侧选择一封邮件，查看会话并回复。</div>}</section>
     </main>
   </div>;

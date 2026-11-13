@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import type { MailboxAgent, MailboxConversation, MailboxMessage, MailboxNote } from './api';
+import type { ClaimCandidate, MailboxAgent, MailboxConversation, MailboxMessage, MailboxNote } from './api';
 
 function dateTime(value: string): string {
   const date = new Date(value);
@@ -15,18 +15,26 @@ type ConversationProps = {
   agents: MailboxAgent[];
   busy: boolean;
   mailboxReady: boolean;
+  loadingOlder: boolean;
   error: string;
   onRefresh: () => void;
+  onLoadOlder: () => void;
   onUpdate: (change: { assignee_id?: number | null; status?: 'open' | 'resolved'; mark_read?: boolean }) => Promise<void>;
   onNote: (body: string) => Promise<void>;
   onReply: (to: string, body: string, files: File[], idempotencyKey: string) => Promise<void>;
   onLink: (claimId: number | null) => Promise<void>;
+  onLinkOrder: (orderId: number | null) => Promise<void>;
+  onSearchClaims: (term: string) => Promise<ClaimCandidate[]>;
 };
 
-export function ConversationPane({ conversation, agents, busy, mailboxReady, error, onRefresh, onUpdate, onNote, onReply, onLink }: ConversationProps) {
+export function ConversationPane({ conversation, agents, busy, mailboxReady, loadingOlder, error, onRefresh, onLoadOlder, onUpdate, onNote, onReply, onLink, onLinkOrder, onSearchClaims }: ConversationProps) {
   const [mode, setMode] = useState<'reply' | 'note'>('reply');
   const [draft, setDraft] = useState('');
   const [files, setFiles] = useState<File[]>([]);
+  const [claimQuery, setClaimQuery] = useState('');
+  const [claimResults, setClaimResults] = useState<ClaimCandidate[]>([]);
+  const [claimSearched, setClaimSearched] = useState(false);
+  const [claimSearching, setClaimSearching] = useState(false);
   const pendingKey = useRef<string | null>(null);
   const incoming = [...conversation.messages].filter(message => message.direction === 'incoming')
     .sort((a, b) => new Date(b.sent_at).getTime() - new Date(a.sent_at).getTime())[0];
@@ -56,6 +64,16 @@ export function ConversationPane({ conversation, agents, busy, mailboxReady, err
     }
   }
 
+  async function searchClaim(event: React.FormEvent) {
+    event.preventDefault();
+    const term = claimQuery.trim();
+    if (term.length < 3 || claimSearching) return;
+    setClaimSearching(true);
+    try { setClaimResults(await onSearchClaims(term)); setClaimSearched(true); }
+    catch { setClaimResults([]); setClaimSearched(true); }
+    finally { setClaimSearching(false); }
+  }
+
   return <div className="mb-conversation-grid">
     <section className="mb-thread" aria-label="邮件会话">
       <header className="mb-thread-header"><div><h2>{conversation.subject || '无主题邮件'}</h2><p>{conversation.customer_email}</p></div>
@@ -63,6 +81,7 @@ export function ConversationPane({ conversation, agents, busy, mailboxReady, err
           <button type="button" className="mb-button" disabled={busy} onClick={() => onUpdate({ status: conversation.status === 'open' ? 'resolved' : 'open' })}>
             {conversation.status === 'open' ? '标记已解决' : '重新打开'}</button></div></header>
       <div className="mb-timeline">
+        {conversation.has_older_messages && <button type="button" className="mb-button mb-load-older" disabled={loadingOlder} onClick={onLoadOlder}>{loadingOlder ? '正在加载…' : '加载更早邮件'}</button>}
         {conversation.notification && <article className="mb-notice"><div className="mb-message-meta"><strong>已发送的保障通知</strong><time>{dateTime(conversation.notification.sent_at)}</time></div>
           <p className="mb-message-title">{conversation.notification.subject}</p><div className="mb-body">{conversation.notification.body_text}</div></article>}
         {timeline.map(item => item.type === 'message'
@@ -90,11 +109,19 @@ export function ConversationPane({ conversation, agents, busy, mailboxReady, err
       <div className="mb-context-section"><h4>保障申请</h4>{conversation.claim_id && conversation.claim_no
         ? <p><a href={`/thinkpro-admin/protection?tab=claims&claim=${encodeURIComponent(String(conversation.claim_id))}`}>{conversation.claim_no}</a></p>
         : <p className="mb-muted">尚未关联申请</p>}
+        {conversation.protection_order_id && <p>保障订单：<a href={`/thinkpro-admin/protection?tab=orders&order=${encodeURIComponent(String(conversation.protection_order_id))}`}>{conversation.protection_no || `订单 ${conversation.protection_order_id}`}</a></p>}
         {conversation.candidate_notification && <div className="mb-candidate"><strong>待人工核对</strong><p>可能回复了「{conversation.candidate_notification.subject}」；原收件人是 {conversation.candidate_notification.recipient_email}。</p>
-          {conversation.candidate_notification.claim_id && <button type="button" className="mb-button" disabled={busy} onClick={() => onLink(conversation.candidate_notification!.claim_id)}>关联 {conversation.candidate_notification.claim_no || '该申请'}</button>}</div>}
+          {conversation.candidate_notification.claim_id
+            ? <button type="button" className="mb-button" disabled={busy} onClick={() => onLink(conversation.candidate_notification!.claim_id)}>关联 {conversation.candidate_notification.claim_no || '该申请'}</button>
+            : <button type="button" className="mb-button" disabled={busy} onClick={() => onLinkOrder(conversation.candidate_notification!.protection_order_id)}>关联 {conversation.candidate_notification.order_number || '该保障订单'}</button>}</div>}
         <label className="mb-field">手动关联<select value={conversation.claim_id ?? ''} disabled={busy} onChange={event => onLink(event.target.value ? Number(event.target.value) : null)}>
           <option value="">无关联</option>{conversation.claim_id && <option value={conversation.claim_id}>{conversation.claim_no || `申请 ${conversation.claim_id}`}</option>}
           {conversation.candidates.filter(candidate => candidate.id !== conversation.claim_id).map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.public_no} · {candidate.order_number}</option>)}</select></label>
+        <form className="mb-claim-search" onSubmit={searchClaim}><label className="mb-field">按申请号或订单号查找
+          <input value={claimQuery} onChange={event => { setClaimQuery(event.target.value); setClaimSearched(false); }} placeholder="输入申请号或订单号" maxLength={100} /></label>
+          <button type="submit" className="mb-button" disabled={claimSearching || claimQuery.trim().length < 3}>{claimSearching ? '查询中…' : '查询'}</button></form>
+        {claimSearched && (claimResults.length ? <ul className="mb-claim-results">{claimResults.map(candidate => <li key={candidate.id}><span>{candidate.public_no}<small>{candidate.order_number}</small></span>
+          <button type="button" className="mb-button" disabled={busy} onClick={() => onLink(candidate.id)}>关联</button></li>)}</ul> : <p className="mb-muted">未找到匹配申请；请核对编号。</p>)}
       </div><p className="mb-context-help">仅邮件线程与原收件地址一致时自动关联；其他匹配需人工确认。</p>
     </aside>
   </div>;

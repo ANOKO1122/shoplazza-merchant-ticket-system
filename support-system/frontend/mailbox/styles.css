@@ -51,6 +51,7 @@
 .mb-thread-header p { font-size:12px; color:var(--mb-muted); margin:4px 0 0; overflow-wrap:anywhere; }
 .mb-thread-actions { display:flex; gap:6px; flex-shrink:0; }
 .mb-timeline { flex:1; overflow-y:auto; min-height:0; padding:22px; display:flex; flex-direction:column; gap:15px; }
+.mb-load-older { align-self:center; }
 .mb-notice,.mb-message,.mb-note { max-width:76ch; width:100%; padding:17px 19px; background:#fff; border:1px solid var(--mb-line); border-radius:11px; }
 .mb-notice { background:#f0f6fc; border-color:#c9dced; }
 .mb-message-out { align-self:flex-end; background:#eaf4ff; border-color:#cbdff0; }
@@ -85,6 +86,12 @@
 .mb-context dd { margin:0 0 10px; overflow-wrap:anywhere; }
 .mb-field { display:grid; gap:7px; color:#405c77; font-size:12px; font-weight:600; }
 .mb-field select { width:100%; border:1px solid #b6cadd; border-radius:7px; padding:8px 9px; background:#fff; color:var(--mb-ink); font-weight:400; }
+.mb-field input { width:100%; border:1px solid #b6cadd; border-radius:7px; padding:8px 9px; background:#fff; color:var(--mb-ink); font-weight:400; }
+.mb-claim-search { display:grid; gap:8px; margin-top:15px; }
+.mb-claim-search .mb-button { justify-self:start; }
+.mb-claim-results { list-style:none; padding:0; margin:10px 0 0; display:grid; gap:7px; }
+.mb-claim-results li { display:flex; align-items:center; justify-content:space-between; gap:7px; padding:8px; border:1px solid var(--mb-line); border-radius:7px; font-size:11px; overflow-wrap:anywhere; }
+.mb-claim-results small { display:block; color:var(--mb-muted); margin-top:3px; }
 .mb-context-section { border-top:1px solid var(--mb-line); padding-top:18px; margin-top:20px; }
 .mb-muted { color:var(--mb-muted); font-size:12px; }
 .mb-candidate { border:1px solid #e2d1ac; background:#fff8e8; border-radius:8px; padding:11px; margin:13px 0; font-size:12px; }

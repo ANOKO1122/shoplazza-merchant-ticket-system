@@ -6,11 +6,13 @@ test('normalizes a parsed sender and rejects malformed addresses', () => {
   assert.equal(normalizeMailboxAddress(' Customer@Example.COM '), 'customer@example.com');
   assert.equal(normalizeMailboxAddress('a@example.com\r\nBcc: other@example.com'), null);
   assert.equal(normalizeMailboxAddress('not-an-address'), null);
+  assert.equal(normalizeMailboxAddress('nul\0@example.com'), null);
 });
 
 test('extracts message IDs from References without admitting arbitrary text', () => {
   assert.deepEqual(parseMailHeaders('<one@example.com> garbage <two@example.com>'), ['<one@example.com>', '<two@example.com>']);
   assert.deepEqual(parseMailHeaders(undefined), []);
+  assert.deepEqual(parseMailHeaders('<nul\0@example.com> <valid@example.com>'), ['<valid@example.com>']);
 });
 
 test('only a sent notification reply from its recipient auto-links a claim', () => {

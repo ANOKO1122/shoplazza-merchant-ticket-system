@@ -14,6 +14,7 @@ export interface MailboxConversation {
   unread_count: number; assignee_id: number | null; assignee_name: string | null;
   claim_id: number | null; claim_no: string | null; protection_order_id: number | null; protection_no: string | null;
   last_message_at: string; messages: MailboxMessage[]; notes: MailboxNote[];
+  has_older_messages: boolean;
   notification: { id: number; subject: string; body_text: string; sent_at: string; recipient_email: string } | null;
   candidate_notification: NotificationCandidate | null; candidates: ClaimCandidate[];
 }

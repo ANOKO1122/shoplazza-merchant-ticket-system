@@ -24,6 +24,21 @@ export function selectImportUids(state: { uidValidity: string | null; lastUid: n
     .sort((a, b) => a - b).slice(0, 50);
 }
 
+export function importSearchPlan(state: { uidValidity: string | null; lastUid: number; initialSince: Date | null },
+  currentValidity: string, now: Date): { query: { since: Date } | { uid: string }; initialSince: Date | null } {
+  const initialSince = state.uidValidity !== currentValidity
+    ? new Date(now.getTime() - 30 * 86400_000) : state.initialSince;
+  return { query: initialSince ? { since: initialSince } : { uid: `${state.lastUid + 1}:*` }, initialSince };
+}
+
+export function completedBackfillCursor(selectedUids: number[], highWaterUid: number, lastUid: number): number | null {
+  return selectedUids.length < 50 ? Math.max(highWaterUid, lastUid) : null;
+}
+
+export function cursorForValidity(state: { uidValidity: string | null; lastUid: number }, currentValidity: string): number {
+  return state.uidValidity === currentValidity ? state.lastUid : 0;
+}
+
 export function sourceComplete(reportedSize: number | undefined, fetchedSize: number): boolean {
   return fetchedSize < MAX_RAW_BYTES && (!reportedSize || fetchedSize >= reportedSize);
 }
@@ -119,15 +134,18 @@ export async function syncMailboxOnce(): Promise<{ imported: number; configured:
     try {
       const uidValidity = String(imap.mailbox && imap.mailbox.uidValidity || '');
       if (!uidValidity) throw new Error('missing_uidvalidity');
-      const row = (await query('SELECT uid_validity,last_uid FROM support_mailbox_sync_state WHERE mailbox=$1', [SUPPORT_MAILBOX_ADDRESS])).rows[0];
-      const state = { uidValidity: row?.uid_validity || null, lastUid: Number(row?.last_uid || 0) };
+      const row = (await query('SELECT uid_validity,last_uid,initial_since FROM support_mailbox_sync_state WHERE mailbox=$1', [SUPPORT_MAILBOX_ADDRESS])).rows[0];
+      const state = { uidValidity: row?.uid_validity || null, lastUid: Number(row?.last_uid || 0),
+        initialSince: row?.initial_since || null };
+      const plan = importSearchPlan(state, uidValidity, new Date());
       if (state.uidValidity !== uidValidity) {
-        await query(`INSERT INTO support_mailbox_sync_state(mailbox,uid_validity,last_uid)
-          VALUES($1,$2,0) ON CONFLICT(mailbox) DO UPDATE SET uid_validity=$2,last_uid=0,updated_at=now()`, [SUPPORT_MAILBOX_ADDRESS, uidValidity]);
+        await query(`INSERT INTO support_mailbox_sync_state(mailbox,uid_validity,last_uid,initial_since)
+          VALUES($1,$2,0,$3) ON CONFLICT(mailbox) DO UPDATE SET uid_validity=$2,last_uid=0,initial_since=$3,updated_at=now()`,
+          [SUPPORT_MAILBOX_ADDRESS, uidValidity, plan.initialSince]);
       }
-      const remoteUids = state.uidValidity === uidValidity
-        ? await imap.search({ uid: `${state.lastUid + 1}:*` }, { uid: true })
-        : await imap.search({ since: new Date(Date.now() - 30 * 86400_000) }, { uid: true });
+      const highWaterUid = Number(imap.mailbox && imap.mailbox.uidNext) - 1;
+      if (!Number.isSafeInteger(highWaterUid) || highWaterUid < 0) throw new Error('invalid_uidnext');
+      const remoteUids = await imap.search(plan.query, { uid: true });
       const uids = selectImportUids(state, uidValidity, remoteUids || []);
       for (const uid of uids) {
         const info = await imap.fetchOne(String(uid), { envelope: true, size: true }, { uid: true });
@@ -143,6 +161,12 @@ export async function syncMailboxOnce(): Promise<{ imported: number; configured:
         await storePreparedMail(prepared);
         await query(`UPDATE support_mailbox_sync_state SET last_uid=$2,updated_at=now() WHERE mailbox=$1`, [SUPPORT_MAILBOX_ADDRESS, uid]);
         imported++;
+      }
+      if (plan.initialSince) {
+        const finalCursor = completedBackfillCursor(uids, highWaterUid,
+          uids.at(-1) || cursorForValidity(state, uidValidity));
+        if (finalCursor != null) await query(`UPDATE support_mailbox_sync_state SET last_uid=GREATEST(last_uid,$2),
+          initial_since=NULL,updated_at=now() WHERE mailbox=$1`, [SUPPORT_MAILBOX_ADDRESS, finalCursor]);
       }
       await query(`UPDATE support_mailbox_sync_state SET last_success_at=now(),last_error=NULL,updated_at=now() WHERE mailbox=$1`, [SUPPORT_MAILBOX_ADDRESS]);
     } finally { lock.release(); }

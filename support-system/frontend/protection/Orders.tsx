@@ -3,11 +3,11 @@ import type { ClaimReason, ProtectionClaim, ProtectionList, ProtectionOrder, Pro
 import { API, ApiError, centsFromInput, dateTime, money, query, request, useResource } from './api';
 import { Badge, DetailDialog, Empty, ErrorNotice, Field, FilterBar, Info, initialFilters, ItemList, Loading, OrderContext, Pagination, reasonLabels, Section } from './shared';
 import { CustomerAccessLink } from './CustomerSubmission';
-export function Orders({ stores, onClaim }: { stores: ProtectionStore[]; onClaim: (id: string) => void }) {
+export function Orders({ stores, selectedOrder, onClaim }: { stores: ProtectionStore[]; selectedOrder?: string | null; onClaim: (id: string) => void }) {
   const [draft, setDraft] = useState(initialFilters);
   const [filters, setFilters] = useState(initialFilters);
   const [page, setPage] = useState(1);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(selectedOrder || null);
   const [refresh, setRefresh] = useState(0);
   const params = query({ q: filters.q, store: filters.store, from: filters.from, to: filters.to });
   const resource = useResource<ProtectionList<ProtectionOrder>>(`/orders?${params}&page=${page}&page_size=20`, refresh, true);

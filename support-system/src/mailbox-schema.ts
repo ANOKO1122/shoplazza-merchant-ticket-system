@@ -5,10 +5,12 @@ CREATE TABLE IF NOT EXISTS support_mailbox_sync_state (
   mailbox TEXT PRIMARY KEY,
   uid_validity TEXT,
   last_uid BIGINT NOT NULL DEFAULT 0,
+  initial_since TIMESTAMPTZ,
   last_success_at TIMESTAMPTZ,
   last_error TEXT,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE support_mailbox_sync_state ADD COLUMN IF NOT EXISTS initial_since TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS support_mailbox_conversations (
   id BIGSERIAL PRIMARY KEY,
@@ -84,8 +86,12 @@ CREATE TABLE IF NOT EXISTS support_mailbox_link_events (
   agent_id BIGINT NOT NULL REFERENCES support_agents(id),
   previous_claim_id BIGINT,
   new_claim_id BIGINT,
+  previous_protection_order_id BIGINT,
+  new_protection_order_id BIGINT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE support_mailbox_link_events ADD COLUMN IF NOT EXISTS previous_protection_order_id BIGINT;
+ALTER TABLE support_mailbox_link_events ADD COLUMN IF NOT EXISTS new_protection_order_id BIGINT;
 `;
 
 export async function initMailboxSchema(): Promise<void> {

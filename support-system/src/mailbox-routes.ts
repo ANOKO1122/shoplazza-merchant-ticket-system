@@ -3,7 +3,7 @@ import multer from 'multer';
 import { getRequestAgent } from './auth';
 import { query } from './pg';
 import { mailboxConfigured, mailboxSyncStatus } from './mailbox-imap';
-import { addNote, getConversation, linkClaim, listConversations, queueReply, updateConversation } from './mailbox-store';
+import { addNote, getConversation, linkClaim, linkProtectionOrder, listConversations, queueReply, updateConversation } from './mailbox-store';
 import { deleteMailboxAttachment, readMailboxAttachment, saveMailboxAttachment } from './mailbox-attachments';
 
 const uploads = multer({ storage: multer.memoryStorage(), limits: { files: 6, fileSize: 10 * 1024 * 1024, fields: 10 } });
@@ -66,6 +66,19 @@ export function createMailboxRouter(): express.Router {
     catch (error) { routeError(res, error); }
   });
 
+  router.get('/claims', async (req, res) => {
+    try {
+      const term = String(req.query.q || '').trim();
+      if (term.length < 3 || term.length > 100) throw new Error('invalid_query');
+      const pattern = `%${term.replace(/[\\%_]/g, '\\$&')}%`;
+      const rows = (await query(`SELECT cl.id,cl.public_no,po.order_number FROM support_protection_claims cl
+        JOIN support_protection_orders po ON po.id=cl.protection_order_id
+        WHERE cl.public_no ILIKE $1 ESCAPE '\\' OR po.order_number ILIKE $1 ESCAPE '\\'
+        ORDER BY cl.created_at DESC NULLS LAST,cl.id DESC LIMIT 10`, [pattern])).rows;
+      res.json({ ok: true, items: rows.map(row => ({ ...row, id: Number(row.id) })) });
+    } catch (error) { routeError(res, error); }
+  });
+
   router.get('/conversations', async (req, res) => {
     try {
       const scope = String(req.query.scope || 'open');
@@ -79,7 +92,8 @@ export function createMailboxRouter(): express.Router {
 
   router.get('/conversations/:id', async (req, res) => {
     try {
-      const conversation = await getConversation(numericId(req.params.id));
+      const before = req.query.before_message_id == null ? undefined : numericId(String(req.query.before_message_id));
+      const conversation = await getConversation(numericId(req.params.id), before);
       if (!conversation) { res.status(404).json({ ok: false, error: 'conversation_not_found' }); return; }
       res.json({ ok: true, conversation });
     } catch (error) { routeError(res, error); }
@@ -109,6 +123,12 @@ export function createMailboxRouter(): express.Router {
   router.post('/conversations/:id/link', async (req, res) => {
     try { res.json({ ok: true, conversation: await linkClaim(numericId(req.params.id), Number(req.body?.version),
       req.body?.claim_id == null ? null : numericId(String(req.body.claim_id)), (req as any).agent.agentId) }); }
+    catch (error) { routeError(res, error); }
+  });
+
+  router.post('/conversations/:id/link-order', async (req, res) => {
+    try { res.json({ ok: true, conversation: await linkProtectionOrder(numericId(req.params.id), Number(req.body?.version),
+      req.body?.order_id == null ? null : numericId(String(req.body.order_id)), (req as any).agent.agentId) }); }
     catch (error) { routeError(res, error); }
   });
 

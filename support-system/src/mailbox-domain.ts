@@ -1,5 +1,5 @@
 export function normalizeMailboxAddress(value: unknown): string | null {
-  if (typeof value !== 'string' || /[\r\n<>]/.test(value)) return null;
+  if (typeof value !== 'string' || /[\x00-\x1f\x7f<>]/.test(value)) return null;
   const email = value.trim().toLowerCase();
   if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
   return email;
@@ -7,7 +7,7 @@ export function normalizeMailboxAddress(value: unknown): string | null {
 
 export function parseMailHeaders(value: string | undefined | null): string[] {
   if (!value) return [];
-  return Array.from(value.matchAll(/<[^<>\s]{1,254}@[^<>\s]{1,254}>/g), match => match[0].toLowerCase()).slice(0, 50);
+  return Array.from(value.matchAll(/<[^<>\s\x00-\x1f\x7f]{1,254}@[^<>\s\x00-\x1f\x7f]{1,254}>/g), match => match[0].toLowerCase()).slice(0, 50);
 }
 
 export function matchNotificationThread(input: {

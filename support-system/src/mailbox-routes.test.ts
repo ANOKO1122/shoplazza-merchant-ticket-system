@@ -81,6 +81,18 @@ test('mailbox API requires agent session and origin, and serves attachments only
     assert.equal(tooLarge.status, 400);
     assert.equal((await tooLarge.json() as any).error, 'file_too_large');
 
+    await pool.query(`INSERT INTO support_protection_orders(id,public_no,order_number,customer_email)
+      VALUES(99,'SP-OTHER','ORDER-OTHER','different@example.invalid')`);
+    await pool.query(`INSERT INTO support_protection_claims(id,public_no,protection_order_id,created_at)
+      VALUES(88,'CL-OTHER',99,now())`);
+    const claimSearch = await (await fetch(`${base}/api/admin/mailbox/claims?q=CL-OTHER`, { headers: { Cookie: cookie } })).json() as any;
+    assert.equal(claimSearch.items[0].id, 88);
+    const linkedOrder = await fetch(`${base}/api/admin/mailbox/conversations/${conversationId}/link-order`, { method: 'POST',
+      headers: { Cookie: cookie, Origin: base, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version: 3, order_id: 99 }) });
+    assert.equal(linkedOrder.status, 200);
+    assert.equal((await linkedOrder.json() as any).conversation.protection_order_id, 99);
+
     const bytes = Buffer.from('%PDF-1.7\nprivate');
     const saved = await saveMailboxAttachment({ filename: 'report.pdf', contentType: 'application/pdf', bytes, count: 1, totalBytes: bytes.length });
     const attachmentId = Number((await pool.query(`INSERT INTO support_mailbox_attachments(message_id,filename,mime_type,size_bytes,storage_key)

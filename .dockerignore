@@ -8,6 +8,7 @@
 **/uploads
 **/thumbnails
 **/protection-data
+**/private
 **/postgres-ssl
 **/nginx/ssl
 **/nginx/letsencrypt

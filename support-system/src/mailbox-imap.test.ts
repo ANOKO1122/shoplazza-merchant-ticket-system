@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseIncomingRaw, selectImportUids, sourceComplete } from './mailbox-imap';
+import { completedBackfillCursor, cursorForValidity, importSearchPlan, parseIncomingRaw, selectImportUids, sourceComplete } from './mailbox-imap';
 
 const raw = Buffer.from(`From: Buyer <Buyer@Example.invalid>\r
 To: Customer Support <customersupport@reply.us-seel.com>\r
@@ -56,4 +56,17 @@ test('a capped or shorter-than-advertised raw fetch is not parsed as a complete 
   assert.equal(sourceComplete(undefined, 36 * 1024 * 1024), false);
   assert.equal(sourceComplete(100, 99), false);
   assert.equal(sourceComplete(100, 100), true);
+});
+
+test('an empty initial window retains its date boundary until its UID cursor is established', () => {
+  const now = new Date('2026-11-13T10:00:00Z');
+  const first = importSearchPlan({ uidValidity: null, lastUid: 0, initialSince: null }, '7', now);
+  assert.deepEqual(first.query, { since: new Date('2026-10-14T10:00:00Z') });
+  const retry = importSearchPlan({ uidValidity: '7', lastUid: 0, initialSince: first.initialSince }, '7', new Date('2026-11-14T10:00:00Z'));
+  assert.deepEqual(retry.query, first.query);
+  assert.equal(completedBackfillCursor([], 209, 0), 209);
+  assert.equal(completedBackfillCursor([], 9, cursorForValidity({ uidValidity: '7', lastUid: 209 }, '8')), 9);
+  assert.equal(completedBackfillCursor(Array.from({ length: 50 }, (_, index) => index + 1), 209, 0), null);
+  const incremental = importSearchPlan({ uidValidity: '7', lastUid: 209, initialSince: null }, '7', now);
+  assert.deepEqual(incremental.query, { uid: '210:*' });
 });
