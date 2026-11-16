@@ -202,12 +202,18 @@ export function ConversationPane({ conversation, agents, busy, mailboxReady, loa
 
 function MessageCard({ message }: { message: MailboxMessage }) {
   const outbound = message.direction === 'outgoing';
-  return <article className={outbound ? 'mb-message mb-message-out' : 'mb-message'}><div className="mb-message-meta"><strong>{outbound ? `客服${message.agent_name ? ` · ${message.agent_name}` : ''}` : message.sender_email}</strong>
-    <time>{dateTime(message.sent_at)}</time></div><div className="mb-body">{message.body_text}</div>
+  const sender = outbound ? message.agent_name || '客服' : message.sender_email;
+  return <article className={outbound ? 'mb-message mb-message-out' : 'mb-message'}>
+    <span className="mb-message-avatar" aria-hidden="true">{sender.slice(0, 1).toUpperCase()}</span>
+    <div className="mb-message-content"><div className="mb-message-meta"><strong>{outbound ? '客服回复' : '客户来信'}</strong><span className="mb-message-sender">{sender}</span>
+      <time dateTime={message.sent_at}>{dateTime(message.sent_at)}</time></div>
+    <div className="mb-message-card"><h3 className="mb-message-subject">{message.subject?.trim() || '无主题邮件'}</h3>
+    <div className="mb-body">{message.body_text}</div>
     {message.attachments?.length > 0 && <ul className="mb-attachments">{message.attachments.map(attachment => <li key={attachment.id}>
       {attachment.available ? <a href={`/api/admin/mailbox/attachments/${attachment.id}`}>{attachment.filename}</a> : <span>{attachment.filename}（未保存：{attachment.omitted_reason || '不支持'}）</span>}
     </li>)}</ul>}
     {outbound && <span className={`mb-delivery mb-delivery-${message.status}`}>{deliveryLabels[message.status] || message.status}</span>}
+    </div></div>
   </article>;
 }
 
