@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { CustomerClaim, CustomerOrderResponse, CustomerProtectionOrder } from '../../src/protection-customer-types';
 import { ApiError, exchangeSession, initializeProtectionReference, request, setProtectionReference } from './api';
-import { date, groupShipmentItems, money, shipmentLabel, takeAccessToken } from './domain';
-import { Badge, ErrorNotice, Icon, ProductImage } from './shared';
+import { date, groupShipmentItems, money, safeImage, shipmentLabel, takeAccessToken } from './domain';
+import { Badge, Dialog, ErrorNotice, Icon, ProductImage } from './shared';
 import { Wizard } from './Wizard';
 import { ClaimDetail } from './ClaimDetail';
 import { ServiceDetails } from './ServiceDetails';
@@ -15,7 +15,17 @@ let accessToken = takeAccessToken(window.location, window.history);
 initializeProtectionReference(!!accessToken);
 function OrderItemCard({ item, quantity, currency, disabled, onRequest }: { item: CustomerProtectionOrder['items'][number]; quantity: number; currency: string; disabled: boolean; onRequest: () => void }) {
   const partial = quantity !== item.quantity;
-  return <li><ProductImage src={item.image_url} /><div><h3>{item.title}</h3><p>{partial ? <>Quantity {quantity} of {item.quantity}<span>· Order item total {money(item.amount_cents, currency)}</span></> : <>{money(item.amount_cents, currency)} <span>· Quantity {quantity}</span></>}</p>{item.has_active_claim && <small>An active request includes this item. View it below.</small>}</div><button className="cp-button" disabled={disabled || item.has_active_claim || item.available_quantity < 1} onClick={onRequest}>Request a refund</button></li>;
+  const [failedImageUrl, setFailedImageUrl] = useState<string | null>(null);
+  const [imageOpen, setImageOpen] = useState(false);
+  const imageUrl = safeImage(item.image_url);
+  const visibleImageUrl = imageUrl === failedImageUrl ? undefined : imageUrl;
+  const imageFailed = () => { setFailedImageUrl(imageUrl ?? null); setImageOpen(false); };
+  return <li>
+    {visibleImageUrl ? <button type="button" className="cp-product-image-button" aria-label={`View image of ${item.title}`} title="View full image" onClick={() => setImageOpen(true)}><img className="cp-product-image" src={visibleImageUrl} alt="" loading="lazy" onError={imageFailed} /></button> : <ProductImage src={null} />}
+    <div><h3>{item.title}</h3><p>{partial ? <>Quantity {quantity} of {item.quantity}<span>· Order item total {money(item.amount_cents, currency)}</span></> : <>{money(item.amount_cents, currency)} <span>· Quantity {quantity}</span></>}</p>{item.has_active_claim && <small>An active request includes this item. View it below.</small>}</div>
+    <button className="cp-button" disabled={disabled || item.has_active_claim || item.available_quantity < 1} onClick={onRequest}>Request a refund</button>
+    {imageOpen && visibleImageUrl && <Dialog title="Product image" onClose={() => setImageOpen(false)}><div className="cp-image-preview"><img src={visibleImageUrl} alt={item.title} onError={imageFailed} /></div></Dialog>}
+  </li>;
 }
 function App() {
   const [data, setData] = useState<CustomerOrderResponse | null>(null);
