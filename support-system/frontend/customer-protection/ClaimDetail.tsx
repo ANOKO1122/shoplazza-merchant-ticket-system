@@ -31,7 +31,7 @@ export function ClaimDetail({ claim, data, onClose, onUpdated }: { claim: Custom
     } catch (error) { setError(error as Error); }
     finally { busyRef.current = false; setBusy(false); }
   }
-  return <Dialog title={`Request ${claim.public_no}`} onClose={onClose} busy={busy} footer={<button className="cp-button" onClick={onClose} disabled={busy}>Back to order</button>}>
+  return <Dialog title={`Request ${claim.public_no}`} onClose={onClose} busy={busy} footer={<><a className="cp-help-link" href="/protection/help?article=contact-us" target="_blank" rel="noopener noreferrer">Help &amp; contact</a><button className="cp-button" onClick={onClose} disabled={busy}>Back to order</button></>}>
     <div className="cp-claim-heading"><Badge status={claim.status} /><span className="cp-muted">Submitted {date(claim.created_at)}</span></div>
     <div className="cp-service-context"><span>Shipping Protection</span><ServiceDetails basis={servicePolicyBasis(data.coverage?.policy_version)} /></div>
     <dl className="cp-review-grid"><div><dt>Protection reference</dt><dd>{claim.protection_no}</dd></div><div><dt>Requested amount</dt><dd>{money(claim.requested_amount_cents, claim.currency)}</dd></div><div><dt>Issue</dt><dd>{claim.issue_code ? issueLabel(claim.issue_code, claim.received_package) : claim.reason}</dd></div>{claim.approved_amount_cents != null && <div><dt>Approved amount</dt><dd>{money(claim.approved_amount_cents, claim.currency)}</dd></div>}</dl>

@@ -1,5 +1,15 @@
 /** Public order-help copy. Keep these instructions aligned with the customer flow. */
 const articles = {
+  'contact-us': {
+    title: 'Contact us',
+    lead: 'Need help with your protected order, a refund request, or using this portal? Email our customer support team.',
+    body: `<h2>Email customer support</h2>
+      <p><a class="help-contact-email" href="mailto:customersupport@reply.us-seel.com">customersupport@reply.us-seel.com</a></p>
+      <p>You can contact us before or after submitting a request.</p>
+      <h2>What to include</h2><ul><li>Your order number or protection reference, if available.</li><li>The email address used for your order.</li><li>Your request number if you have already submitted a request.</li><li>A short description of what you need help with, plus any relevant screenshots or tracking details.</li></ul>
+      <h2>Find an answer in the help center</h2><p>Browse the articles on this page for guidance on reporting a package issue, supporting documents, and request statuses.</p>
+      <p><a href="/protection/help?article=report-an-issue">How to report a package issue</a> · <a href="/protection/help?article=request-status">How to check your request status</a></p>`,
+  },
   'report-an-issue': {
     title: 'How to report a package issue',
     lead: 'Shipping Protection helps with shipping and delivery loss, damage, theft or major delays. With sufficient evidence and an approved request, you may receive a full or partial refund for affected items.',
@@ -81,7 +91,7 @@ export function renderProtectionHelp(requested: unknown, fallback: ProtectionHel
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${article.title} · Order help</title><link rel="stylesheet" href="/assets/protection-help.css"></head>
 <body><a class="help-skip" href="#main-content">Skip to article</a><header class="help-header"><div class="help-header-inner"><a class="help-brand" href="/protection/help">Order help</a><a class="help-order-link" href="/protection">Open your order</a></div></header>
-<div class="help-breadcrumb"><div><a href="/protection/help">Help center</a><span aria-hidden="true">›</span><span>Reporting an issue</span></div></div>
+<div class="help-breadcrumb"><div><a href="/protection/help">Help center</a><span aria-hidden="true">›</span><span>${current === 'contact-us' ? 'Contact us' : 'Reporting an issue'}</span></div></div>
 <div class="help-layout"><aside class="help-sidebar"><div class="help-nav-desktop"><h2>Articles in this section</h2><nav aria-label="Articles in this section"><ul>${navigation}</ul></nav></div><details class="help-nav-mobile"><summary>Browse articles</summary><nav aria-label="Articles in this section"><ul>${navigation}</ul></nav></details></aside>
-<main id="main-content"><article><h1>${article.title}</h1><p class="help-lead">${article.lead}</p><div class="help-article-body">${article.body}</div></article><footer class="help-footer"><span>Need to review your request?</span><a href="/protection">Open your order</a></footer></main></div></body></html>`;
+<main id="main-content"><article><h1>${article.title}</h1><p class="help-lead">${article.lead}</p><div class="help-article-body">${article.body}</div></article><footer class="help-footer"><a href="/protection/help?article=contact-us">Contact us</a><span aria-hidden="true">·</span><a href="/protection">Open your order</a></footer></main></div></body></html>`;
 }

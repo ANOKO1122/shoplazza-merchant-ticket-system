@@ -32,6 +32,7 @@ article h1{margin:0 0 17px;font-size:clamp(28px,3.2vw,38px);line-height:1.18;let
 .help-article-body h2{margin:38px 0 12px;color:#22374c;font-size:21px;line-height:1.32;letter-spacing:-.015em}
 .help-article-body h2:first-child{margin-top:0}
 .help-article-body p{margin:0 0 17px}
+.help-contact-email{font-weight:650;overflow-wrap:anywhere}
 .help-article-body ul,.help-article-body ol{margin:0 0 21px;padding-left:24px}
 .help-article-body li{padding-left:3px;margin-bottom:8px}
 .help-article-body li::marker{color:#256aa7}

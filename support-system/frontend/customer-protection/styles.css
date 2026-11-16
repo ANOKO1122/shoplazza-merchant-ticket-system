@@ -34,3 +34,7 @@
 .cp-image-preview{display:flex;align-items:center;justify-content:center;min-height:100%}
 .cp-image-preview img{display:block;width:auto;height:auto;max-width:100%;max-height:calc(100dvh - 190px);object-fit:contain}
 @media(max-width:680px){.cp-product-image-button{width:56px;height:68px}.cp-image-preview img{max-height:calc(100dvh - 130px)}}
+
+.cp-help-link{display:inline-flex;align-items:center;min-height:44px;color:var(--cp-blue);font-size:14px;font-weight:600;text-decoration:underline;text-underline-offset:3px;flex-shrink:0}
+.cp-header>div{flex-wrap:wrap;gap:8px 20px}
+@media(max-width:680px){.cp-help-link{font-size:13px}}
