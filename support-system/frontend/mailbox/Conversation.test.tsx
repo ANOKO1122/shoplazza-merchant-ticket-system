@@ -63,3 +63,12 @@ test('older mail has a visible load action', () => {
     onLinkOrder={async () => {}} onSearchClaims={async () => []} />);
   assert.ok(html.includes('加载更早邮件'));
 });
+
+test('linked protection order opens in the mailbox instead of navigating away', () => {
+  const html = renderToStaticMarkup(<ConversationPane conversation={{ ...conversation, protection_no: 'SP-EXAMPLE' }}
+    agents={[]} busy={false} mailboxReady={true} loadingOlder={false} error="" onRefresh={() => {}} onLoadOlder={() => {}}
+    onUpdate={async () => {}} onNote={async () => {}} onReply={async () => {}} onLink={async () => {}}
+    onLinkOrder={async () => {}} onSearchClaims={async () => []} />);
+  assert.match(html, /<button[^>]*>SP-EXAMPLE<\/button>/);
+  assert.doesNotMatch(html, /href="\/thinkpro-admin\/protection\?tab=orders/);
+});
