@@ -1,3 +1,4 @@
+export interface MailboxTag { id: number; name: string; color: string }
 export interface MailboxAgent { id: number; name: string }
 export interface MailboxAttachment { id: number; filename: string; mime_type: string | null; size_bytes: number; omitted_reason: string | null; available: boolean }
 export interface MailboxMessage {
@@ -15,11 +16,11 @@ export interface MailboxConversation {
   unread_count: number; assignee_id: number | null; assignee_name: string | null;
   claim_id: number | null; claim_no: string | null; protection_order_id: number | null; protection_no: string | null;
   last_message_at: string; messages: MailboxMessage[]; notes: MailboxNote[];
-  has_older_messages: boolean;
+  has_older_messages: boolean; tags: MailboxTag[];
   notification: { id: number; subject: string; body_text: string; sent_at: string; recipient_email: string } | null;
   candidate_notification: NotificationCandidate | null; candidates: ClaimCandidate[]; order_candidates: OrderCandidate[];
 }
-export type ConversationSummary = Pick<MailboxConversation, 'id' | 'subject' | 'customer_email' | 'status' | 'unread_count' | 'assignee_name' | 'claim_no' | 'protection_no' | 'last_message_at'>;
+export type ConversationSummary = Pick<MailboxConversation, 'id' | 'subject' | 'customer_email' | 'status' | 'unread_count' | 'assignee_name' | 'claim_no' | 'protection_no' | 'last_message_at' | 'tags'>;
 
 export class MailboxApiError extends Error {
   constructor(public status: number, public code: string) { super(code); }

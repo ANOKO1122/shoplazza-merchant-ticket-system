@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ProtectionClaim, ProtectionOrder } from '../../src/protection-types';
 import { request } from '../protection/api';
+import { CustomerTagsDialog, TagBadges } from './Tags';
 import { OrderSummary } from './OrderView';
 import { OrderDetail } from '../protection/Orders';
 import { ClaimDetail } from '../protection/Claims';
@@ -45,6 +46,7 @@ type ConversationProps = {
 };
 
 export function ConversationPane({ conversation, agents, busy, mailboxReady, loadingOlder, error, onRefresh, onLoadOlder, onUpdate, onNote, onReply, onLink, onLinkOrder, onSearchClaims }: ConversationProps) {
+  const [tagsOpen, setTagsOpen] = useState(false);
   const [mode, setMode] = useState<'reply' | 'note'>('reply');
   const [draft, setDraft] = useState('');
   const [files, setFiles] = useState<File[]>([]);
@@ -128,13 +130,12 @@ export function ConversationPane({ conversation, agents, busy, mailboxReady, loa
 
   return <><div className="mb-conversation-grid">
     <section className="mb-thread" aria-label="邮件会话">
-      <header className="mb-thread-header"><div className="mb-thread-title"><h2>{conversation.subject || '无主题邮件'}</h2><p>{conversation.customer_email}</p></div>
+      <header className="mb-thread-header"><div className="mb-thread-title"><h2>{conversation.subject || '无主题邮件'}</h2><p>{conversation.customer_email}</p><TagBadges tags={conversation.tags} /></div>
         <div className="mb-thread-actions">
           <button type="button" className="mb-button mb-action-button" disabled={busy} onClick={() => onUpdate(conversation.unread_count ? { mark_read: true } : { mark_unread: true })}>
             <Icon name="envelope" />{conversation.unread_count ? '标记已读' : '标记未读'}</button>
-          <button type="button" className={conversation.status === 'open' ? 'mb-button mb-button-primary mb-action-button' : 'mb-button mb-action-button'} disabled={busy}
-            onClick={() => onUpdate({ status: conversation.status === 'open' ? 'resolved' : 'open' })}>
-            <Icon name="check" />{conversation.status === 'open' ? '标记已处理' : '重新打开'}</button>
+          <span className={`mb-status ${conversation.status === 'resolved' ? 'mb-status-resolved' : ''}`} title="按最新顾客来信或成功发送的客服回复判断">{conversation.status === 'resolved' ? '已处理' : '未处理'}</span>
+          <button type="button" className="mb-button mb-action-button" onClick={() => setTagsOpen(true)}>添加/移除标签</button>
           <details className="mb-more-menu"><summary className="mb-button">更多 <Icon name="chevron" /></summary><div className="mb-more-options">
             <button type="button" onClick={onRefresh}><Icon name="refresh" />刷新会话</button>
             <button type="button" onClick={() => navigator.clipboard?.writeText(conversation.customer_email).catch(() => undefined)}>复制顾客邮箱</button>
@@ -167,7 +168,7 @@ export function ConversationPane({ conversation, agents, busy, mailboxReady, loa
           <button type="submit" className="mb-button mb-button-primary" disabled={busy || !draft.trim() || (mode === 'reply' && (!canReply || !mailboxReady))}>{busy ? '处理中…' : mode === 'reply' ? '发送回复' : '保存内部备注'}</button></div>
       </form>
     </section>
-    <aside className="mb-context" aria-label="会话资料"><div className="mb-context-heading"><h3>处理资料</h3><span className={conversation.status === 'resolved' ? 'mb-status mb-status-resolved' : 'mb-status'}>{conversation.status === 'open' ? '待处理' : '已处理'}</span></div>
+    <aside className="mb-context" aria-label="会话资料"><div className="mb-context-heading"><h3>处理资料</h3><span className={conversation.status === 'resolved' ? 'mb-status mb-status-resolved' : 'mb-status'}>{conversation.status === 'open' ? '未处理' : '已处理'}</span></div>
       <label className="mb-field">负责人<select value={conversation.assignee_id ?? ''} disabled={busy} onChange={event => onUpdate({ assignee_id: event.target.value ? Number(event.target.value) : null })}>
         <option value="">未分配</option>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
       <div className="mb-context-section"><h4>保障订单</h4>{conversation.protection_order_id
@@ -200,7 +201,7 @@ export function ConversationPane({ conversation, agents, busy, mailboxReady, loa
           <button type="button" className="mb-button" disabled={busy} onClick={() => onLink(candidate.id)}>关联</button></li>)}</ul> : <p className="mb-muted">未找到匹配申请；请核对编号。</p>)}</details>
       </div><p className="mb-context-help">普通来信按邮箱关联最新保障订单；通知回复按原邮件关联。申请仍可人工核对与调整。</p>
     </aside>
-  </div><div className="mb-protection-dialogs">{conversation.protection_order_id && orderOpen && <OrderDetail key={conversation.protection_order_id}
+  </div>{tagsOpen && <CustomerTagsDialog conversationId={conversation.id} onClose={() => setTagsOpen(false)} onSaved={onRefresh} />}<div className="mb-protection-dialogs">{conversation.protection_order_id && orderOpen && <OrderDetail key={conversation.protection_order_id}
     id={String(conversation.protection_order_id)} onClose={() => setOrderOpen(false)} onChanged={refreshProtection}
     onClaim={id => { setOrderOpen(false); setSelectedClaim(id); }} />}
     {selectedClaim && <ClaimDetail key={selectedClaim} id={selectedClaim} agents={agents} onClose={() => setSelectedClaim(null)} onChanged={refreshProtection} />}</div></>;

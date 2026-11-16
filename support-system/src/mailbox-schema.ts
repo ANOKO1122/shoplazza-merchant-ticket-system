@@ -1,6 +1,27 @@
 import { query } from './pg';
 
 const MAILBOX_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS support_mailbox_tags (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 30),
+  color TEXT NOT NULL CHECK (color IN ('blue','green','amber','red','purple','slate')),
+  created_by BIGINT REFERENCES support_agents(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_support_mailbox_tags_name ON support_mailbox_tags(lower(name));
+CREATE TABLE IF NOT EXISTS support_mailbox_customers (
+  email TEXT PRIMARY KEY,
+  tag_version INTEGER NOT NULL DEFAULT 1,
+  updated_by BIGINT REFERENCES support_agents(id),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS support_mailbox_customer_tags (
+  customer_email TEXT NOT NULL REFERENCES support_mailbox_customers(email) ON DELETE CASCADE,
+  tag_id INTEGER NOT NULL REFERENCES support_mailbox_tags(id) ON DELETE CASCADE,
+  PRIMARY KEY(customer_email,tag_id)
+);
+CREATE INDEX IF NOT EXISTS idx_support_mailbox_customer_tags_filter ON support_mailbox_customer_tags(tag_id,customer_email);
+
 CREATE TABLE IF NOT EXISTS support_mailbox_sync_state (
   mailbox TEXT PRIMARY KEY,
   uid_validity TEXT,
@@ -62,6 +83,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_support_mailbox_message_external_id ON sup
 CREATE UNIQUE INDEX IF NOT EXISTS idx_support_mailbox_message_idempotency ON support_mailbox_messages(idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_support_mailbox_message_thread ON support_mailbox_messages(message_id,conversation_id);
 CREATE INDEX IF NOT EXISTS idx_support_mailbox_message_outbox ON support_mailbox_messages(status,created_at) WHERE direction='outgoing';
+
+CREATE INDEX IF NOT EXISTS idx_support_mailbox_message_handling ON support_mailbox_messages(conversation_id,sent_at DESC,id DESC)
+  WHERE direction='incoming' OR status='sent';
 
 CREATE TABLE IF NOT EXISTS support_mailbox_attachments (
   id BIGSERIAL PRIMARY KEY,

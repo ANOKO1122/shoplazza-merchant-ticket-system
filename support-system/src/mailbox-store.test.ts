@@ -103,10 +103,30 @@ test('inbox import, assignment, notes, claim links and reply queue remain consis
     assert.equal((await pool.query("SELECT count(*)::int n FROM support_mailbox_messages WHERE direction='outgoing'")).rows[0].n, 1);
     assert.ok(new Date((await getConversation(first.conversationId)).last_message_at).getTime() > new Date('2026-11-12T10:00:00Z').getTime());
 
+    assert.equal((await getConversation(first.conversationId)).status, 'open', 'queued reply is still unhandled');
+    await pool.query("UPDATE support_mailbox_messages SET status='sent',sent_at='2026-11-13T10:03:00Z' WHERE id=$1", [queued.id]);
+    assert.equal((await getConversation(first.conversationId)).status, 'resolved', 'successful reply handles conversation');
+    assert.equal((await listConversations({ status: 'resolved' })).items.some(item => item.id === first.conversationId), true);
+    await updateConversation(first.conversationId, (await getConversation(first.conversationId)).version, { markUnread: true }, 11);
+    assert.equal((await getConversation(first.conversationId)).status, 'resolved', 'unread does not mean unhandled');
+    for (const delivery of ['queued','sending','failed','unknown']) {
+      await pool.query('UPDATE support_mailbox_messages SET status=$2 WHERE id=$1', [queued.id, delivery]);
+      assert.equal((await getConversation(first.conversationId)).status, 'open', delivery + ' does not count as a reply');
+    }
+    await pool.query("UPDATE support_mailbox_messages SET status='sent' WHERE id=$1", [queued.id]);
+
     const anotherDirect = await importIncomingMessage({ mailbox: 'customersupport@reply.us-seel.com', uidValidity: '7', uid: 6,
       messageId: '<another-direct@example.invalid>', inReplyTo: '<notice@example.invalid>', references: ['<notice@example.invalid>'],
       sender: 'buyer@example.invalid', recipient: 'customersupport@reply.us-seel.com', subject: 'Re: Claim update', body: 'Another attachment', sentAt: new Date('2026-11-13T10:04:00Z'), attachments: [] });
     assert.equal(anotherDirect.conversationId, first.conversationId);
+    assert.equal((await getConversation(first.conversationId)).status, 'open', 'new customer reply reopens');
+    const readPending = await updateConversation(first.conversationId, (await getConversation(first.conversationId)).version, { markRead: true }, 11);
+    assert.equal(readPending.status, 'open', 'reading does not handle the email');
+    assert.equal((await listConversations({ status: 'open', read: true })).items.some(item => item.id === first.conversationId), true);
+    const protectionNo = (await getConversation(first.conversationId)).protection_no;
+    for (const q of ['1001', protectionNo, 'BUYER@example.invalid']) {
+      assert.equal((await listConversations({ q })).items.some(item => item.id === first.conversationId), true, 'search by ' + q);
+    }
     const anotherForward = await importIncomingMessage({ mailbox: 'customersupport@reply.us-seel.com', uidValidity: '7', uid: 7,
       messageId: '<another-forward@example.invalid>', inReplyTo: '<notice@example.invalid>', references: ['<notice@example.invalid>'],
       sender: 'friend@example.invalid', recipient: 'customersupport@reply.us-seel.com', subject: 'Fwd: Claim update', body: 'More', sentAt: new Date('2026-11-13T10:05:00Z'), attachments: [] });

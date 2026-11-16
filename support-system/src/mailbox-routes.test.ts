@@ -97,6 +97,39 @@ test('mailbox API requires agent session and origin, and serves attachments only
     assert.equal(linkedOrder.status, 200);
     assert.equal((await linkedOrder.json() as any).conversation.protection_order_id, 99);
 
+    const auth = { Cookie: cookie, Origin: base, 'Content-Type': 'application/json' };
+    const tagUrl = `${base}/api/admin/mailbox/tags`;
+    assert.equal((await fetch(tagUrl)).status, 401);
+    assert.equal((await fetch(tagUrl, { method: 'POST', headers: { ...auth, Origin: 'https://attacker.invalid' }, body: JSON.stringify({ name: 'VIP', color: 'blue' }) })).status, 403);
+    assert.equal((await fetch(tagUrl, { method: 'POST', headers: auth, body: JSON.stringify({ name: 'VIP', color: 'invalid' }) })).status, 400);
+    const createdTag = await (await fetch(tagUrl, { method: 'POST', headers: auth, body: JSON.stringify({ name: ' VIP ', color: 'blue' }) })).json() as any;
+    assert.equal(createdTag.tag.name, 'VIP');
+    const tagId = createdTag.tag.id;
+    const duplicateTag = await (await fetch(tagUrl, { method: 'POST', headers: auth, body: JSON.stringify({ name: 'vip', color: 'red' }) })).json() as any;
+    assert.equal(duplicateTag.tag.id, tagId);
+    assert.equal(duplicateTag.tag.color, 'blue');
+    const tagsUrl = `${base}/api/admin/mailbox/conversations/${conversationId}/tags`;
+    const initialTags = await (await fetch(tagsUrl, { headers: auth })).json() as any;
+    assert.deepEqual(initialTags.customer.tag_ids, []);
+    const secondConversation = Number((await pool.query("INSERT INTO support_mailbox_conversations(customer_email) VALUES('BUYER@example.invalid') RETURNING id")).rows[0].id);
+    assert.equal((await fetch(tagsUrl, { method: 'PUT', headers: auth, body: JSON.stringify({ version: 1, tag_ids: [tagId] }) })).status, 200);
+    const sharedTags = await (await fetch(`${base}/api/admin/mailbox/conversations/${secondConversation}/tags`, { headers: auth })).json() as any;
+    assert.deepEqual(sharedTags.customer.tag_ids, [tagId]);
+    assert.equal(sharedTags.customer.version, 2);
+    assert.equal((await fetch(tagsUrl, { method: 'PUT', headers: auth, body: JSON.stringify({ version: 1, tag_ids: [] }) })).status, 409);
+    assert.equal((await fetch(tagsUrl, { method: 'PUT', headers: auth, body: JSON.stringify({ version: 2, tag_ids: [99999] }) })).status, 400);
+    const taggedList = await (await fetch(`${base}/api/admin/mailbox/conversations?scope=all&tag_id=${tagId}`, { headers: auth })).json() as any;
+    assert.equal(taggedList.total, 2);
+    assert.equal(taggedList.items[0].tags[0].name, 'VIP');
+    const combined = await (await fetch(`${base}/api/admin/mailbox/conversations?scope=open&read=read&tag_id=${tagId}&q=ORDER-OTHER`, { headers: auth })).json() as any;
+    assert.equal(combined.total, 1);
+    assert.equal(combined.items[0].id, conversationId);
+    assert.equal((await fetch(tagsUrl, { method: 'PUT', headers: auth, body: JSON.stringify({ version: 2, tag_ids: [] }) })).status, 200);
+    const cleared = await (await fetch(`${base}/api/admin/mailbox/conversations?scope=all&tag_id=${tagId}`, { headers: auth })).json() as any;
+    assert.equal(cleared.total, 0);
+    const manualStatus = await fetch(`${base}/api/admin/mailbox/conversations/${conversationId}`, { method: 'PATCH', headers: auth, body: JSON.stringify({ version: 1, status: 'resolved' }) });
+    assert.equal(manualStatus.status, 400);
+
     const bytes = Buffer.from('%PDF-1.7\nprivate');
     const saved = await saveMailboxAttachment({ filename: 'report.pdf', contentType: 'application/pdf', bytes, count: 1, totalBytes: bytes.length });
     const attachmentId = Number((await pool.query(`INSERT INTO support_mailbox_attachments(message_id,filename,mime_type,size_bytes,storage_key)

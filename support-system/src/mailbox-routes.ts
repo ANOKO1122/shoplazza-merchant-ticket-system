@@ -1,4 +1,5 @@
 import express from 'express';
+import { createTag, getCustomerTags, listTags, saveCustomerTags } from './mailbox-tags';
 import multer from 'multer';
 import { getRequestAgent } from './auth';
 import { query } from './pg';
@@ -79,15 +80,34 @@ export function createMailboxRouter(): express.Router {
     } catch (error) { routeError(res, error); }
   });
 
+  router.get('/tags', async (_req, res) => {
+    try { res.json({ ok: true, tags: await listTags() }); } catch (error) { routeError(res, error); }
+  });
+  router.post('/tags', async (req, res) => {
+    try { res.json({ ok: true, tag: await createTag(req.body?.name, req.body?.color, (req as any).agent.agentId) }); }
+    catch (error) { routeError(res, error); }
+  });
+  router.get('/conversations/:id/tags', async (req, res) => {
+    try { res.json({ ok: true, customer: await getCustomerTags(numericId(req.params.id)) }); }
+    catch (error) { routeError(res, error); }
+  });
+  router.put('/conversations/:id/tags', async (req, res) => {
+    try { res.json({ ok: true, customer: await saveCustomerTags(numericId(req.params.id), Number(req.body?.version), req.body?.tag_ids, (req as any).agent.agentId) }); }
+    catch (error) { routeError(res, error); }
+  });
+
   router.get('/conversations', async (req, res) => {
     try {
-      const scope = String(req.query.scope || 'open');
+      const scope = String(req.query.scope || 'all');
+      if (!['all','open','resolved','read','unread','mine','unassigned'].includes(scope)) throw new Error('invalid_scope');
+      if (req.query.read && !['read','unread','all'].includes(String(req.query.read))) throw new Error('invalid_read');
+      if (req.query.assignee && !['mine','unassigned','all'].includes(String(req.query.assignee))) throw new Error('invalid_assignee');
       const agent = (req as any).agent;
-      const status = scope === 'resolved' ? 'resolved' : 'open';
-      const assigneeId = scope === 'mine' ? agent.agentId : scope === 'unassigned' ? null : undefined;
-      const read = scope === 'read' ? true : scope === 'unread' ? false : undefined;
+      const status = scope === 'resolved' ? 'resolved' : scope === 'open' ? 'open' : undefined;
+      const assigneeId = (scope === 'mine' || req.query.assignee === 'mine') ? agent.agentId : (scope === 'unassigned' || req.query.assignee === 'unassigned') ? null : undefined;
+      const read = (scope === 'read' || req.query.read === 'read') ? true : (scope === 'unread' || req.query.read === 'unread') ? false : undefined;
       res.json({ ok: true, ...await listConversations({ q: String(req.query.q || ''), status, assigneeId,
-        read, limit: Number(req.query.limit) || 30, offset: Number(req.query.offset) || 0 }) });
+        read, tagId: req.query.tag_id ? numericId(String(req.query.tag_id)) : undefined, limit: Number(req.query.limit) || 30, offset: Number(req.query.offset) || 0 }) });
     } catch (error) { routeError(res, error); }
   });
 
@@ -106,10 +126,7 @@ export function createMailboxRouter(): express.Router {
       if (!Number.isSafeInteger(version) || version < 1) throw new Error('invalid_version');
       const change: { assigneeId?: number | null; status?: 'open' | 'resolved'; markRead?: boolean; markUnread?: boolean } = {};
       if ('assignee_id' in (req.body || {})) change.assigneeId = req.body.assignee_id == null ? null : numericId(String(req.body.assignee_id));
-      if ('status' in (req.body || {})) {
-        if (!['open', 'resolved'].includes(req.body.status)) throw new Error('invalid_status');
-        change.status = req.body.status;
-      }
+      if ('status' in (req.body || {})) throw new Error('invalid_status_automatic');
       if (req.body?.mark_read === true) change.markRead = true;
       if (req.body?.mark_unread === true) change.markUnread = true;
       if (change.markRead && change.markUnread) throw new Error('invalid_read_change');

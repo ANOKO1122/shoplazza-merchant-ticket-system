@@ -125,15 +125,24 @@ export async function backfillMailboxOrderLinks(): Promise<void> {
     WHERE c.auto_link_attempted=false`);
 }
 
-export async function listConversations(filters: { q?: string; status?: 'open' | 'resolved'; assigneeId?: number | null; unread?: boolean; read?: boolean; limit?: number; offset?: number } = {}) {
+// Read state, notes and unsent drafts never determine whether the customer has been answered.
+const handlingStatusSql = `CASE WHEN (SELECT m.direction FROM support_mailbox_messages m
+  WHERE m.conversation_id=c.id AND (m.direction='incoming' OR m.status='sent')
+  ORDER BY m.sent_at DESC,m.id DESC LIMIT 1)='outgoing' THEN 'resolved' ELSE 'open' END`;
+const customerTagsSql = `COALESCE((SELECT jsonb_agg(jsonb_build_object('id',t.id,'name',t.name,'color',t.color) ORDER BY t.name,t.id)
+  FROM support_mailbox_customer_tags ct JOIN support_mailbox_tags t ON t.id=ct.tag_id
+  WHERE ct.customer_email=lower(c.customer_email)), '[]'::jsonb)`;
+
+export async function listConversations(filters: { q?: string; status?: 'open' | 'resolved'; assigneeId?: number | null; unread?: boolean; read?: boolean; tagId?: number; limit?: number; offset?: number } = {}) {
   const where = ['1=1'];
   const args: unknown[] = [];
   const add = (sql: string, value: unknown) => { args.push(value); where.push(sql.replace('?', `$${args.length}`)); };
-  if (filters.status) add('c.status=?', filters.status);
+  if (filters.status) add(`(${handlingStatusSql})=?`, filters.status);
   if (filters.assigneeId === null) where.push('c.assignee_id IS NULL');
   else if (filters.assigneeId != null) add('c.assignee_id=?', numberId(filters.assigneeId));
   if (filters.read === true) where.push('c.unread_count=0');
   else if (filters.read === false || filters.unread) where.push('c.unread_count>0');
+  if (filters.tagId != null) add('EXISTS(SELECT 1 FROM support_mailbox_customer_tags ct WHERE ct.customer_email=lower(c.customer_email) AND ct.tag_id=?)', numberId(filters.tagId));
   if (filters.q?.trim()) {
     args.push(`%${filters.q.trim().slice(0, 100).replace(/[\\%_]/g, '\\$&')}%`);
     where.push(`(c.customer_email ILIKE $${args.length} ESCAPE '\\' OR c.subject ILIKE $${args.length} ESCAPE '\\'
@@ -144,7 +153,7 @@ export async function listConversations(filters: { q?: string; status?: 'open' |
   const limit = Math.min(100, Math.max(1, Number(filters.limit) || 30));
   const offset = Math.max(0, Number(filters.offset) || 0);
   const total = Number((await query(`SELECT count(*)::int n FROM support_mailbox_conversations c WHERE ${where.join(' AND ')}`, args)).rows[0].n);
-  const items = (await query(`SELECT c.*,a.name AS assignee_name,cl.public_no AS claim_no,po.public_no AS protection_no
+  const items = (await query(`SELECT c.*,${handlingStatusSql} AS status,${customerTagsSql} AS tags,a.name AS assignee_name,cl.public_no AS claim_no,po.public_no AS protection_no
     FROM support_mailbox_conversations c LEFT JOIN support_agents a ON a.id=c.assignee_id
     LEFT JOIN support_protection_claims cl ON cl.id=c.claim_id
     LEFT JOIN support_protection_orders po ON po.id=c.protection_order_id
@@ -155,7 +164,7 @@ export async function listConversations(filters: { q?: string; status?: 'open' |
 
 export async function getConversation(id: number, beforeMessageId?: number): Promise<any | null> {
   numberId(id);
-  const conversation = (await query(`SELECT c.*,a.name AS assignee_name,cl.public_no AS claim_no,po.public_no AS protection_no
+  const conversation = (await query(`SELECT c.*,${handlingStatusSql} AS status,${customerTagsSql} AS tags,a.name AS assignee_name,cl.public_no AS claim_no,po.public_no AS protection_no
     FROM support_mailbox_conversations c LEFT JOIN support_agents a ON a.id=c.assignee_id
     LEFT JOIN support_protection_claims cl ON cl.id=c.claim_id
     LEFT JOIN support_protection_orders po ON po.id=c.protection_order_id WHERE c.id=$1`, [id])).rows[0];
