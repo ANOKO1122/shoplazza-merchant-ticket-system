@@ -11,10 +11,10 @@ test('customer host has an explicit page/asset/API allowlist', () => {
   assert.equal(isProtectionHost('us-seel.com:443'), true);
   assert.equal(isProtectionHost('us-seel.com.evil.invalid'), false);
   assert.equal(isProtectionHost('server.clientservice-center.com'), false);
-  for (const path of ['/', '/protection', '/protection/photo-requirements', '/protection/help', '/email-preferences', '/assets/customer-protection.js', '/assets/customer-protection.css', '/assets/protection-help.css', '/assets/protection-location-ios.png', '/assets/protection-location-android.png', '/assets/protection-photo-guidelines.png', '/assets/protection-camera-ios.png', '/assets/protection-camera-android.png', '/assets/protection-example-package.jpg', '/assets/protection-example-item.jpg', '/api/protection/order', '/api/protection/claims/CL-123/messages']) {
+  for (const path of ['/', '/protection', '/protection/photo-requirements', '/protection/help', '/protection/privacy', '/email-preferences', '/assets/customer-protection.js', '/assets/customer-protection.css', '/assets/protection-help.css', '/assets/protection-parcel-hero.webp', '/assets/protection-location-ios.png', '/assets/protection-location-android.png', '/assets/protection-photo-guidelines.png', '/assets/protection-camera-ios.png', '/assets/protection-camera-android.png', '/assets/protection-example-package.jpg', '/assets/protection-example-item.jpg', '/api/protection/order', '/api/protection/claims/CL-123/messages']) {
     assert.equal(isProtectionPublicPath(path), true, path);
   }
-  for (const path of ['/thinkpro-admin', '/api/admin/me', '/api/support/tickets', '/uploads/a.png', '/login', '/admin.html', '/assets/admin.js', '/assets/private.png', '/assets/protection-help.css.bak', '/assets/protection-location-other.png', '/assets/protection-location-ios.png/private', '/assets/protection-location-ios.png.bak', '/assets/protection-camera-ios.png.bak', '/assets/protection-photo-guidelines.png/private', '/assets/protection-example-item.jpg.bak', '/protection/photo-requirements/extra', '/protection/help/admin', '/api/protection/../admin/me', '/api/protection/%2e%2e/admin/me', '//api/protection/order', '/email-preferences/admin', '/email-preferences/', '/email-preferences.html']) {
+  for (const path of ['/thinkpro-admin', '/api/admin/me', '/api/support/tickets', '/uploads/a.png', '/login', '/admin.html', '/assets/admin.js', '/assets/private.png', '/assets/protection-help.css.bak', '/assets/protection-location-other.png', '/assets/protection-location-ios.png/private', '/assets/protection-location-ios.png.bak', '/assets/protection-camera-ios.png.bak', '/assets/protection-photo-guidelines.png/private', '/assets/protection-example-item.jpg.bak', '/protection/photo-requirements/extra', '/protection/help/admin', '/protection/privacy/admin', '/protection-privacy.html', '/assets/protection-parcel-hero.webp.bak', '/api/protection/../admin/me', '/api/protection/%2e%2e/admin/me', '//api/protection/order', '/email-preferences/admin', '/email-preferences/', '/email-preferences.html']) {
     assert.equal(isProtectionPublicPath(path), false, path);
   }
 });
@@ -24,7 +24,7 @@ test('customer nginx only exposes approved guide images and keeps its template i
   const deployedConfig = readFileSync(resolve(__dirname, '../nginx/support-nginx.conf'), 'utf8');
   assert.equal(deployedConfig.split('# BEGIN US-SEEL CUSTOMER ENTRY\n')[1]?.split('# END US-SEEL CUSTOMER ENTRY')[0].trim(), template.trim());
   assert.deepEqual([...template.matchAll(/location = (\/assets\/[^\s]+) \{/g)].map(match => match[1]).sort(), [
-    '/assets/protection-camera-android.png', '/assets/protection-camera-ios.png', '/assets/protection-example-item.jpg', '/assets/protection-example-package.jpg', '/assets/protection-help.css', '/assets/protection-location-android.png', '/assets/protection-location-ios.png', '/assets/protection-photo-guidelines.png',
+    '/assets/protection-camera-android.png', '/assets/protection-camera-ios.png', '/assets/protection-example-item.jpg', '/assets/protection-example-package.jpg', '/assets/protection-help.css', '/assets/protection-location-android.png', '/assets/protection-location-ios.png', '/assets/protection-parcel-hero.webp', '/assets/protection-photo-guidelines.png',
   ]);
   assert.match(template, /location \/ \{\s*return 404;/);
 });

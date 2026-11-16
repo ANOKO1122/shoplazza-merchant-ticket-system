@@ -178,6 +178,10 @@ app.get('/protection/photo-requirements', protectionPageHeaders, (_req, res) => 
   res.type('html').send(renderProtectionHelp('damaged-photos'));
 });
 
+app.get('/protection/privacy', protectionPageHeaders, (_req, res) => {
+  res.sendFile(path.join(publicDir, 'protection-privacy.html'));
+});
+
 app.get('/protection/help', protectionPageHeaders, (req, res) => {
   const page = renderProtectionHelp(req.query.article);
   if (!page) { res.status(404).type('text/plain').send('Article not found'); return; }
