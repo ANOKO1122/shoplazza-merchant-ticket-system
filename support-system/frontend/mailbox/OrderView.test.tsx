@@ -20,13 +20,19 @@ const order: ProtectionOrder = {
 };
 
 test('order card shows financial summary and tracking without exposing store identity', () => {
-  const html = renderToStaticMarkup(<OrderSummary order={order} onOpen={() => {}} onTrack={() => {}} />);
+  const html = renderToStaticMarkup(<OrderSummary order={order} />);
   assert.match(html, /ORDER-81/);
   assert.match(html, /external-81/);
   assert.match(html, /67\.97/);
   assert.match(html, /1\.98/);
-  assert.match(html, /物流查询/);
+  assert.match(html, /<iframe[^>]+src="https:\/\/extcall\.17track\.net\/en\/track[^>]+nums=4PX-123/);
+  assert.doesNotMatch(html, /查看订单详情|<dialog/);
   assert.doesNotMatch(html, /Private Shop|private-shop\.example/);
+});
+
+test('order without tracking does not load a tracking widget', () => {
+  const html = renderToStaticMarkup(<OrderSummary order={{ ...order, logistics: [] }} />);
+  assert.doesNotMatch(html, /<iframe|extcall\.17track/);
 });
 
 test('tracking list excludes cancelled shipments and deduplicates numbers', () => {

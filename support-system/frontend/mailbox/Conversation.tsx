@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ProtectionClaim, ProtectionOrder } from '../../src/protection-types';
 import { request } from '../protection/api';
-import { OrderDetailsDialog, OrderSummary, TrackingDialog, trackingNumbers } from './OrderView';
+import { OrderSummary } from './OrderView';
+import { OrderDetail } from '../protection/Orders';
+import { ClaimDetail } from '../protection/Claims';
 import type { ClaimCandidate, MailboxAgent, MailboxConversation, MailboxMessage, MailboxNote } from './api';
 
 function dateTime(value: string): string {
@@ -55,13 +57,15 @@ export function ConversationPane({ conversation, agents, busy, mailboxReady, loa
   const [orderRevision, setOrderRevision] = useState(0);
   const [orderResource, setOrderResource] = useState<{ id: number | null; data: { order: ProtectionOrder; claims: ProtectionClaim[] } | null; error: boolean; loading: boolean }>({ id: null, data: null, error: false, loading: false });
   const [orderOpen, setOrderOpen] = useState(false);
-  const [trackingOpen, setTrackingOpen] = useState(false);
+  const [selectedClaim, setSelectedClaim] = useState<string | null>(null);
+  useEffect(() => { setOrderOpen(false); setSelectedClaim(null); }, [conversation.id, conversation.claim_id, conversation.protection_order_id]);
+  function refreshProtection() { setOrderRevision(value => value + 1); onRefresh(); }
   const pendingKey = useRef<string | null>(null);
   useEffect(() => {
     const id = conversation.protection_order_id;
-    if (!id) { setOrderResource({ id: null, data: null, error: false, loading: false }); setOrderOpen(false); setTrackingOpen(false); return; }
+    if (!id) { setOrderResource({ id: null, data: null, error: false, loading: false }); setOrderOpen(false); return; }
     const controller = new AbortController();
-    setOrderOpen(false); setTrackingOpen(false);
+    setOrderOpen(false);
     setOrderResource({ id, data: null, error: false, loading: true });
     request<{ order: ProtectionOrder; claims: ProtectionClaim[] }>(`/orders/${id}`, { signal: controller.signal })
       .then(data => { if (!controller.signal.aborted) setOrderResource({ id, data, error: false, loading: false }); })
@@ -167,20 +171,20 @@ export function ConversationPane({ conversation, agents, busy, mailboxReady, loa
       <label className="mb-field">负责人<select value={conversation.assignee_id ?? ''} disabled={busy} onChange={event => onUpdate({ assignee_id: event.target.value ? Number(event.target.value) : null })}>
         <option value="">未分配</option>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
       <div className="mb-context-section"><h4>保障订单</h4>{conversation.protection_order_id
-        ? <p><button type="button" className="mb-order-link" disabled={!linkedOrder} onClick={() => setOrderOpen(true)}>{conversation.protection_no || `订单 ${conversation.protection_order_id}`}</button></p>
+        ? <p><button type="button" className="mb-order-link" onClick={() => setOrderOpen(true)}>{conversation.protection_no || `订单 ${conversation.protection_order_id}`}</button></p>
         : <p className="mb-muted">尚未关联订单</p>}
         <label className="mb-field">关联订单<select value={conversation.protection_order_id ?? ''} disabled={busy} onChange={event => onLinkOrder(event.target.value ? Number(event.target.value) : null)}>
           <option value="">无关联</option>
           {conversation.protection_order_id && !(conversation.order_candidates || []).some(order => order.id === conversation.protection_order_id)
             && <option value={conversation.protection_order_id}>{conversation.protection_no || `订单 ${conversation.protection_order_id}`}</option>}
           {(conversation.order_candidates || []).map(order => <option key={order.id} value={order.id}>{order.order_number || order.public_no}</option>)}</select></label>
-        {linkedOrder ? <OrderSummary order={linkedOrder.order} onOpen={() => setOrderOpen(true)} onTrack={() => setTrackingOpen(true)} />
+        {linkedOrder ? <OrderSummary order={linkedOrder.order} />
           : conversation.protection_order_id && <div className="mb-order-loading" role="status">{orderResource.id === conversation.protection_order_id && orderResource.error
             ? <>订单资料加载失败。<button type="button" className="mb-order-link" onClick={() => setOrderRevision(value => value + 1)}>重试</button></>
             : '正在读取订单资料…'}</div>}
       </div>
       <div className="mb-context-section"><h4>保障申请</h4>{conversation.claim_id && conversation.claim_no
-        ? <p><a href={`/thinkpro-admin/protection?tab=claims&claim=${encodeURIComponent(String(conversation.claim_id))}`}>{conversation.claim_no}</a></p>
+        ? <p><button type="button" className="mb-order-link" onClick={() => setSelectedClaim(String(conversation.claim_id))}>{conversation.claim_no}</button></p>
         : <p className="mb-muted">尚未关联申请</p>}
         {conversation.candidate_notification && <div className="mb-candidate"><strong>待人工核对</strong><p>可能回复了「{conversation.candidate_notification.subject}」；原收件人是 {conversation.candidate_notification.recipient_email}。</p>
           {conversation.candidate_notification.claim_id
@@ -196,8 +200,11 @@ export function ConversationPane({ conversation, agents, busy, mailboxReady, loa
           <button type="button" className="mb-button" disabled={busy} onClick={() => onLink(candidate.id)}>关联</button></li>)}</ul> : <p className="mb-muted">未找到匹配申请；请核对编号。</p>)}</details>
       </div><p className="mb-context-help">普通来信按邮箱关联最新保障订单；通知回复按原邮件关联。申请仍可人工核对与调整。</p>
     </aside>
-  </div>{linkedOrder && orderOpen && <OrderDetailsDialog order={linkedOrder.order} claims={linkedOrder.claims} onClose={() => setOrderOpen(false)} onTrack={() => setTrackingOpen(true)} />}
-    {linkedOrder && trackingOpen && <TrackingDialog numbers={trackingNumbers(linkedOrder.order.logistics)} onClose={() => setTrackingOpen(false)} />}</>;
+  </div><div className="mb-protection-dialogs">{conversation.protection_order_id && orderOpen && <OrderDetail key={conversation.protection_order_id}
+    id={String(conversation.protection_order_id)} onClose={() => setOrderOpen(false)} onChanged={refreshProtection}
+    onClaim={id => { setOrderOpen(false); setSelectedClaim(id); }} />}
+    {selectedClaim && <ClaimDetail key={selectedClaim} id={selectedClaim} agents={agents} onClose={() => setSelectedClaim(null)} onChanged={refreshProtection} />}</div></>;
+
 }
 
 function MessageCard({ message }: { message: MailboxMessage }) {

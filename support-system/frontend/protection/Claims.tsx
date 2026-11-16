@@ -19,7 +19,7 @@ export function Claims({ stores, agents, selected, onSelect }: { stores: Protect
     </section></div>{selected && <ClaimDetail key={selected} id={selected} agents={agents} onClose={() => onSelect(null)} onChanged={() => setRefresh(value => value + 1)} />}
   </>;
 }
-function ClaimDetail({ id, agents, onClose, onChanged }: { id: string; agents: Agent[]; onClose: () => void; onChanged: () => void }) {
+export function ClaimDetail({ id, agents, onClose, onChanged }: { id: string; agents: Agent[]; onClose: () => void; onChanged: () => void }) {
   const resource = useResource<ClaimDetailData>(`/claims/${encodeURIComponent(id)}`, 0, true);
   const data = resource.data;
   return <DetailDialog label="赔付申诉详情" onClose={onClose}><div className="p-detail-heading"><div><h2>{data?.claim.public_no || '申诉详情'}</h2><p className="p-muted">保障编号 {data?.claim.protection_public_no || '加载中'}</p></div><button className="p-button" onClick={onClose}>关闭详情</button></div>

@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { ConversationPane } from './Conversation';
 import { mailboxApi, jsonRequest, MailboxApiError } from './api';
 import type { ClaimCandidate, ConversationSummary, MailboxAgent, MailboxConversation, MailboxMessage } from './api';
+import '../protection/styles.css';
 import './styles.css';
 
 type Scope = 'open' | 'unread' | 'read' | 'resolved' | 'mine' | 'unassigned';
