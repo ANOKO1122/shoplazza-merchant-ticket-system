@@ -127,8 +127,10 @@ test('mailbox API requires agent session and origin, and serves attachments only
     assert.equal((await fetch(tagsUrl, { method: 'PUT', headers: auth, body: JSON.stringify({ version: 2, tag_ids: [] }) })).status, 200);
     const cleared = await (await fetch(`${base}/api/admin/mailbox/conversations?scope=all&tag_id=${tagId}`, { headers: auth })).json() as any;
     assert.equal(cleared.total, 0);
-    const manualStatus = await fetch(`${base}/api/admin/mailbox/conversations/${conversationId}`, { method: 'PATCH', headers: auth, body: JSON.stringify({ version: 1, status: 'resolved' }) });
-    assert.equal(manualStatus.status, 400);
+    const currentVersion = (await pool.query('SELECT version FROM support_mailbox_conversations WHERE id=$1', [conversationId])).rows[0].version;
+    const manualStatus = await fetch(`${base}/api/admin/mailbox/conversations/${conversationId}`, { method: 'PATCH', headers: auth, body: JSON.stringify({ version: currentVersion, status: 'resolved' }) });
+    assert.equal(manualStatus.status, 200);
+    assert.equal(((await manualStatus.json()) as any).conversation.status, 'resolved');
 
     const bytes = Buffer.from('%PDF-1.7\nprivate');
     const saved = await saveMailboxAttachment({ filename: 'report.pdf', contentType: 'application/pdf', bytes, count: 1, totalBytes: bytes.length });

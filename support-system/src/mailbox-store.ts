@@ -126,7 +126,7 @@ export async function backfillMailboxOrderLinks(): Promise<void> {
 }
 
 // Read state, notes and unsent drafts never determine whether the customer has been answered.
-const handlingStatusSql = `CASE WHEN (SELECT m.direction FROM support_mailbox_messages m
+const handlingStatusSql = `CASE WHEN c.status='resolved' THEN 'resolved' WHEN (SELECT m.direction FROM support_mailbox_messages m
   WHERE m.conversation_id=c.id AND (m.direction='incoming' OR m.status='sent')
   ORDER BY m.sent_at DESC,m.id DESC LIMIT 1)='outgoing' THEN 'resolved' ELSE 'open' END`;
 const customerTagsSql = `COALESCE((SELECT jsonb_agg(jsonb_build_object('id',t.id,'name',t.name,'color',t.color) ORDER BY t.name,t.id)

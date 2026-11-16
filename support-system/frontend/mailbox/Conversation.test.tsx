@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { ConversationPane } from './Conversation';
+import { ConversationPane, compactMailBody } from './Conversation';
 
 const conversation: any = {
   id: 1, version: 2, subject: 'Claim update', customer_email: 'buyer@example.invalid', status: 'open',
@@ -20,6 +20,9 @@ test('conversation shows original notice, escapes incoming content, and separate
   assert.ok(html.includes('&lt;script&gt;alert(1)&lt;/script&gt;'));
   assert.ok(!html.includes('<script>alert'));
   assert.ok(html.includes('内部备注'));
+  assert.ok(html.includes('标记为已处理'));
+  assert.match(html, /<aside[\s\S]*id="mailbox-note"/);
+  assert.doesNotMatch(html, /role="tab"/);
   assert.ok(html.includes('发送回复'));
   assert.ok(html.includes('buyer@example.invalid'));
   assert.ok(html.includes('CL-random'));
@@ -73,4 +76,9 @@ test('linked protection order opens in the mailbox instead of navigating away', 
     onLinkOrder={async () => {}} onSearchClaims={async () => []} />);
   assert.match(html, /<button[^>]*>SP-EXAMPLE<\/button>/);
   assert.doesNotMatch(html, /href="\/thinkpro-admin\/protection\?tab=orders/);
+});
+
+test('mail display collapses excess empty lines without joining lines or interpreting markup', () => {
+  assert.equal(compactMailBody('\r\nHello\r\n \r\n\r\n\r\nNext line\nAddress line 2\n'), 'Hello\n\nNext line\nAddress line 2');
+  assert.equal(compactMailBody('<b>hello</b>'), '<b>hello</b>');
 });

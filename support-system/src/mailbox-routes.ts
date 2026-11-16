@@ -126,7 +126,10 @@ export function createMailboxRouter(): express.Router {
       if (!Number.isSafeInteger(version) || version < 1) throw new Error('invalid_version');
       const change: { assigneeId?: number | null; status?: 'open' | 'resolved'; markRead?: boolean; markUnread?: boolean } = {};
       if ('assignee_id' in (req.body || {})) change.assigneeId = req.body.assignee_id == null ? null : numericId(String(req.body.assignee_id));
-      if ('status' in (req.body || {})) throw new Error('invalid_status_automatic');
+      if ('status' in (req.body || {})) {
+        if (req.body.status !== 'resolved') throw new Error('invalid_status');
+        change.status = 'resolved';
+      }
       if (req.body?.mark_read === true) change.markRead = true;
       if (req.body?.mark_unread === true) change.markUnread = true;
       if (change.markRead && change.markUnread) throw new Error('invalid_read_change');

@@ -115,6 +115,13 @@ test('inbox import, assignment, notes, claim links and reply queue remain consis
     }
     await pool.query("UPDATE support_mailbox_messages SET status='sent' WHERE id=$1", [queued.id]);
 
+    const handled = await updateConversation(first.conversationId, (await getConversation(first.conversationId)).version, { status: 'resolved' }, 11);
+    assert.equal(handled.status, 'resolved');
+    assert.equal(handled.unread_count, 1, 'manual handling does not change read state');
+    await pool.query("UPDATE support_mailbox_messages SET status='failed' WHERE id=$1", [queued.id]);
+    assert.equal((await getConversation(first.conversationId)).status, 'resolved', 'manual handling persists independently of reply delivery');
+    assert.equal((await listConversations({ status: 'resolved' })).items.some(item => item.id === first.conversationId), true);
+
     const anotherDirect = await importIncomingMessage({ mailbox: 'customersupport@reply.us-seel.com', uidValidity: '7', uid: 6,
       messageId: '<another-direct@example.invalid>', inReplyTo: '<notice@example.invalid>', references: ['<notice@example.invalid>'],
       sender: 'buyer@example.invalid', recipient: 'customersupport@reply.us-seel.com', subject: 'Re: Claim update', body: 'Another attachment', sentAt: new Date('2026-11-13T10:04:00Z'), attachments: [] });

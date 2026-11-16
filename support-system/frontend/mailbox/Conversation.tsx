@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ProtectionClaim, ProtectionOrder } from '../../src/protection-types';
 import { request } from '../protection/api';
 import { CustomerTagsDialog, TagBadges } from './Tags';
@@ -47,8 +47,20 @@ type ConversationProps = {
 
 export function ConversationPane({ conversation, agents, busy, mailboxReady, loadingOlder, error, onRefresh, onLoadOlder, onUpdate, onNote, onReply, onLink, onLinkOrder, onSearchClaims }: ConversationProps) {
   const [tagsOpen, setTagsOpen] = useState(false);
-  const [mode, setMode] = useState<'reply' | 'note'>('reply');
+  const [noteDraft, setNoteDraft] = useState('');
+  const draftInput = useRef<HTMLTextAreaElement | null>(null);
   const [draft, setDraft] = useState('');
+  useLayoutEffect(() => {
+    const input = draftInput.current;
+    if (!input) return;
+    const resize = () => { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight + 2, window.innerHeight / 2)}px`; };
+    resize();
+    const observer = new ResizeObserver(resize);
+    // Observe the parent so wrapping changes also resize the draft.
+    observer.observe(input.parentElement!);
+    window.addEventListener('resize', resize);
+    return () => { observer.disconnect(); window.removeEventListener('resize', resize); };
+  }, [draft]);
   const [files, setFiles] = useState<File[]>([]);
   const [fileError, setFileError] = useState('');
   const fileInput = useRef<HTMLInputElement | null>(null);
@@ -85,7 +97,6 @@ export function ConversationPane({ conversation, agents, busy, mailboxReady, loa
     setFileError('');
   }
   function pasteImages(event: React.ClipboardEvent<HTMLTextAreaElement>) {
-    if (mode !== 'reply') return;
     const pasted = Array.from(event.clipboardData.items).filter(item => item.kind === 'file' && item.type.startsWith('image/'))
       .map(item => item.getAsFile()).filter((file): file is File => !!file);
     if (pasted.length) addFiles(pasted.map((file, index) => new File([file], file.name || `pasted-image-${index + 1}.png`, { type: file.type })));
@@ -103,15 +114,11 @@ export function ConversationPane({ conversation, agents, busy, mailboxReady, loa
     event.preventDefault();
     if (!draft.trim() || busy) return;
     try {
-      if (mode === 'note') {
-        await onNote(draft.trim());
-      } else {
-        if (!canReply || !mailboxReady) return;
-        pendingKey.current ||= crypto.randomUUID();
-        await onReply(recipient, draft.trim(), files, pendingKey.current);
-        pendingKey.current = null;
-        setFiles([]); setFileError('');
-      }
+      if (!canReply || !mailboxReady) return;
+      pendingKey.current ||= crypto.randomUUID();
+      await onReply(recipient, draft.trim(), files, pendingKey.current);
+      pendingKey.current = null;
+      setFiles([]); setFileError('');
       setDraft('');
     } catch {
       // Keep the draft and the same idempotency key for a safe retry.
@@ -134,7 +141,9 @@ export function ConversationPane({ conversation, agents, busy, mailboxReady, loa
         <div className="mb-thread-actions">
           <button type="button" className="mb-button mb-action-button" disabled={busy} onClick={() => onUpdate(conversation.unread_count ? { mark_read: true } : { mark_unread: true })}>
             <Icon name="envelope" />{conversation.unread_count ? '标记已读' : '标记未读'}</button>
-          <span className={`mb-status ${conversation.status === 'resolved' ? 'mb-status-resolved' : ''}`} title="按最新顾客来信或成功发送的客服回复判断">{conversation.status === 'resolved' ? '已处理' : '未处理'}</span>
+          <button type="button" className="mb-button mb-button-primary mb-action-button" disabled={busy || conversation.status === 'resolved'} onClick={() => onUpdate({ status: 'resolved' })}><Icon name="check" />{conversation.status === 'resolved' ? '已处理' : '标记为已处理'}</button>
+          <span className={`mb-read-status ${conversation.unread_count ? 'is-unread' : ''}`}>{conversation.unread_count ? '未读' : '已读'}</span>
+          <span className={`mb-status ${conversation.status === 'resolved' ? 'mb-status-resolved' : ''}`} title="客服回复或手动标记后为已处理；顾客再次来信后恢复未处理">{conversation.status === 'resolved' ? '已处理' : '未处理'}</span>
           <button type="button" className="mb-button mb-action-button" onClick={() => setTagsOpen(true)}>添加/移除标签</button>
           <details className="mb-more-menu"><summary className="mb-button">更多 <Icon name="chevron" /></summary><div className="mb-more-options">
             <button type="button" onClick={onRefresh}><Icon name="refresh" />刷新会话</button>
@@ -144,33 +153,40 @@ export function ConversationPane({ conversation, agents, busy, mailboxReady, loa
       <div className="mb-timeline">
         {conversation.has_older_messages && <button type="button" className="mb-button mb-load-older" disabled={loadingOlder} onClick={onLoadOlder}>{loadingOlder ? '正在加载…' : '加载更早邮件'}</button>}
         {conversation.notification && <article className="mb-notice"><div className="mb-message-meta"><strong>已发送的保障通知</strong><time>{dateTime(conversation.notification.sent_at)}</time></div>
-          <p className="mb-message-title">{conversation.notification.subject}</p><div className="mb-body">{conversation.notification.body_text}</div></article>}
+          <p className="mb-message-title">{conversation.notification.subject}</p><div className="mb-body">{compactMailBody(conversation.notification.body_text)}</div></article>}
         {timeline.map(item => item.type === 'message'
           ? <MessageCard key={`m-${item.id}`} message={item.value as MailboxMessage} />
           : <NoteCard key={`n-${item.id}`} note={item.value as MailboxNote} />)}
       </div>
-      <form className="mb-composer" onSubmit={submit}><div className="mb-composer-tabs" role="tablist" aria-label="编辑内容类型">
-        <button type="button" role="tab" aria-selected={mode === 'reply'} className={mode === 'reply' ? 'active' : ''} onClick={() => setMode('reply')}>邮件回复</button>
-        <button type="button" role="tab" aria-selected={mode === 'note'} className={mode === 'note' ? 'active' : ''} onClick={() => setMode('note')}>内部备注</button></div>
-        {mode === 'reply' ? <div className="mb-recipient"><span>收件人</span><strong>{recipient || '暂无可回复地址'}</strong><small>发件人：customersupport@reply.us-seel.com</small></div>
-          : <p className="mb-private-hint">内部备注只对客服可见，不会发送到顾客邮箱。</p>}
-        {mode === 'reply' && !mailboxReady && <p className="mb-private-hint">邮箱尚未连接，暂时无法发送回复。</p>}
-        <label className="mb-visually-hidden" htmlFor="mailbox-draft">{mode === 'reply' ? '邮件回复内容' : '内部备注内容'}</label>
-        <textarea id="mailbox-draft" rows={4} value={draft} onPaste={pasteImages} onChange={event => { pendingKey.current = null; setDraft(event.target.value); }} placeholder={mode === 'reply' ? '输入给顾客的回复，或直接粘贴图片…' : '记录处理情况…'} maxLength={100000} />
-        {mode === 'reply' && <input ref={fileInput} className="mb-visually-hidden" type="file" multiple accept=".jpg,.jpeg,.png,.webp,.pdf"
+      <form className="mb-composer" onSubmit={submit}><h3 className="mb-composer-title">邮件回复</h3>
+        <div className="mb-recipient"><span>收件人</span><strong>{recipient || '暂无可回复地址'}</strong><small>发件人：customersupport@reply.us-seel.com</small></div>
+        {!mailboxReady && <p className="mb-private-hint">邮箱尚未连接，暂时无法发送回复。</p>}
+        <label className="mb-visually-hidden" htmlFor="mailbox-draft">邮件回复内容</label>
+        <textarea ref={draftInput} id="mailbox-draft" rows={3} value={draft} onPaste={pasteImages} onChange={event => { pendingKey.current = null; setDraft(event.target.value); }} placeholder="输入给顾客的回复，或直接粘贴图片…" maxLength={100000} />
+        {<input ref={fileInput} className="mb-visually-hidden" type="file" multiple accept=".jpg,.jpeg,.png,.webp,.pdf"
           onChange={event => { addFiles(Array.from(event.target.files || [])); event.target.value = ''; }} />}
         <div className="mb-composer-footer"><div className="mb-composer-tools">
-          {mode === 'reply' && <button type="button" className="mb-button mb-action-button" disabled={busy || files.length >= 6} onClick={() => fileInput.current?.click()}>
+          {<button type="button" className="mb-button mb-action-button" disabled={busy || files.length >= 6} onClick={() => fileInput.current?.click()}>
             <Icon name="paperclip" />附件{files.length ? ` ${files.length}/6` : ''}</button>}
-          {mode === 'reply' && files.length > 0 && <div className="mb-selected-files" aria-label="已选附件">{files.map((file, index) =>
+          {files.length > 0 && <div className="mb-selected-files" aria-label="已选附件">{files.map((file, index) =>
             <span key={`${file.name}-${index}`}>{file.name}<button type="button" aria-label={`移除 ${file.name}`} disabled={busy} onClick={() => { pendingKey.current = null; setFiles(current => current.filter((_, i) => i !== index)); }}><Icon name="close" /></button></span>)}</div>}
           <span role="status" className="mb-error">{fileError || error}</span></div>
-          <button type="submit" className="mb-button mb-button-primary" disabled={busy || !draft.trim() || (mode === 'reply' && (!canReply || !mailboxReady))}>{busy ? '处理中…' : mode === 'reply' ? '发送回复' : '保存内部备注'}</button></div>
+          <button type="submit" className="mb-button mb-button-primary" disabled={busy || !draft.trim() || (!canReply || !mailboxReady)}>{busy ? '处理中…' : '发送回复'}</button></div>
       </form>
     </section>
     <aside className="mb-context" aria-label="会话资料"><div className="mb-context-heading"><h3>处理资料</h3><span className={conversation.status === 'resolved' ? 'mb-status mb-status-resolved' : 'mb-status'}>{conversation.status === 'open' ? '未处理' : '已处理'}</span></div>
       <label className="mb-field">负责人<select value={conversation.assignee_id ?? ''} disabled={busy} onChange={event => onUpdate({ assignee_id: event.target.value ? Number(event.target.value) : null })}>
         <option value="">未分配</option>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
+      <form className="mb-context-section mb-note-form" onSubmit={async event => {
+        event.preventDefault();
+        if (busy || !noteDraft.trim()) return;
+        try { await onNote(noteDraft.trim()); setNoteDraft(''); } catch { /* Preserve the note for retry. */ }
+      }}><h4>内部备注</h4><p className="mb-private-hint">只对客服可见，不会发送到顾客邮箱。</p>
+        <label className="mb-visually-hidden" htmlFor="mailbox-note">内部备注内容</label>
+        <textarea id="mailbox-note" value={noteDraft} onChange={event => setNoteDraft(event.target.value)} rows={4} maxLength={20000} placeholder="记录处理情况…" />
+        <button type="submit" className="mb-button" disabled={busy || !noteDraft.trim()}>保存内部备注</button>
+        {error && <p className="mb-error" role="status">{error}</p>}
+      </form>
       <div className="mb-context-section"><h4>保障订单</h4>{conversation.protection_order_id
         ? <p><button type="button" className="mb-order-link" onClick={() => setOrderOpen(true)}>{conversation.protection_no || `订单 ${conversation.protection_order_id}`}</button></p>
         : <p className="mb-muted">尚未关联订单</p>}
@@ -208,6 +224,10 @@ export function ConversationPane({ conversation, agents, busy, mailboxReady, loa
 
 }
 
+export function compactMailBody(body: string): string {
+  return body.replace(/\r\n?/g, '\n').replace(/\n[ \t]*\n(?:[ \t]*\n)+/g, '\n\n').trim();
+}
+
 function MessageCard({ message }: { message: MailboxMessage }) {
   const outbound = message.direction === 'outgoing';
   const sender = outbound ? message.agent_name || '客服' : message.sender_email;
@@ -216,7 +236,7 @@ function MessageCard({ message }: { message: MailboxMessage }) {
     <div className="mb-message-content"><div className="mb-message-meta"><strong>{outbound ? '客服回复' : '客户来信'}</strong><span className="mb-message-sender">{sender}</span>
       <time dateTime={message.sent_at}>{dateTime(message.sent_at)}</time></div>
     <div className="mb-message-card"><h3 className="mb-message-subject">{message.subject?.trim() || '无主题邮件'}</h3>
-    <div className="mb-body">{message.body_text}</div>
+    <div className="mb-body">{compactMailBody(message.body_text)}</div>
     {message.attachments?.length > 0 && <ul className="mb-attachments">{message.attachments.map(attachment => <li key={attachment.id}>
       {attachment.available ? <a href={`/api/admin/mailbox/attachments/${attachment.id}`}>{attachment.filename}</a> : <span>{attachment.filename}（未保存：{attachment.omitted_reason || '不支持'}）</span>}
     </li>)}</ul>}

@@ -194,3 +194,18 @@
 .mb-tag-create label:first-child { flex:1 1 180px; }
 .mb-tag-create input,.mb-tag-create select { width:100%; border:1px solid #bdd0e2; border-radius:6px; padding:8px; background:#fff; color:var(--mb-ink); }
 @media (max-width:1100px) { .mb-topbar { flex-wrap:wrap; gap:12px; } .mb-topbar-search { order:3; flex-basis:100%; max-width:none; } .mb-topbar-actions { margin-left:auto; } }
+
+/* Keep read state and handling state independently visible. */
+.mb-list-states { gap:6px; margin-top:8px; }
+.mb-list-states > span,.mb-read-status,.mb-status { display:inline-flex; align-items:center; padding:4px 8px; border:1px solid #cbd7e3; border-radius:5px; background:#edf2f7; color:#40566c; font-size:12px; font-weight:700; line-height:1.4; white-space:nowrap; }
+.mb-list-item.is-unread .mb-list-states > span:first-child,.mb-read-status.is-unread { background:#1767b3; border-color:#1767b3; color:#fff; }
+.mb-list-states .is-pending,.mb-status { background:#fff0cf; border-color:#e9bf69; color:#784608; }
+.mb-list-states .is-resolved,.mb-status-resolved { background:#dff2e6; border-color:#93c8a5; color:#195b34; }
+.mb-thread-header { flex-wrap:wrap; }
+.mb-thread-actions { flex-wrap:wrap; }
+.mb-body { line-height:1.5; }
+.mb-composer-title { margin:10px 0; font-size:13px; }
+.mb-composer { max-height:calc(50dvh + 130px); overflow-y:auto; }
+.mb-composer textarea { display:block; box-sizing:border-box; resize:none; min-height:78px; max-height:50dvh; overflow-y:auto; line-height:1.5; }
+.mb-note-form textarea { box-sizing:border-box; width:100%; resize:vertical; min-height:90px; max-height:300px; border:1px solid #afc6da; border-radius:7px; padding:10px; color:var(--mb-ink); font-size:13px; line-height:1.5; }
+.mb-note-form > button { margin-top:8px; }
