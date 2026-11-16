@@ -37,4 +37,6 @@
 
 .cp-help-link{display:inline-flex;align-items:center;min-height:44px;color:var(--cp-blue);font-size:14px;font-weight:600;text-decoration:underline;text-underline-offset:3px;flex-shrink:0}
 .cp-header>div{flex-wrap:wrap;gap:8px 20px}
+.cp-footer{flex-direction:column;gap:8px}
+.cp-footer-note{display:flex;align-items:center;justify-content:center;gap:8px}
 @media(max-width:680px){.cp-help-link{font-size:13px}}
