@@ -50,6 +50,31 @@ test('repeated order discount totals do not replace each item allocation', () =>
   assert.equal(result.protected_value_cents,8480);
 });
 
+test('shipping discounts do not make otherwise reconciled merchandise amounts unknown', () => {
+  const snapshot={order_currency:'USD',payment_status:'paid',order_amount:'61.97',
+    raw_order_json:{total_discount:'12.99',discount_applications:JSON.stringify([
+      {target_type:'shipping_line',discount_amount:12.99},
+    ])},items_json:[
+      {id:'goods',product_id:'g',quantity:1,total_price:'59.99',discount_applications:'[]'},
+      {id:'service',product_id:'p',quantity:1,total_price:'1.98',discount_applications:'[]'},
+    ]};
+  const result=normalizeProtectionSnapshot(snapshot,['p'])!;
+  assert.equal(result.protected_value_cents,5999);
+  assert.equal(result.protection_fee_cents,198);
+  assert.equal(result.order_amount_cents,6197);
+  const mixed=normalizeProtectionSnapshot({...snapshot,raw_order_json:{total_discount:'17.99',discount_applications:[
+    {target_type:'shipping_line',discount_amount:'12.99'},
+    {target_type:'line_item',discount_amount:'5.00'},
+  ]},items_json:[{...snapshot.items_json[0],discount_applications:JSON.stringify([{discount_amount:'5.00'}])},snapshot.items_json[1]]},['p'])!;
+  assert.equal(mixed.protected_value_cents,5499);
+  for(const applications of ['invalid',{},[{target_type:'shipping_line',discount_amount:'13.99'}],
+    [{target_type:'shipping_line',discount_amount:'12.99'},{target_type:'line_item',discount_amount:'unknown'}],
+    [{target_type:'unknown',discount_amount:'12.99'}]]){
+    assert.equal(normalizeProtectionSnapshot({...snapshot,raw_order_json:{total_discount:'12.99',discount_applications:applications}},['p'])!.protected_value_cents,null);
+  }
+  assert.equal(normalizeProtectionSnapshot({...snapshot,raw_order_json:{...snapshot.raw_order_json,total_discount:'17.99'}},['p'])!.protected_value_cents,null);
+});
+
 test('service fulfillment distinguishes shipped from finished and reads current package line status', () => {
   const base={order_currency:'USD',payment_status:'paid',raw_order_json:{total_discount:'0'},items_json:[{id:'p-line',product_id:'p',quantity:1,price:'2',fulfillment_status:'unfulfilled'}]};
   const snapshot=(status:string)=>({...base,raw_order_json:{...base.raw_order_json,fulfillments:[{id:'package',status,line_items:[{id:'p-line',ship_quantity:1}]}]}});

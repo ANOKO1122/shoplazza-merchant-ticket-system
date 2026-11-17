@@ -44,6 +44,16 @@ function discountAmount(value: unknown): {amount:number|null;invalid:boolean} {
   const amount=sumKnown(amounts);
   return {amount,invalid:amount===null};
 }
+function merchandiseDiscount(raw:Record<string,any>):number|null {
+  const total=cents(raw.total_discount??raw.total_discounts);
+  let applications=raw.discount_applications;
+  if(typeof applications==='string'){try{applications=JSON.parse(applications);}catch{return total;}}
+  // Remove shipping discounts only when the complete order-level breakdown
+  // reconciles with the reported total. Unknown allocations stay unknown.
+  if(total===null||!Array.isArray(applications)||discountAmount(applications).amount!==total)return total;
+  const shipping=discountAmount(applications.filter(item=>record(item).target_type==='shipping_line')).amount;
+  return shipping===null?total:total-shipping;
+}
 function dateOrNull(value:unknown):string|null {
   const date=value?new Date(value as string):null;
   return date&&Number.isFinite(date.getTime())?date.toISOString():null;
@@ -77,8 +87,8 @@ export function normalizeProtectionSnapshot(snapshot: Record<string, any>, produ
   const currency = text(snapshot.order_currency || raw.currency).toUpperCase();
   const allowMoney = twoDecimalCurrency(currency);
   const discounts=source.map((value:unknown)=>discountAmount(record(value).discount_applications));
-  const orderDiscount=cents(raw.total_discount??raw.total_discounts);
-  // total_price is gross in Shoplazza's order API. All order discounts must be
+  const orderDiscount=merchandiseDiscount(raw);
+  // total_price is gross in Shoplazza's order API. All merchandise discounts must be
   // accounted for before an absent per-line allocation can safely mean zero.
   const allocatedDiscounts=discounts.reduce((sum:number,item:{amount:number|null})=>sum+(item.amount??0),0);
   const discountsAccounted=orderDiscount!==null&&allocatedDiscounts===orderDiscount&&!discounts.some((item:{invalid:boolean})=>item.invalid);
