@@ -23,8 +23,8 @@ export interface ClaimDetail { claim: ProtectionClaim; order: ProtectionOrder; e
 export interface ProtectionStats {
  protected_orders: number; claims: number; pending_claims: number; approved_claims: number; rejected_claims: number; closed_claims: number;
  currencies: Array<{currency: string; protection_fee_cents: number | null; protected_value_cents: number | null; unknown_orders: number; requested_amount_cents: number; approved_amount_cents: number}>;
- daily: Array<{date: string; orders: number; claims: number}>;
- by_store: Array<{store_subdomain: string; store_name: string; orders: number; claims: number; pending: number}>;
+ daily: Array<{date: string; paid_orders: number; orders: number; claims: number}>;
+ by_store: Array<{store_subdomain: string; store_name: string; paid_orders: number; orders: number; claims: number; pending: number}>;
  synced_at: string | null;
 }
 export interface ProtectionStore {

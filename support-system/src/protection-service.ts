@@ -230,7 +230,8 @@ export async function updateProtectionClaim(id:unknown,input:unknown,actor:Prote
 
 export async function getProtectionStats(filters:ProtectionFilters):Promise<ProtectionStats>{
   const orders=conditions(filters,'order'),claims=conditions(filters,'claim');
-  const [orderTotals,claimTotals,fees,amounts,dailyOrders,dailyClaims,storeOrders,storeClaims,sync]=await Promise.all([
+  const paidFilters=conditions({store:filters.store,from:filters.from,to:filters.to},'order');
+  const [orderTotals,claimTotals,fees,amounts,paidGroups,dailyClaims,storeClaims,sync]=await Promise.all([
     query(`SELECT count(*)::int AS total FROM support_protection_orders o ${orders.where}`,orders.args),
     query(`SELECT count(*)::int AS total,count(*) FILTER(WHERE c.status IN('submitted','reviewing','needs_info'))::int AS pending,
       count(*) FILTER(WHERE c.status='approved')::int AS approved,count(*) FILTER(WHERE c.status='rejected')::int AS rejected,
@@ -241,9 +242,18 @@ export async function getProtectionStats(filters:ProtectionFilters):Promise<Prot
       count(*) FILTER(WHERE protection_fee_cents IS NULL OR protected_value_cents IS NULL)::int AS unknown_orders
       FROM support_protection_orders o ${orders.where} GROUP BY currency`,orders.args),
     query(`SELECT c.currency,sum(c.requested_amount_cents) AS requested,sum(c.approved_amount_cents) AS approved ${claimJoins} ${claims.where} GROUP BY c.currency`,claims.args),
-    query(`SELECT to_char(o.paid_at AT TIME ZONE 'UTC','YYYY-MM-DD') AS date,count(*)::int AS count FROM support_protection_orders o ${orders.where} GROUP BY date ORDER BY date DESC LIMIT 366`,orders.args),
+    query(`WITH latest AS (
+      SELECT DISTINCT ON (s.store_subdomain,s.order_id) s.store_subdomain,s.order_id,s.store_name,s.paid_at,s.payment_status
+      FROM support_order_snapshots s JOIN support_protection_stores configured USING (store_subdomain)
+      ORDER BY s.store_subdomain,s.order_id,s.updated_at DESC,s.id DESC
+    ), paid AS (
+      SELECT o.store_subdomain,o.store_name,to_char(o.paid_at AT TIME ZONE 'UTC','YYYY-MM-DD') AS date,p.id AS protection_id
+      FROM latest o LEFT JOIN support_protection_orders p USING (store_subdomain,order_id)
+      ${paidFilters.where} ${paidFilters.where?'AND':'WHERE'} o.payment_status IN ('paid','refunded','partially_refunded','refunding')
+    )
+    SELECT store_subdomain,max(store_name) AS store_name,date,count(*)::int AS paid_orders,count(protection_id)::int AS orders
+    FROM paid GROUP BY GROUPING SETS ((store_subdomain),(date))`,paidFilters.args),
     query(`SELECT to_char(c.created_at AT TIME ZONE 'UTC','YYYY-MM-DD') AS date,count(*)::int AS count ${claimJoins} ${claims.where} GROUP BY date ORDER BY date DESC LIMIT 366`,claims.args),
-    query(`SELECT o.store_subdomain,max(o.store_name) AS store_name,count(*)::int AS count FROM support_protection_orders o ${orders.where} GROUP BY o.store_subdomain`,orders.args),
     query(`SELECT o.store_subdomain,max(o.store_name) AS store_name,count(*)::int AS count,count(*) FILTER(WHERE c.status IN('submitted','reviewing','needs_info'))::int AS pending ${claimJoins} ${claims.where} GROUP BY o.store_subdomain`,claims.args),
     query('SELECT synced_at FROM support_protection_sync_state WHERE id=1'),
   ]);
@@ -251,13 +261,13 @@ export async function getProtectionStats(filters:ProtectionFilters):Promise<Prot
   for(const row of fees.rows)currencies.set(row.currency,{currency:row.currency,protection_fee_cents:nullableNumber(row.fees),protected_value_cents:nullableNumber(row.value),unknown_orders:row.unknown_orders,requested_amount_cents:0,approved_amount_cents:0});
   for(const row of amounts.rows){const value=currencies.get(row.currency)||{currency:row.currency,protection_fee_cents:0,protected_value_cents:0,unknown_orders:0,requested_amount_cents:0,approved_amount_cents:0};value.requested_amount_cents=Number(row.requested||0);value.approved_amount_cents=Number(row.approved||0);currencies.set(row.currency,value);}
   const daily=new Map<string,ProtectionStats['daily'][number]>();
-  for(const row of dailyOrders.rows)if(row.date)daily.set(row.date,{date:row.date,orders:row.count,claims:0});
-  for(const row of dailyClaims.rows){const value=daily.get(row.date)||{date:row.date,orders:0,claims:0};value.claims=row.count;daily.set(row.date,value);}
+  for(const row of paidGroups.rows)if(row.date)daily.set(row.date,{date:row.date,paid_orders:row.paid_orders,orders:row.orders,claims:0});
+  for(const row of dailyClaims.rows){const value=daily.get(row.date)||{date:row.date,paid_orders:0,orders:0,claims:0};value.claims=row.count;daily.set(row.date,value);}
   const stores=new Map<string,ProtectionStats['by_store'][number]>();
-  for(const row of storeOrders.rows)stores.set(row.store_subdomain,{store_subdomain:row.store_subdomain,store_name:row.store_name,orders:row.count,claims:0,pending:0});
-  for(const row of storeClaims.rows){const value=stores.get(row.store_subdomain)||{store_subdomain:row.store_subdomain,store_name:row.store_name,orders:0,claims:0,pending:0};value.claims=row.count;value.pending=row.pending;stores.set(row.store_subdomain,value);}
+  for(const row of paidGroups.rows)if(row.store_subdomain)stores.set(row.store_subdomain,{store_subdomain:row.store_subdomain,store_name:row.store_name,paid_orders:row.paid_orders,orders:row.orders,claims:0,pending:0});
+  for(const row of storeClaims.rows){const value=stores.get(row.store_subdomain)||{store_subdomain:row.store_subdomain,store_name:row.store_name,paid_orders:0,orders:0,claims:0,pending:0};value.claims=row.count;value.pending=row.pending;stores.set(row.store_subdomain,value);}
   const counts=claimTotals.rows[0];return {protected_orders:orderTotals.rows[0].total,claims:counts.total,pending_claims:counts.pending,approved_claims:counts.approved,rejected_claims:counts.rejected,closed_claims:counts.closed,
-    currencies:[...currencies.values()].sort((a,b)=>a.currency.localeCompare(b.currency)),daily:[...daily.values()].sort((a,b)=>a.date.localeCompare(b.date)),by_store:[...stores.values()],synced_at:iso(sync.rows[0]?.synced_at)};
+    currencies:[...currencies.values()].sort((a,b)=>a.currency.localeCompare(b.currency)),daily:[...daily.values()].sort((a,b)=>a.date.localeCompare(b.date)).slice(-366),by_store:[...stores.values()],synced_at:iso(sync.rows[0]?.synced_at)};
 }
 
 /** One durable bounded batch. A new configuration can reset this cursor to reindex older snapshots. */
