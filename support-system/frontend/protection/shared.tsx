@@ -26,8 +26,8 @@ export function FilterBar({ value, onChange, stores, mode, onApply, minDate }: {
   return <form className="p-filters" onSubmit={event => { event.preventDefault(); onApply(); }}>
     {mode !== 'stats' && <Field label={mode === 'claims' ? '申诉 / 订单 / 客户' : '保障 / 订单 / 客户'}><input placeholder="编号、姓名或邮箱" value={value.q} onChange={event => set('q', event.target.value)} /></Field>}
     <Field label="店铺"><select value={value.store} onChange={event => set('store', event.target.value)}><option value="">全部店铺</option>{stores.map(store => <option key={store.id} value={store.subdomain}>{store.subdomain}</option>)}</select></Field>
-    <Field label="开始日期"><input type="date" value={value.from} min={minDate} max={value.to || undefined} onChange={event => set('from', event.target.value)} /></Field>
-    <Field label="结束日期"><input type="date" value={value.to} min={value.from || undefined} onChange={event => set('to', event.target.value)} /></Field>
+    <Field label="开始日期"><input type="date" value={value.from || minDate || ''} min={minDate} max={value.to || undefined} onChange={event => set('from', event.target.value)} /></Field>
+    <Field label="结束日期"><input type="date" value={value.to} min={value.from || minDate} onChange={event => set('to', event.target.value)} /></Field>
     {mode === 'claims' && <><Field label="审核状态"><select value={value.status} onChange={event => set('status', event.target.value)}><option value="">全部状态</option>{Object.entries(statusLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field><Field label="申诉原因"><select value={value.reason} onChange={event => set('reason', event.target.value)}><option value="">全部原因</option>{Object.entries(reasonLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field></>}
     <button className="p-button p-primary" type="submit">查询</button>
     <button className="p-button" type="button" onClick={() => onChange(initialFilters)}>清空条件</button>

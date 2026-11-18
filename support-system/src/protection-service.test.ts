@@ -28,8 +28,8 @@ test('protection data and review lifecycle retain one contract and serialize com
       DROP TABLE IF EXISTS support_protection_notification_outbox,support_protection_evidence, support_protection_capture_sessions, support_protection_customer_messages, support_protection_customer_sessions, support_protection_access_tokens, support_protection_claim_events, support_protection_claims, support_protection_orders, support_protection_sync_state, support_protection_sync_dirty, support_protection_stores, support_order_snapshots, support_agents CASCADE;
       CREATE TABLE support_agents(id BIGINT PRIMARY KEY,name TEXT,enabled BOOLEAN DEFAULT true);
       INSERT INTO support_agents VALUES (1,'Fixture reviewer',true);
-      CREATE TABLE support_protection_stores(store_subdomain TEXT PRIMARY KEY, product_ids JSONB,enabled BOOLEAN DEFAULT true,config_json JSONB DEFAULT '{}');
-      INSERT INTO support_protection_stores VALUES('fixture-store','["protection"]',true,'{}');
+      CREATE TABLE support_protection_stores(store_subdomain TEXT PRIMARY KEY, product_ids JSONB,first_install_day DATE DEFAULT '2020-01-01',enabled BOOLEAN DEFAULT true,config_json JSONB DEFAULT '{}');
+      INSERT INTO support_protection_stores(store_subdomain,product_ids,enabled,config_json) VALUES('fixture-store','["protection"]',true,'{}');
       CREATE TABLE support_order_snapshots(id BIGSERIAL PRIMARY KEY,store_subdomain TEXT,store_name TEXT,order_id TEXT,order_number TEXT,
         customer_email TEXT,customer_name TEXT,order_amount TEXT,order_currency TEXT,payment_status TEXT,order_status TEXT,
         fulfillment_status TEXT,refund_status TEXT,refund_amount TEXT,paid_at TIMESTAMPTZ,items_json JSONB,raw_order_json JSONB,

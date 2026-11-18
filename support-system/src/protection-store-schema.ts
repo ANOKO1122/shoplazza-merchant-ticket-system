@@ -12,6 +12,16 @@ CREATE TABLE IF NOT EXISTS support_protection_stores (
  created_at timestamptz NOT NULL DEFAULT now(),
  updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE support_protection_stores ADD COLUMN IF NOT EXISTS first_install_day date;
+-- Verified historical cart rollouts, before the install worker recorded jobs.
+UPDATE support_protection_stores s SET first_install_day=v.day::date
+FROM (VALUES
+ ('amao04.myshoplaza.com','2026-11-03'), ('hipkastl.myshoplaza.com','2026-11-03'),
+ ('sheraer.myshoplaza.com','2026-11-13'), ('drakvex.myshoplaza.com','2026-11-13'),
+ ('shutiaoes.myshoplaza.com','2026-11-16'), ('newgg.myshoplaza.com','2026-11-16'),
+ ('natie1.myshoplaza.com','2026-11-16')
+) AS v(store_subdomain,day)
+WHERE s.store_subdomain=v.store_subdomain AND s.first_install_day IS NULL;
 CREATE TABLE IF NOT EXISTS support_protection_install_jobs (
  id bigserial PRIMARY KEY,
  store_subdomain text NOT NULL,

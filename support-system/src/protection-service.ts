@@ -231,11 +231,10 @@ export async function updateProtectionClaim(id:unknown,input:unknown,actor:Prote
 export async function getProtectionStats(filters:ProtectionFilters):Promise<ProtectionStats>{
   const orders=conditions(filters,'order'),claims=conditions(filters,'claim');
   const paidFilters=conditions({store:filters.store,from:filters.from,to:filters.to},'order');
-  const first=await query("SELECT to_char(min(paid_at) AT TIME ZONE 'UTC','YYYY-MM-DD') AS day FROM support_protection_orders");
+  const first=await query("SELECT to_char(min(first_install_day),'YYYY-MM-DD') AS day FROM support_protection_stores WHERE ($1::text IS NULL OR store_subdomain=$1)",[filters.store || null]);
   const firstDay:string|null=first.rows[0].day;
   for(const [condition,column] of [[orders,'o.paid_at'],[claims,'c.created_at'],[paidFilters,'o.paid_at']] as const){
-    condition.args.push(firstDay);
-    condition.where += `${condition.where?' AND ':'WHERE '}${column} >= ($${condition.args.length}::date::timestamp AT TIME ZONE 'UTC')`;
+    condition.where += `${condition.where?' AND ':'WHERE '}${column} >= (SELECT s.first_install_day::timestamp AT TIME ZONE 'UTC' FROM support_protection_stores s WHERE s.store_subdomain=o.store_subdomain)`;
   }
   const [orderTotals,claimTotals,fees,amounts,paidGroups,dailyClaims,storeClaims,sync]=await Promise.all([
     query(`SELECT count(*)::int AS total FROM support_protection_orders o ${orders.where}`,orders.args),

@@ -94,7 +94,9 @@ export async function processProtectionInstallJobs(runInstaller: typeof runProte
       if (executed.manifest) await client.query(`UPDATE support_protection_stores SET config_json=$2,enabled=$3,product_ids=$4,updated_at=now() WHERE store_subdomain=$1`,[job.store_subdomain,JSON.stringify(executed.manifest),executed.manifest.enabled,JSON.stringify(executed.manifest.products.map((p: any) => p.id))]);
       if (executed.error) throw executed.error;
       const result = executed.result!;
-      await client.query(`UPDATE support_protection_stores SET health=$2,health_message=$3,active_theme_id=$4,checked_at=now(),updated_at=now() WHERE store_subdomain=$1`,[job.store_subdomain,result.health,result.message,result.active_theme_id || null]);
+      await client.query(`UPDATE support_protection_stores SET health=$2,health_message=$3,active_theme_id=$4,checked_at=now(),updated_at=now(),
+        first_install_day=coalesce(first_install_day,CASE WHEN $5='install' THEN (now() AT TIME ZONE 'UTC')::date END)
+        WHERE store_subdomain=$1`,[job.store_subdomain,result.health,result.message,result.active_theme_id || null,job.action]);
       await client.query(`UPDATE support_protection_install_jobs SET status='succeeded',message=$2,finished_at=now() WHERE id=$1`,[job.id,result.message]);
     } catch (error: any) {
       const message = redactInstallerOutput(error.message || '执行失败，请重新检测后重试',token);
