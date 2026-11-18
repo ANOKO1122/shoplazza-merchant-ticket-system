@@ -21,6 +21,7 @@ export interface ProtectionClaim {
 export interface ProtectionEvent { id: string; actor_name: string; action: string; note: string; created_at: string; detail?: {from_status?:ClaimStatus;to_status?:ClaimStatus;approved_amount_cents?:number|null;external_reference?:string|null}; }
 export interface ClaimDetail { claim: ProtectionClaim; order: ProtectionOrder; events: ProtectionEvent[]; customer_submission?: import('./protection-customer-types').CustomerClaim; }
 export interface ProtectionStats {
+ first_protection_day: string | null;
  protected_orders: number; claims: number; pending_claims: number; approved_claims: number; rejected_claims: number; closed_claims: number;
  currencies: Array<{currency: string; protection_fee_cents: number | null; protected_value_cents: number | null; unknown_orders: number; requested_amount_cents: number; approved_amount_cents: number}>;
  daily: Array<{date: string; paid_orders: number; orders: number; claims: number}>;

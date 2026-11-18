@@ -9,7 +9,7 @@ export function Overview({ stores, onClaims }: { stores: ProtectionStore[]; onCl
   const [filters, setFilters] = useState(initialFilters);
   const resource = useResource<ProtectionStats>('/stats?' + query({ store: filters.store, from: filters.from, to: filters.to }));
   const stats = resource.data;
-  return <><FilterBar value={draft} onChange={setDraft} stores={stores} mode="stats" onApply={() => setFilters(draft)} /><ErrorNotice error={resource.error} onRetry={resource.reload} />{resource.loading ? <Loading /> : stats && <>
+  return <><FilterBar minDate={stats?.first_protection_day || undefined} value={{...draft, from: draft.from || stats?.first_protection_day || ''}} onChange={setDraft} stores={stores} mode="stats" onApply={() => setFilters(draft)} /><ErrorNotice error={resource.error} onRetry={resource.reload} />{resource.loading ? <Loading /> : stats && <>
     <div className="p-overview-heading"><div><h2>保障业务概况</h2><p className="p-muted">已支付订单按付款日期、申诉按创建日期统计（UTC），金额按币种独立汇总。</p></div><span className="p-muted">最近同步：{dateTime(stats.synced_at)}</span></div>
     <dl className="p-metrics"><div><dt>保障订单</dt><dd>{stats.protected_orders.toLocaleString()}</dd></div><div><dt>申诉总数</dt><dd>{stats.claims.toLocaleString()}</dd></div><div className="p-metric-action"><dt>待处理申诉</dt><dd><button onClick={onClaims}>{stats.pending_claims.toLocaleString()}<span>进入审核 →</span></button></dd></div><div><dt>审核通过</dt><dd>{stats.approved_claims.toLocaleString()}</dd></div><div><dt>已拒绝 / 外部已处理</dt><dd>{stats.rejected_claims.toLocaleString()} <span>/ {stats.closed_claims.toLocaleString()}</span></dd></div></dl>
     <Section title="金额汇总" action={<span className="p-muted">审核通过金额不代表实际打款</span>}>

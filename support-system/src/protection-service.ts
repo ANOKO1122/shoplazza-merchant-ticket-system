@@ -231,6 +231,12 @@ export async function updateProtectionClaim(id:unknown,input:unknown,actor:Prote
 export async function getProtectionStats(filters:ProtectionFilters):Promise<ProtectionStats>{
   const orders=conditions(filters,'order'),claims=conditions(filters,'claim');
   const paidFilters=conditions({store:filters.store,from:filters.from,to:filters.to},'order');
+  const first=await query("SELECT to_char(min(paid_at) AT TIME ZONE 'UTC','YYYY-MM-DD') AS day FROM support_protection_orders");
+  const firstDay:string|null=first.rows[0].day;
+  for(const [condition,column] of [[orders,'o.paid_at'],[claims,'c.created_at'],[paidFilters,'o.paid_at']] as const){
+    condition.args.push(firstDay);
+    condition.where += `${condition.where?' AND ':'WHERE '}${column} >= ($${condition.args.length}::date::timestamp AT TIME ZONE 'UTC')`;
+  }
   const [orderTotals,claimTotals,fees,amounts,paidGroups,dailyClaims,storeClaims,sync]=await Promise.all([
     query(`SELECT count(*)::int AS total FROM support_protection_orders o ${orders.where}`,orders.args),
     query(`SELECT count(*)::int AS total,count(*) FILTER(WHERE c.status IN('submitted','reviewing','needs_info'))::int AS pending,
@@ -266,7 +272,7 @@ export async function getProtectionStats(filters:ProtectionFilters):Promise<Prot
   const stores=new Map<string,ProtectionStats['by_store'][number]>();
   for(const row of paidGroups.rows)if(row.store_subdomain)stores.set(row.store_subdomain,{store_subdomain:row.store_subdomain,store_name:row.store_name,paid_orders:row.paid_orders,orders:row.orders,claims:0,pending:0});
   for(const row of storeClaims.rows){const value=stores.get(row.store_subdomain)||{store_subdomain:row.store_subdomain,store_name:row.store_name,paid_orders:0,orders:0,claims:0,pending:0};value.claims=row.count;value.pending=row.pending;stores.set(row.store_subdomain,value);}
-  const counts=claimTotals.rows[0];return {protected_orders:orderTotals.rows[0].total,claims:counts.total,pending_claims:counts.pending,approved_claims:counts.approved,rejected_claims:counts.rejected,closed_claims:counts.closed,
+  const counts=claimTotals.rows[0];return {first_protection_day:firstDay,protected_orders:orderTotals.rows[0].total,claims:counts.total,pending_claims:counts.pending,approved_claims:counts.approved,rejected_claims:counts.rejected,closed_claims:counts.closed,
     currencies:[...currencies.values()].sort((a,b)=>a.currency.localeCompare(b.currency)),daily:[...daily.values()].sort((a,b)=>a.date.localeCompare(b.date)).slice(-366),by_store:[...stores.values()],synced_at:iso(sync.rows[0]?.synced_at)};
 }
 

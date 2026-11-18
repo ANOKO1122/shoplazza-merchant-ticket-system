@@ -21,12 +21,12 @@ export function Field({ label, children }: { label: string; children: ReactEleme
 export function Info({ label, children }: { label: string; children: ReactNode }) { return <div className="p-info"><dt>{label}</dt><dd>{children || '—'}</dd></div>; }
 export interface Filters { q: string; store: string; from: string; to: string; status: string; reason: string }
 export const initialFilters: Filters = { q: '', store: '', from: '', to: '', status: '', reason: '' };
-export function FilterBar({ value, onChange, stores, mode, onApply }: { value: Filters; onChange: (next: Filters) => void; stores: ProtectionStore[]; mode: 'stats' | 'orders' | 'claims'; onApply: () => void }) {
+export function FilterBar({ value, onChange, stores, mode, onApply, minDate }: { minDate?: string; value: Filters; onChange: (next: Filters) => void; stores: ProtectionStore[]; mode: 'stats' | 'orders' | 'claims'; onApply: () => void }) {
   const set = (key: keyof Filters, next: string) => onChange({ ...value, [key]: next });
   return <form className="p-filters" onSubmit={event => { event.preventDefault(); onApply(); }}>
     {mode !== 'stats' && <Field label={mode === 'claims' ? '申诉 / 订单 / 客户' : '保障 / 订单 / 客户'}><input placeholder="编号、姓名或邮箱" value={value.q} onChange={event => set('q', event.target.value)} /></Field>}
     <Field label="店铺"><select value={value.store} onChange={event => set('store', event.target.value)}><option value="">全部店铺</option>{stores.map(store => <option key={store.id} value={store.subdomain}>{store.subdomain}</option>)}</select></Field>
-    <Field label="开始日期"><input type="date" value={value.from} max={value.to || undefined} onChange={event => set('from', event.target.value)} /></Field>
+    <Field label="开始日期"><input type="date" value={value.from} min={minDate} max={value.to || undefined} onChange={event => set('from', event.target.value)} /></Field>
     <Field label="结束日期"><input type="date" value={value.to} min={value.from || undefined} onChange={event => set('to', event.target.value)} /></Field>
     {mode === 'claims' && <><Field label="审核状态"><select value={value.status} onChange={event => set('status', event.target.value)}><option value="">全部状态</option>{Object.entries(statusLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field><Field label="申诉原因"><select value={value.reason} onChange={event => set('reason', event.target.value)}><option value="">全部原因</option>{Object.entries(reasonLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field></>}
     <button className="p-button p-primary" type="submit">查询</button>
