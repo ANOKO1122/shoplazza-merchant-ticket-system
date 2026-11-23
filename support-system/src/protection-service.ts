@@ -2,6 +2,7 @@ import type { PoolClient } from 'pg';
 import { getClient, query } from './pg';
 import { ACTIVE_CLAIM_STATUSES, CLAIM_REASONS, CLAIM_STATUSES, ProtectionError, claimAllocation, normalizeProtectionSnapshot, record, text, validateClaimTransition } from './protection-domain';
 import type { ClaimDetail, ClaimStatus, ProtectionClaim, ProtectionList, ProtectionOrder, ProtectionStats } from './protection-types';
+import { protectionOrderStageLabels, type ProtectionOrderListItem, type ProtectionOrderStage } from './protection-types';
 import { evaluateProtectionCoverage } from './protection-policy';
 import { enqueueProtectionLifecycleNotifications } from './protection-lifecycle-notification';
 
@@ -62,13 +63,38 @@ function conditions(filters: ProtectionFilters, kind: 'order'|'claim') {
   return {where:parts.length?`WHERE ${parts.join(' AND ')}`:'',args};
 }
 
-export async function listProtectionOrders(filters:ProtectionFilters={}):Promise<ProtectionList<ProtectionOrder>> {
-  const {page,page_size}=pagination(filters);const {where,args}=conditions(filters,'order');
+// Individual parcel updates can record merchandise shipment before the order-wide status advances.
+const ordersWithStage = `FROM (
+  SELECT p.*, CASE
+    WHEN p.order_status IN ('finished','completed') THEN 'completed'
+    WHEN p.fulfillment_status IN ('partially_shipped','shipped','partial','partially_fulfilled','fulfilled',
+      'partially_finished','finished','returning','partially_returned','returned')
+      OR p.timeline_json->>'shipped_at' IS NOT NULL
+      OR EXISTS (
+        SELECT 1 FROM jsonb_path_query(p.logistics_json,
+          '$[*] ? (@.status == "shipped" || @.status == "finished").line_items[*]') AS shipped(line)
+        WHERE COALESCE(line->'ship_quantity', line->'quantity') > '0'::jsonb
+          AND jsonb_typeof(COALESCE(line->'ship_quantity', line->'quantity')) = 'number'
+          AND p.items_json @> jsonb_build_array(jsonb_build_object(
+            'id', COALESCE(NULLIF(line->>'id',''), line->>'line_item_id'), 'is_protection', false))
+      ) THEN 'shipped'
+    ELSE 'unshipped' END AS order_stage
+  FROM support_protection_orders p
+) o`;
+
+export async function listProtectionOrders(filters:ProtectionFilters={}):Promise<ProtectionList<ProtectionOrderListItem>> {
+  const {page,page_size}=pagination(filters);
+  let {where,args}=conditions(filters,'order');
+  if (filters.status) {
+    if (!Object.keys(protectionOrderStageLabels).includes(filters.status)) throw new ProtectionError('订单状态无效');
+    args.push(filters.status);
+    where += `${where ? ' AND' : 'WHERE'} o.order_stage=$${args.length}`;
+  }
   const [total,rows]=await Promise.all([
-    query(`SELECT count(*)::int AS total FROM support_protection_orders o ${where}`,args),
-    query(`SELECT ${orderColumns} FROM support_protection_orders o ${where} ORDER BY o.paid_at DESC NULLS LAST,o.id DESC LIMIT $${args.length+1} OFFSET $${args.length+2}`,[...args,page_size,(page-1)*page_size]),
+    query(`SELECT count(*)::int AS total ${ordersWithStage} ${where}`,args),
+    query(`SELECT ${orderColumns} ${ordersWithStage} ${where} ORDER BY o.paid_at DESC NULLS LAST,o.id DESC LIMIT $${args.length+1} OFFSET $${args.length+2}`,[...args,page_size,(page-1)*page_size]),
   ]);
-  return {ok:true,items:rows.rows.map(mapOrder),total:total.rows[0].total,page,page_size};
+  return {ok:true,items:rows.rows.map(row => ({ ...mapOrder(row), order_stage: row.order_stage })),total:total.rows[0].total,page,page_size};
 }
 export async function listProtectionClaims(filters:ProtectionFilters={}):Promise<ProtectionList<ProtectionClaim>> {
   const {page,page_size}=pagination(filters);const {where,args}=conditions(filters,'claim');
@@ -237,7 +263,7 @@ export async function getProtectionStats(filters:ProtectionFilters):Promise<Prot
     condition.where += `${condition.where?' AND ':'WHERE '}${column} >= (SELECT s.first_install_day::timestamp AT TIME ZONE 'UTC' FROM support_protection_stores s WHERE s.store_subdomain=o.store_subdomain)`;
   }
   const [orderTotals,claimTotals,fees,amounts,paidGroups,dailyClaims,storeClaims,sync]=await Promise.all([
-    query(`SELECT count(*)::int AS total FROM support_protection_orders o ${orders.where}`,orders.args),
+    query(`SELECT o.order_stage, count(*)::int AS total ${ordersWithStage} ${orders.where} GROUP BY o.order_stage`,orders.args),
     query(`SELECT count(*)::int AS total,count(*) FILTER(WHERE c.status IN('submitted','reviewing','needs_info'))::int AS pending,
       count(*) FILTER(WHERE c.status='approved')::int AS approved,count(*) FILTER(WHERE c.status='rejected')::int AS rejected,
       count(*) FILTER(WHERE c.status='closed')::int AS closed ${claimJoins} ${claims.where}`,claims.args),
@@ -271,7 +297,10 @@ export async function getProtectionStats(filters:ProtectionFilters):Promise<Prot
   const stores=new Map<string,ProtectionStats['by_store'][number]>();
   for(const row of paidGroups.rows)if(row.store_subdomain)stores.set(row.store_subdomain,{store_subdomain:row.store_subdomain,store_name:row.store_name,paid_orders:row.paid_orders,orders:row.orders,claims:0,pending:0});
   for(const row of storeClaims.rows){const value=stores.get(row.store_subdomain)||{store_subdomain:row.store_subdomain,store_name:row.store_name,paid_orders:0,orders:0,claims:0,pending:0};value.claims=row.count;value.pending=row.pending;stores.set(row.store_subdomain,value);}
-  const counts=claimTotals.rows[0];return {first_protection_day:firstDay,protected_orders:orderTotals.rows[0].total,claims:counts.total,pending_claims:counts.pending,approved_claims:counts.approved,rejected_claims:counts.rejected,closed_claims:counts.closed,
+  const ordersByStage: ProtectionStats['orders_by_stage'] = { unshipped: 0, shipped: 0, completed: 0 };
+  for (const row of orderTotals.rows) ordersByStage[row.order_stage as ProtectionOrderStage] = row.total;
+  const counts=claimTotals.rows[0];return {first_protection_day:firstDay,protected_orders:Object.values(ordersByStage).reduce((sum,n) => sum+n,0),orders_by_stage:ordersByStage,
+    claims:counts.total,pending_claims:counts.pending,approved_claims:counts.approved,rejected_claims:counts.rejected,closed_claims:counts.closed,
     currencies:[...currencies.values()].sort((a,b)=>a.currency.localeCompare(b.currency)),daily:[...daily.values()].sort((a,b)=>a.date.localeCompare(b.date)).slice(-366),by_store:[...stores.values()],synced_at:iso(sync.rows[0]?.synced_at)};
 }
 

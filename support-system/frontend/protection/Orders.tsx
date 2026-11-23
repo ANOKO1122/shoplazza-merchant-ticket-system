@@ -1,19 +1,34 @@
 import { useRef, useState } from 'react';
-import type { ClaimReason, ProtectionClaim, ProtectionList, ProtectionOrder, ProtectionStore } from '../../src/protection-types';
+import { protectionOrderStageLabels, type ClaimReason, type ProtectionClaim, type ProtectionList, type ProtectionOrder, type ProtectionOrderListItem, type ProtectionStore } from '../../src/protection-types';
 import { API, ApiError, centsFromInput, dateTime, money, query, request, useResource } from './api';
 import { Badge, DetailDialog, Empty, ErrorNotice, Field, FilterBar, Info, initialFilters, ItemList, Loading, OrderContext, Pagination, reasonLabels, Section } from './shared';
 import { CustomerAccessLink } from './CustomerSubmission';
 export function Orders({ stores, selectedOrder, onClaim }: { stores: ProtectionStore[]; selectedOrder?: string | null; onClaim: (id: string) => void }) {
   const [draft, setDraft] = useState(initialFilters);
   const [filters, setFilters] = useState(initialFilters);
+  const [stage, setStage] = useState('');
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string | null>(selectedOrder || null);
   const [refresh, setRefresh] = useState(0);
-  const params = query({ q: filters.q, store: filters.store, from: filters.from, to: filters.to });
-  const resource = useResource<ProtectionList<ProtectionOrder>>(`/orders?${params}&page=${page}&page_size=20`, refresh, true);
+  const params = query({ q: filters.q, store: filters.store, from: filters.from, to: filters.to, status: stage });
+  const resource = useResource<ProtectionList<ProtectionOrderListItem>>(`/orders?${params}&page=${page}&page_size=20`, refresh, true);
   return <><FilterBar value={draft} onChange={setDraft} mode="orders" stores={stores} onApply={() => { setFilters(draft); setPage(1); setSelected(null); }} />
     <div className="p-workspace"><section className="p-list-pane"><div className="p-section-title"><h2>保障订单</h2><a className="p-button" href={`${API}/orders/export?${params}`}>导出 CSV</a></div>
-      <ErrorNotice error={resource.error} onRetry={resource.reload} />{resource.loading && !resource.data ? <Loading /> : resource.data?.items.length ? <div className="p-table-wrap"><table className="p-table"><thead><tr><th>保障 / 订单</th><th>订单来源 / 客户</th><th>保障费</th><th>保障商品金额</th><th>申诉</th><th>付款时间</th></tr></thead><tbody>{resource.data.items.map(order => <tr key={order.id} className={selected === order.id ? 'p-selected' : ''}><td><button className="p-link p-strong" onClick={() => setSelected(order.id)}>{order.public_no}</button><small>{order.order_number}</small></td><td>{order.store_subdomain}<small>{order.customer_email || order.customer_name || '未提供客户信息'}</small></td><td>{money(order.protection_fee_cents, order.currency)}</td><td>{money(order.protected_value_cents, order.currency)}</td><td>{order.claim_count}</td><td>{dateTime(order.paid_at)}</td></tr>)}</tbody></table></div> : !resource.error && <Empty title="暂无保障订单">订单同步后，可在这里查看保障记录并代客户登记申诉。</Empty>}
+      <div className="p-tabs" role="group" aria-label="订单状态">
+        {Object.entries({ '': '全部', ...protectionOrderStageLabels }).map(([key, label]) =>
+          <button key={key} type="button" className={stage === key ? 'p-tab p-tab-active' : 'p-tab'} aria-pressed={stage === key}
+            onClick={() => { setStage(key); setPage(1); setSelected(null); }}>{label}</button>)}
+      </div>
+      <ErrorNotice error={resource.error} onRetry={resource.reload} />
+      {resource.loading && !resource.data ? <Loading /> : resource.data?.items.length ? <div className="p-table-wrap"><table className="p-table">
+        <thead><tr><th>保障 / 订单</th><th>订单状态</th><th>订单来源 / 客户</th><th>保障费</th><th>保障商品金额</th><th>申诉</th><th>付款时间</th></tr></thead>
+        <tbody>{resource.data.items.map(order => <tr key={order.id} className={selected === order.id ? 'p-selected' : ''}>
+          <td><button className="p-link p-strong" onClick={() => setSelected(order.id)}>{order.public_no}</button><small>{order.order_number}</small></td>
+          <td><Badge status={order.order_stage}>{protectionOrderStageLabels[order.order_stage]}</Badge></td>
+          <td>{order.store_subdomain}<small>{order.customer_email || order.customer_name || '未提供客户信息'}</small></td>
+          <td>{money(order.protection_fee_cents, order.currency)}</td><td>{money(order.protected_value_cents, order.currency)}</td>
+          <td>{order.claim_count}</td><td>{dateTime(order.paid_at)}</td>
+        </tr>)}</tbody></table></div> : !resource.error && <Empty title="暂无保障订单" />}
       <Pagination total={resource.data?.total || 0} page={page} loading={resource.loading} onChange={setPage} />
     </section></div>{selected && <OrderDetail key={selected} id={selected} onClose={() => setSelected(null)} onClaim={onClaim} onChanged={() => setRefresh(value => value + 1)} />}
   </>;

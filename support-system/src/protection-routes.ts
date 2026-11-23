@@ -6,6 +6,7 @@ import { createProtectionClaim, updateProtectionClaim, listProtectionOrders, lis
 import { getCustomerClaimForAdmin } from './protection-customer-service';
 import { processProtectionNotifications, requestProtectionClaimUpdate } from './protection-notification';
 import { listProtectionEmailRecords } from './protection-email-records';
+import { protectionOrderStageLabels } from './protection-types';
 
 function filters(req:express.Request):ProtectionFilters {
   const result:ProtectionFilters={};
@@ -54,11 +55,11 @@ export function createProtectionRouter():express.Router {
   }));
 
   router.get('/orders/export',handler(async(req,res)=>{
-    const selected=filters(req),rows:unknown[][]=[['保障编号','店铺','订单号','客户','邮箱','币种','订单金额','保障费','保障商品金额','支付状态','履约状态','支付时间']];
+    const selected=filters(req),rows:unknown[][]=[['保障编号','店铺','订单号','客户','邮箱','币种','订单金额','保障费','保障商品金额','支付状态','履约状态','支付时间','订单状态']];
     for(let page=1;page<=100;page++){
       const result=await listProtectionOrders({...selected,page,page_size:100});
       if(result.total>10000)throw new ProtectionError('导出最多10000条，请缩小筛选范围');
-      rows.push(...result.items.map(order=>[order.public_no,order.store_subdomain,order.order_number,order.customer_name,order.customer_email,order.currency,decimal(order.order_amount_cents),decimal(order.protection_fee_cents),decimal(order.protected_value_cents),order.payment_status,order.fulfillment_status,order.paid_at]));
+      rows.push(...result.items.map(order=>[order.public_no,order.store_subdomain,order.order_number,order.customer_name,order.customer_email,order.currency,decimal(order.order_amount_cents),decimal(order.protection_fee_cents),decimal(order.protected_value_cents),order.payment_status,order.fulfillment_status,order.paid_at,protectionOrderStageLabels[order.order_stage]]));
       if(page*100>=result.total)break;
     }
     res.setHeader('Content-Disposition','attachment; filename="protected-orders.csv"');

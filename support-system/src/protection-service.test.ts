@@ -124,8 +124,15 @@ test('protection data and review lifecycle retain one contract and serialize com
         assert.equal(list.status,200);assert.equal((await list.json() as any).total,2);
         const invalid=await fetch(base+'/api/admin/protection/claims?status=invalid',{headers});assert.equal(invalid.status,400);
         await pool.query(`UPDATE support_protection_orders SET customer_name='=SUM(A1)' WHERE id=$1`,[order.id]);
-        const exportResponse=await fetch(base+'/api/admin/protection/orders/export',{headers});
-        assert.equal(exportResponse.status,200);assert.match(await exportResponse.text(),/"'=SUM\(A1\)"/);
+        await pool.query("UPDATE support_protection_orders SET order_status='finished' WHERE order_id='order-b'");
+        const exportResponse=await fetch(base+'/api/admin/protection/orders/export?status=shipped',{headers});
+        assert.equal(exportResponse.status,200);
+        const csv = await exportResponse.text();
+        assert.match(csv,/"'=SUM\(A1\)"/);
+        assert.match(csv,/"订单状态"/);
+        assert.match(csv,/"已发货"/);
+        assert.doesNotMatch(csv,/"order-b"/);
+        assert.equal((await fetch(base+'/api/admin/protection/orders?status=reviewing',{headers})).status,400);
         const agents=await fetch(base+'/api/admin/protection/agents',{headers});assert.equal((await agents.json() as any).items[0].name,'Fixture reviewer');
         const reviewed=(await getProtectionClaim(claim.id))!.claim;
         const send=()=>fetch(base+`/api/admin/protection/claims/${claim.id}/notify-email`,{method:'POST',headers:{...headers,Origin:base,'content-type':'application/json'},body:JSON.stringify({revision:reviewed.revision})});
@@ -174,6 +181,38 @@ test('protection data and review lifecycle retain one contract and serialize com
       const evidence=(await pool.query('SELECT policy_snapshot_json FROM support_protection_claims WHERE id=$1',[created.id])).rows[0].policy_snapshot_json;
       assert.equal(evidence.window.status,'open');assert.equal(evidence.window.reason,'lost');
       assert.equal(Number((await pool.query('SELECT count(*) FROM support_protection_notification_outbox WHERE claim_id=$1',[created.id])).rows[0].count),0,'Saving an approval must not send or queue mail');
+    });
+    await t.test('order stages follow order completion and merchandise shipment before pagination', async () => {
+      const filters = { store: 'fixture-store', q: 'order-' };
+      const parcel = (id: string) => JSON.stringify([{status:'shipped', line_items:[{id, ship_quantity:1}]}]);
+      await pool.query(`UPDATE support_protection_orders SET order_status='placed', fulfillment_status='waiting',
+        timeline_json='{}', logistics_json=$1 WHERE order_id IN ('order-a','order-b')`, [parcel('service')]);
+      const pending = await listProtectionOrders({...filters, status:'unshipped', page_size:1, page:2});
+      assert.equal(pending.total,2);
+      assert.deepEqual(pending.items.map(item => item.order_stage), ['unshipped']);
+      assert.deepEqual((await getProtectionStats(filters)).orders_by_stage, {unshipped:2, shipped:0, completed:0});
+
+      await pool.query("UPDATE support_protection_orders SET logistics_json=$1 WHERE order_id='order-a'", [parcel('coat')]);
+      await pool.query("UPDATE support_protection_orders SET fulfillment_status='partially_shipped' WHERE order_id='order-b'");
+      const shipped = await listProtectionOrders({...filters, status:'shipped'});
+      assert.equal(shipped.total,2);
+      assert.ok(shipped.items.every(item => item.order_stage === 'shipped'));
+
+      await pool.query("UPDATE support_protection_orders SET order_status='finished' WHERE order_id='order-b'");
+      const completed = await listProtectionOrders({...filters, status:'completed'});
+      assert.deepEqual(completed.items.map(item => [item.order_id,item.order_stage]), [['order-b','completed']]);
+      assert.equal((await listProtectionOrders({...filters, status:'shipped'})).total,1);
+      assert.equal((await listProtectionOrders({...filters, status:'unshipped'})).total,0);
+      assert.equal((await listProtectionOrders(filters)).total,2);
+      const stats = await getProtectionStats(filters);
+      assert.deepEqual(stats.orders_by_stage, {unshipped:0, shipped:1, completed:1});
+      assert.equal(stats.protected_orders,2);
+      // Keep the overview's per-store rollout cutoff and payment date filters for every stage.
+      await pool.query("UPDATE support_protection_orders SET paid_at='2019-01-01' WHERE order_id='order-a'");
+      assert.deepEqual((await getProtectionStats(filters)).orders_by_stage, {unshipped:0, shipped:0, completed:1});
+      const empty = await getProtectionStats({...filters,to:'2018-12-31'});
+      assert.deepEqual(empty.orders_by_stage, {unshipped:0, shipped:0, completed:0});
+      assert.equal(empty.protected_orders,0);
     });
   } finally { await pool.end(); await closeDatabasePools(); }
 });

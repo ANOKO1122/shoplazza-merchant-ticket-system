@@ -10,6 +10,9 @@ export interface ProtectionOrder {
  claim_count: number; service_fulfillment_status: string;
  timeline?: import('./protection-policy').ProtectionTimeline;
 }
+export const protectionOrderStageLabels = { unshipped: '未发货', shipped: '已发货', completed: '已完成' } as const;
+export type ProtectionOrderStage = keyof typeof protectionOrderStageLabels;
+export interface ProtectionOrderListItem extends ProtectionOrder { order_stage: ProtectionOrderStage }
 export interface ProtectionClaim {
  id: string; public_no: string; protection_order_id: string; protection_public_no: string; store_subdomain: string; store_name: string; order_number: string;
  customer_email: string; customer_name: string; reason: ClaimReason; description: string; status: ClaimStatus;
@@ -22,6 +25,7 @@ export interface ProtectionEvent { id: string; actor_name: string; action: strin
 export interface ClaimDetail { claim: ProtectionClaim; order: ProtectionOrder; events: ProtectionEvent[]; customer_submission?: import('./protection-customer-types').CustomerClaim; }
 export interface ProtectionStats {
  first_protection_day: string | null;
+ orders_by_stage: Record<ProtectionOrderStage, number>;
  protected_orders: number; claims: number; pending_claims: number; approved_claims: number; rejected_claims: number; closed_claims: number;
  currencies: Array<{currency: string; protection_fee_cents: number | null; protected_value_cents: number | null; unknown_orders: number; requested_amount_cents: number; approved_amount_cents: number}>;
  daily: Array<{date: string; paid_orders: number; orders: number; claims: number}>;
