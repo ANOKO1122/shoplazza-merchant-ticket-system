@@ -57,6 +57,18 @@ test('historical recovery preserves order time and commits a no-invitation marke
   assert.equal(calls.logs[0].detailJson.notificationsSuppressed, true);
 });
 
+for (const status of ['partially_refunded', 'refunded']) {
+  test(`historical recovery preserves ${status} and suppresses notifications`, async () => {
+    const { subject, calls } = harness({ detail: { ...original, financial_status: status, total_refund_price: '13.50' } });
+    assert.equal((await subject.recoverMissingFulfillmentOrder({ store, orderId: 'old-order' })).recovered, true);
+    const [snapshot, suppression] = calls.writes;
+    assert.equal(snapshot.values[10], status);
+    assert.equal(snapshot.values[13], status);
+    assert.equal(snapshot.values[14], '13.50');
+    assert.match(suppression.sql, /support_order_notification_suppressions/);
+  });
+}
+
 test('a concurrent existing snapshot is not overwritten or given a suppression marker', async () => {
   const { subject, calls } = harness({ inserted: false });
   assert.equal((await subject.recoverMissingFulfillmentOrder({ store, orderId: 'old-order' })).recovered, false);

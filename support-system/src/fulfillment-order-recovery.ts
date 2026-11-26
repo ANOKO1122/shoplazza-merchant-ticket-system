@@ -28,7 +28,10 @@ export async function recoverMissingFulfillmentOrder(params: {
       throw new Error('Current order detail is unavailable or mismatched; queued for retry');
     }
     const normalized = normalizeOrder(store.subdomain, store.storeName, detail, []);
-    if (normalized.paymentStatus !== 'paid' || !normalized.customerEmail || !Array.isArray(detail.line_items)) {
+    if (!['paid', 'partially_refunded', 'refunded'].includes(normalized.paymentStatus)) {
+      throw new Error('Current payment status is ineligible for fulfillment recovery; queued for retry');
+    }
+    if (!normalized.customerEmail || !Array.isArray(detail.line_items)) {
       throw new Error('Current paid order detail is incomplete; queued for retry');
     }
     const fulfillments = mergeFulfillments([], validateFulfillments(detail.fulfillments ?? []), { source: 'backfill' }).fulfillments;
